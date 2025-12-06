@@ -1,0 +1,138 @@
+# ============================================================================
+# Solstice Engine - Git Attributes Configuration
+# ============================================================================
+# This file ensures consistent handling of line endings and file types
+# across different operating systems and environments.
+# ============================================================================
+
+# ============================================================================
+# Default Behavior - Auto-detect text files and normalize line endings
+# ============================================================================
+* text=auto
+
+# ============================================================================
+# Source Code Files - Explicit Text (LF normalized in repo)
+# ============================================================================
+# C/C++ source files
+*.c      text diff=cpp
+*.cc     text diff=cpp
+*.cxx    text diff=cpp
+*.cpp    text diff=cpp
+*.c++    text diff=cpp
+*.h      text diff=cpp
+*.hh     text diff=cpp
+*.hpp    text diff=cpp
+*.hxx    text diff=cpp
+*.h++    text diff=cpp
+*.inl    text diff=cpp
+
+# BGFX Shader files
+*.sc     text
+*.sh     text diff=bash
+
+# CMake
+CMakeLists.txt    text
+*.cmake           text
+
+# Scripts
+*.py     text diff=python
+*.sh     text diff=bash
+*.bat    text
+*.cmd    text
+*.ps1    text
+
+# Configuration & Documentation
+*.json   text
+*.xml    text
+*.yaml   text
+*.yml    text
+*.md     text diff=markdown
+*.txt    text
+*.ini    text
+*.cfg    text
+*.conf   text
+*.toml   text
+
+# ============================================================================
+# Binary Files - Never normalize, always treat as binary
+# ============================================================================
+# Images
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.bmp    binary
+*.tga    binary
+*.tif    binary
+*.tiff   binary
+*.webp   binary
+*.svg    text
+*.psd    binary
+*.xcf    binary
+
+# 3D Models & Assets
+*.obj    binary
+*.fbx    binary
+*.gltf   text
+*.glb    binary
+*.blend  binary
+*.3ds    binary
+*.dae    text
+*.stl    binary
+
+# Audio
+*.wav    binary
+*.mp3    binary
+*.ogg    binary
+*.flac   binary
+*.aiff   binary
+
+# Video
+*.mp4    binary
+*.avi    binary
+*.mov    binary
+*.mkv    binary
+*.webm   binary
+
+# Fonts
+*.ttf    binary
+*.otf    binary
+*.woff   binary
+*.woff2  binary
+*.eot    binary
+
+# Archives
+*.zip    binary
+*.tar    binary
+*.gz     binary
+*.7z     binary
+*.rar    binary
+
+# Compiled/Generated binaries
+*.exe    binary
+*.dll    binary
+*.so     binary
+*.dylib  binary
+*.lib    binary
+*.a      binary
+*.pdb    binary
+*.bin    binary
+
+# ============================================================================
+# Linguist Overrides for GitHub Language Statistics
+# ============================================================================
+# Mark vendor/third-party code to exclude from language stats
+3rdparty/** linguist-vendored
+
+# Mark generated files
+source/Shaders/bin/** linguist-generated
+
+# ============================================================================
+# Export Ignore - Files not included in git archive
+# ============================================================================
+.gitattributes   export-ignore
+.gitignore       export-ignore
+.gitmodules      export-ignore
+.vs/             export-ignore
+logs/            export-ignore

@@ -1,0 +1,49 @@
+# ============================================================================
+# Solstice Engine - Git Submodules Configuration
+# ============================================================================
+# This file defines external dependencies managed as Git submodules.
+# 
+# To clone the repository with all submodules:
+#   git clone --recursive https://github.com/<username>/Solstice.git
+#
+# To update all submodules after cloning:
+#   git submodule update --init --recursive
+#
+# To pull latest changes for all submodules:
+#   git submodule update --remote --merge
+# ============================================================================
+
+[submodule "3rdparty/bgfx"]
+	path = 3rdparty/bgfx
+	url = https://github.com/bkarber/bgfx.cmake.git
+	branch = master
+
+[submodule "3rdparty/bimg"]
+	path = 3rdparty/bimg
+	url = https://github.com/bkarber/bimg.git
+	branch = master
+
+[submodule "3rdparty/bx"]
+	path = 3rdparty/bx
+	url = https://github.com/bkarber/bx.git
+	branch = master
+
+[submodule "3rdparty/sdl3"]
+	path = 3rdparty/sdl3
+	url = https://github.com/libsdl-org/SDL.git
+	branch = main
+
+[submodule "3rdparty/imgui"]
+	path = 3rdparty/imgui
+	url = https://github.com/ocornut/imgui.git
+	branch = master
+
+[submodule "3rdparty/sdl_mixer"]
+	path = 3rdparty/sdl_mixer
+	url = https://github.com/libsdl-org/SDL_mixer.git
+	branch = main
+
+[submodule "3rdparty/tinygltf"]
+	path = 3rdparty/tinygltf
+	url = https://github.com/syoyo/tinygltf.git
+	branch = release
