@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../SolsticeExport.hxx"
+#include "../Solstice.hxx"
 #include <thread>
 #include <atomic>
 #include <future>

@@ -50,7 +50,7 @@ cmake --build out/build/default
 Follow conventional commit format:
 
 ```
-<type>(<scope>): <description>
+[<type>:<scope>] <description>
 
 [optional body]
 
@@ -71,7 +71,7 @@ Types:
 
 Example:
 ```
-feat(physics): add continuous collision detection for convex hulls
+[feat:physics] add continuous collision detection for convex hulls
 
 Implements CCD using GJK algorithm with support for sphere, box,
 and convex hull colliders.

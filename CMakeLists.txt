@@ -18,6 +18,8 @@ add_library(SolsticeEngine SHARED
     "source/Physics/GJK.cxx"
     "source/Physics/CCD.cxx"
     "source/Physics/LightSource.cxx"
+    "source/Physics/Fluid.cxx"
+    "source/Physics/NSSolver.cxx"
     "source/UI/Window.cxx"
     "source/UI/UISystem.cxx"
     "source/UI/Widgets.cxx"
@@ -28,6 +30,10 @@ add_library(SolsticeEngine SHARED
     "source/Render/MeshFactory.cxx"
     "source/Render/AssetLoader.cxx"
     "source/Render/SoftwareRenderer.cxx"
+    "source/Render/PostProcessing.cxx"
+    "source/Scripting/BytecodeVM.cxx"
+    "source/Scripting/Compiler.cxx"
+    "source/Scripting/ScriptBindings.cxx"
 )
 
 # Set up include directories for the library

@@ -4,8 +4,6 @@ project(PhysicsPlayground)
 # Create the executable
 add_executable(PhysicsPlayground
     "Test.cxx"
-    "../../source/Scripting/BytecodeVM.cxx"
-    "../../source/Scripting/Compiler.cxx"
 )
 
 # Link against the Solstice engine

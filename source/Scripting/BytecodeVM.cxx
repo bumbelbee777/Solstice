@@ -39,7 +39,8 @@ void BytecodeVM::Run() {
     bool running = true;
     while (running && m_IP < m_Program.Instructions.size()) {
         const auto& inst = m_Program.Instructions[m_IP];
-        m_IP++;
+        // Don't auto-increment IP here, let instructions handle it or do it at end if not jumped
+        size_t nextIP = m_IP + 1;
 
         switch (inst.Op) {
             case OpCode::NOP: break;
@@ -48,6 +49,59 @@ void BytecodeVM::Run() {
             case OpCode::PUSH_CONST: Push(inst.Operand); break;
             case OpCode::POP: Pop(); break;
             case OpCode::DUP: Push(Peek()); break;
+
+            case OpCode::JMP: {
+                if (std::holds_alternative<int64_t>(inst.Operand)) {
+                    nextIP = (size_t)std::get<int64_t>(inst.Operand);
+                }
+                break;
+            }
+            case OpCode::JMP_IF: {
+                Value cond = Pop();
+                bool isTrue = false;
+                if (std::holds_alternative<int64_t>(cond)) isTrue = std::get<int64_t>(cond) != 0;
+                // else if (std::holds_alternative<double>(cond)) isTrue = std::get<double>(cond) != 0.0;
+                
+                if (isTrue) {
+                    if (std::holds_alternative<int64_t>(inst.Operand)) {
+                        nextIP = (size_t)std::get<int64_t>(inst.Operand);
+                    }
+                }
+                break;
+            }
+
+            case OpCode::EQ: {
+                Value b = Pop();
+                Value a = Pop();
+                Push((int64_t)(a == b ? 1 : 0));
+                break;
+            }
+            case OpCode::NEQ: {
+                Value b = Pop();
+                Value a = Pop();
+                Push((int64_t)(a != b ? 1 : 0));
+                break;
+            }
+            case OpCode::LT: {
+                Value b = Pop();
+                Value a = Pop();
+                if (std::holds_alternative<int64_t>(a) && std::holds_alternative<int64_t>(b)) {
+                    Push((int64_t)(std::get<int64_t>(a) < std::get<int64_t>(b) ? 1 : 0));
+                } else {
+                    Push((int64_t)0); // Type mismatch or not supported
+                }
+                break;
+            }
+            case OpCode::GT: {
+                Value b = Pop();
+                Value a = Pop();
+                if (std::holds_alternative<int64_t>(a) && std::holds_alternative<int64_t>(b)) {
+                    Push((int64_t)(std::get<int64_t>(a) > std::get<int64_t>(b) ? 1 : 0));
+                } else {
+                    Push((int64_t)0);
+                }
+                break;
+            }
 
             case OpCode::MOV_REG: {
                 if (inst.RegisterIndex < m_Registers.size()) {
@@ -111,14 +165,17 @@ void BytecodeVM::Run() {
                     if (m_Natives.count(name)) {
                         Value ret = m_Natives[name](args);
                         if (ret.index() != 0 || std::holds_alternative<std::string>(ret) || std::holds_alternative<double>(ret)) {
-                            Push(ret);
+                             // Correctly Handle void/empty return if needed, but here we assume Variant 0 is int64 0 which is safe-ish default
                         }
+                        // Always push result? Or depends on function?
+                        // For now, let's just push it. The compiler might POP it if statement.
+                        Push(ret);
                     } else {
                         throw std::runtime_error("Unknown native function: " + name);
                     }
                 } else if (std::holds_alternative<int64_t>(inst.Operand)) {
-                    m_CallStack.push_back(m_IP);
-                    m_IP = (size_t)std::get<int64_t>(inst.Operand);
+                    m_CallStack.push_back(nextIP); // Ret to next
+                    nextIP = (size_t)std::get<int64_t>(inst.Operand);
                 }
                 break;
             }
@@ -127,7 +184,7 @@ void BytecodeVM::Run() {
                 if (m_CallStack.empty()) {
                     running = false;
                 } else {
-                    m_IP = m_CallStack.back();
+                    nextIP = m_CallStack.back();
                     m_CallStack.pop_back();
                 }
                 break;
@@ -135,6 +192,8 @@ void BytecodeVM::Run() {
             
             default: break;
         }
+        
+        m_IP = nextIP;
     }
 }
 

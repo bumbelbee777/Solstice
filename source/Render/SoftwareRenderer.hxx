@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../SolsticeExport.hxx"
+#include "../Solstice.hxx"
 #include <Core/Allocator.hxx>
 #include <Core/Async.hxx>
 #include <Render/Scene.hxx>
@@ -13,6 +13,7 @@
 #include <vector>
 #include <array>
 #include <string>
+#include <Render/PostProcessing.hxx>
 #include <bgfx/bgfx.h>
 
 // Forward declarations
@@ -57,6 +58,12 @@ public:
     
     // Present to screen
     void Present();
+
+    // VSync Control
+    void SetVSync(bool Enable);
+
+    // Optimization Control
+    void SetOptimizeStaticBuffers(bool Enable) { m_OptimizeStaticBuffers = Enable; }
     
     // Resize viewport
     void Resize(int NewWidth, int NewHeight);
@@ -142,12 +149,19 @@ private:
     
     // SIMD optimization
     bool m_UseSIMD{true};
+
+    // Optimization flags
+    bool m_OptimizeStaticBuffers{true};
+    bool m_VSyncEnabled{true};
     
     // Memory management
     Core::ArenaAllocator m_FrameAllocator;
     
     // Physics debug
     bool m_ShowPhysicsDebug{false};
+
+    // Post Processing
+    std::unique_ptr<PostProcessing> m_PostProcessing; 
 
     // Optional physics integration
     Solstice::ECS::Registry* m_PhysicsRegistry{nullptr};

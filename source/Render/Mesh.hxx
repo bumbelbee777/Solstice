@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../SolsticeExport.hxx"
+#include "../Solstice.hxx"
 #include <Math/Vector.hxx>
 #include <Math/Matrix.hxx>
 #include <Render/Material.hxx>
@@ -94,7 +94,10 @@ struct SubMesh {
 // Mesh - contains geometry and material assignments
 class Mesh {
 public:
-    Mesh() = default;
+    Mesh() {
+        VertexBufferHandle.Handle = 0xFFFF; // bgfx::kInvalidHandle
+        IndexBufferHandle.Handle = 0xFFFF;
+    }
     
     // Bounds (kept for API compatibility, though less critical for floats)
     Math::Vec3 BoundsMin;
@@ -105,6 +108,21 @@ public:
     
     // Index buffer
     std::vector<uint32_t> Indices;
+
+    // GPU Handles for Static optimization
+    // We use void* to avoid including bgfx.h in the header (keep it lightweight)
+    // In reality, these are bgfx::VertexBufferHandle and bgfx::IndexBufferHandle (uint16_t)
+    union {
+        void* Ptr;
+        uint16_t Handle;
+    } VertexBufferHandle = { nullptr }; // set Handle to kInvalidHandle (UINT16_MAX) in ctor
+
+    union {
+        void* Ptr;
+        uint16_t Handle;
+    } IndexBufferHandle = { nullptr };
+
+    bool IsStatic = false; // If true, buffers are uploaded once and reused
     
     // Submeshes (material groups)
     std::vector<SubMesh> SubMeshes;

@@ -17,7 +17,8 @@ enum class ColliderType {
     Box,
     Triangle,
     Capsule,       // Sphere-swept line segment
-    ConvexHull     // General convex polyhedron
+    ConvexHull,    // General convex polyhedron
+    Tetrahedron   // Tetrahedron collider type
 };
 
 struct AABB {

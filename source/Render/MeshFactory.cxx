@@ -8,7 +8,6 @@ namespace Solstice::Render {
 namespace MeshFactory {
 
 std::unique_ptr<Mesh> CreateCube(float Size) {
-    SIMPLE_LOG("MeshFactory: Creating Cube with size " + std::to_string(Size));
     auto MeshPtr = std::make_unique<Mesh>();
     float Half = Size * 0.5f;
     
@@ -83,17 +82,7 @@ std::unique_ptr<Mesh> CreateCube(float Size) {
     }
     
     MeshPtr->AddSubMesh(0, 0, 6 * 2 * 3); // 6 faces, 2 tris, 3 indices
-    
-    SIMPLE_LOG("MeshFactory: Cube created. Vertices: " + std::to_string(MeshPtr->Vertices.size()) + 
-               ", Indices: " + std::to_string(MeshPtr->Indices.size()));
-    SIMPLE_LOG("MeshFactory: Bounds: Min(" + 
-               std::to_string(MeshPtr->BoundsMin.x) + ", " + 
-               std::to_string(MeshPtr->BoundsMin.y) + ", " + 
-               std::to_string(MeshPtr->BoundsMin.z) + ") Max(" + 
-               std::to_string(MeshPtr->BoundsMax.x) + ", " + 
-               std::to_string(MeshPtr->BoundsMax.y) + ", " + 
-               std::to_string(MeshPtr->BoundsMax.z) + ")");
-    
+
     return MeshPtr;
 }
 

@@ -8,6 +8,7 @@
 #include <Render/PhysicsBridge.hxx>
 #include <Physics/PhysicsSystem.hxx>
 #include <Physics/RigidBody.hxx>
+#include <Physics/ConvexHullFactory.hxx>
 #include <Entity/Registry.hxx>
 #include <Math/Vector.hxx>
 #include <Math/Quaternion.hxx>
@@ -16,10 +17,13 @@
 #include <Core/Audio.hxx>
 #include <Scripting/BytecodeVM.hxx>
 #include <Scripting/Compiler.hxx>
+#include <Scripting/ScriptBindings.hxx>
 
 #include <imgui.h>
 
 #include <iostream>
+#include <Physics/ConvexHullFactory.hxx>
+#include <Render/Mesh.hxx>
 #include <chrono>
 #include <string>
 #include <bgfx/bgfx.h>
@@ -39,31 +43,49 @@ int main() {
     try {
         // Initialize job system for async operations
         Core::JobSystem::Instance().Initialize();
-        
+
         // Initialize Audio
         Core::Audio::AudioManager::Instance().Initialize();
-        
+
         // Create window
         Window window(1280, 720, "Solstice Engine - Physics Playground");
 
         std::cout << "=== Solstice Engine - Physics Playground ===" << std::endl;
-        // Initialize Moonwalk scripting VM
         Solstice::Scripting::BytecodeVM vm;
-        // Register native WriteLn function
-        vm.RegisterNative("WriteLn", [](const std::vector<Solstice::Scripting::Value>& args) -> Solstice::Scripting::Value {
-            if (!args.empty() && std::holds_alternative<std::string>(args[0])) {
-                std::cout << std::get<std::string>(args[0]) << std::endl;
+        // Register bindings
+        // We need Scene for Render bindings, but Scene is created later.
+        // For this test we pass nullptr as Scene to test basics first, or move Scene creation up.
+        // Let's test VM basics first without Render bindings that need scene instance yet.
+        Solstice::Scripting::RegisterScriptBindings(vm, nullptr);
+
+        Solstice::Scripting::Compiler compiler;
+        std::string script = R"(
+            @Entry {
+                print("Starting Moonwalk Script...");
+                let x = 10;
+                let i = 0;
+                while (i < 3) {
+                    print("Loop iteration", i);
+                    i = i + 1;
+                }
+
+                if (x == 10) {
+                    print("X is 10!");
+                } else {
+                    print("X is NOT 10");
+                }
+
+                print("Script finished.");
             }
-            return Solstice::Scripting::Value();
-        });
-        // Create a simple program that prints a message
-        Solstice::Scripting::Program prog;
-        prog.Add(Solstice::Scripting::OpCode::PUSH_CONST, std::string("Hello, Moonwalk!"));
-        prog.Add(Solstice::Scripting::OpCode::PUSH_CONST, int64_t(1)); // arg count
-        prog.Add(Solstice::Scripting::OpCode::CALL, std::string("WriteLn"));
-        prog.Add(Solstice::Scripting::OpCode::HALT);
-        vm.LoadProgram(prog);
-        vm.Run();
+        )";
+
+        try {
+            auto prog = compiler.Compile(script);
+            vm.LoadProgram(prog);
+            vm.Run();
+        } catch (const std::exception& e) {
+            std::cerr << "Script Error: " << e.what() << std::endl;
+        }
         std::cout << "Controls:" << std::endl;
         std::cout << "  E - Pick up/Drop object" << std::endl;
         std::cout << "  Right Mouse - Lock camera" << std::endl;
@@ -75,12 +97,12 @@ int main() {
         SoftwareRenderer Renderer(1280, 720, 16, window.NativeWindow());
         Renderer.SetWireframe(false);
         SIMPLE_LOG("Renderer created");
-        
+
         // Initialize UI System AFTER renderer (requires BGFX)
         SIMPLE_LOG("Initializing UISystem...");
         UISystem::Instance().Initialize(window.NativeWindow());
         SIMPLE_LOG("UISystem initialized");
-        
+
         // CRITICAL: Share ImGui context from DLL to executable
         // This fixes the DLL/EXE boundary issue where each module has its own ImGui static data
         void* imguiContext = UISystem::Instance().GetImGuiContext();
@@ -90,30 +112,30 @@ int main() {
         } else {
             SIMPLE_LOG("WARNING: Failed to get ImGui context from DLL!");
         }
-        
+
         // Create scene + libraries
         Scene DemoScene;
         MeshLibrary MeshLib;
         MaterialLibrary MatLib;
         DemoScene.SetMeshLibrary(&MeshLib);
         DemoScene.SetMaterialLibrary(&MatLib);
-        
+
         // Create materials with different colors
         uint32_t RedMat = MatLib.AddMaterial(Materials::CreateDefault());
         MatLib.GetMaterial(RedMat)->SetAlbedoColor(Vec3(1.0f, 0.2f, 0.2f), 0.3f);
-        
+
         uint32_t GreenMat = MatLib.AddMaterial(Materials::CreateDefault());
         MatLib.GetMaterial(GreenMat)->SetAlbedoColor(Vec3(0.2f, 1.0f, 0.2f), 0.3f);
-        
+
         uint32_t BlueMat = MatLib.AddMaterial(Materials::CreateDefault());
         MatLib.GetMaterial(BlueMat)->SetAlbedoColor(Vec3(0.2f, 0.2f, 1.0f), 0.3f);
-        
+
         uint32_t YellowMat = MatLib.AddMaterial(Materials::CreateDefault());
         MatLib.GetMaterial(YellowMat)->SetAlbedoColor(Vec3(1.0f, 1.0f, 0.2f), 0.3f);
-        
+
         uint32_t GrayMat = MatLib.AddMaterial(Materials::CreateDefault());
         MatLib.GetMaterial(GrayMat)->SetAlbedoColor(Vec3(0.5f, 0.5f, 0.5f), 0.5f);
-        
+
         // Create meshes
         SIMPLE_LOG("Creating meshes...");
         uint32_t PlaneMeshID = MeshLib.AddMesh(MeshFactory::CreatePlane(1000.0f, 1000.0f)); // Much larger plane
@@ -121,29 +143,29 @@ int main() {
         uint32_t SphereMeshID = MeshLib.AddMesh(MeshFactory::CreateSphere(0.5f, 16));
         uint32_t TetraMeshID = MeshLib.AddMesh(MeshFactory::CreateTetrahedron(0.5f));
         uint32_t CylinderMeshID = MeshLib.AddMesh(MeshFactory::CreateCylinder(0.5f, 1.0f, 16));
-        
+
         // Initialize Physics + ECS
         SIMPLE_LOG("Initializing Physics System...");
         ECS::Registry Registry;
         Physics::PhysicsSystem::Instance().Start(Registry);
-        
+
         // Create plane - static ground
         auto PlaneObjID = DemoScene.AddObject(PlaneMeshID, Vec3(0, 0, 0), Quaternion(), Vec3(1, 1, 1), ObjectType_Static);
-        
+
         // Apply gray material to plane
         Mesh* PlaneMesh = MeshLib.GetMesh(PlaneMeshID);
         if (PlaneMesh && !PlaneMesh->SubMeshes.empty()) {
             PlaneMesh->SubMeshes[0].MaterialID = GrayMat;
         }
-        
+
         // Create dynamic objects with physics
         struct PhysicsObject {
             SceneObjectID renderID;
             ECS::EntityId entityID;
         };
-        
+
         std::vector<PhysicsObject> dynamicObjects;
-        
+
         // Sphere
         {
             auto renderID = DemoScene.AddObject(SphereMeshID, Vec3(-6, 8, -8), Quaternion(), Vec3(1, 1, 1), ObjectType_Dynamic);
@@ -157,7 +179,7 @@ int main() {
             rb.RenderObjectID = renderID;
             dynamicObjects.push_back({renderID, entityID});
         }
-        
+
         // Cube
         {
             auto renderID = DemoScene.AddObject(CubeMeshID, Vec3(0, 10, -8), Quaternion(), Vec3(1, 1, 1), ObjectType_Dynamic);
@@ -171,21 +193,47 @@ int main() {
             rb.RenderObjectID = renderID;
             dynamicObjects.push_back({renderID, entityID});
         }
-        
+
         // Tetrahedron
         {
             auto renderID = DemoScene.AddObject(TetraMeshID, Vec3(6, 12, -8), Quaternion(), Vec3(1, 1, 1), ObjectType_Dynamic);
+
+            // Create physics representation matching the visual mesh
+            auto tetraMesh = Solstice::Render::MeshFactory::CreateTetrahedron(0.5f);
+            auto convexHull = Solstice::Physics::GenerateConvexHull(*tetraMesh);
+
             auto entityID = Registry.Create();
             auto& rb = Registry.Add<Physics::RigidBody>(entityID);
             rb.Position = Vec3(6, 12, -8);
-            rb.SetBoxInertia(0.8f, Vec3(0.5f, 0.5f, 0.5f)); // Use box inertia instead of sphere
-            rb.Restitution = 0.1f; // Much lower restitution to prevent excessive bouncing
-            rb.Type = Physics::ColliderType::Box; // Use box collider for stable face resting
-            rb.HalfExtents = Vec3(0.5f, 0.5f, 0.5f); // Approximate bounding box
+
+            // Tetrahedron inertia: For a regular tetrahedron with edge length a,
+            // I = m * a^2 / 20 for rotation about any axis through the center
+            // For size 0.5 (half-extent), the edge length is approximately 2 * sqrt(2) * 0.5 = sqrt(2) ≈ 1.414
+            // Actually, for a tetrahedron with vertices at (±s, ±s, ±s) pattern, it's more complex
+            // For a regular tetrahedron inscribed in a cube of side 2s, edge length ≈ 2.45s
+            // But simpler: use the actual bounding radius approach
+            // I ≈ m * r^2 / 5 for a tetrahedron (similar to sphere but slightly different)
+            rb.SetMass(0.8f);
+            float radius = rb.Radius; // ≈ 0.866
+            float I = 0.8f * radius * radius / 5.0f; // ≈ 0.8 * 0.75 / 5 = 0.12
+            float invI = 1.0f / I;
+            rb.InverseInertiaTensor = Vec3(invI, invI, invI);
+
+            rb.Restitution = 0.1f;
+            rb.Friction = 0.8f; // Higher friction for stable resting
+            // Use Tetrahedron collider type with convex hull geometry
+            rb.Type = Physics::ColliderType::ConvexHull;
+            rb.Hull = convexHull; // Use generated convex hull for collision shape
+            // Compute bounding radius for tetrahedron (distance from center to a vertex)
+            rb.Radius = std::sqrt(0.5f * 0.5f + 0.5f * 0.5f + 0.5f * 0.5f); // ≈ 0.866f
+            rb.EnableCCD = true; // Enable CCD for tetrahedron to prevent tunneling
+            rb.CCDMotionThreshold = 1.0f; // Low threshold ensures CCD checks
+            rb.AngularDrag = 0.25f; // Higher angular drag to help it settle
+            rb.LinearDamping = 0.1f; // Small linear damping
             rb.RenderObjectID = renderID;
             dynamicObjects.push_back({renderID, entityID});
         }
-        
+
         // Cylinder
         {
             auto renderID = DemoScene.AddObject(CylinderMeshID, Vec3(-3, 14, -8), Quaternion(), Vec3(1, 1, 1), ObjectType_Dynamic);
@@ -215,9 +263,9 @@ int main() {
             rb.RenderObjectID = renderID;
             dynamicObjects.push_back({renderID, entityID});
         }
-        
+
         SIMPLE_LOG("Physics playground created with " + std::to_string(dynamicObjects.size()) + " dynamic objects");
-        
+
         // Create camera
         Camera Cam;
         Cam.Position = Vec3(0, 3, 8);
@@ -231,7 +279,7 @@ int main() {
         int pendingW = 1280, pendingH = 720;
         auto lastResizeEvent = std::chrono::high_resolution_clock::now();
         bool mouseLocked = false;
-        
+
         ECS::EntityId grabbedEntity = 0;
         float grabbedDistance = 3.0f;
 
@@ -241,7 +289,7 @@ int main() {
             pendingW = w; pendingH = h;
             lastResizeEvent = std::chrono::high_resolution_clock::now();
         });
-        
+
         window.SetKeyCallback([&](int key, int scancode, int action, int mods){
             if (action == 1 && (key == 'f' || key == 'F')) {
                 bool fs = window.IsFullscreen();
@@ -251,7 +299,7 @@ int main() {
                 pendingW = fb.first; pendingH = fb.second;
                 lastResizeEvent = std::chrono::high_resolution_clock::now();
             }
-            
+
             // ESC - release mouse lock
             if (action == 1 && key == KEY_ESCAPE) {
                 if (mouseLocked) {
@@ -262,26 +310,26 @@ int main() {
                     Renderer.SetShowCrosshair(false);
                 }
             }
-            
+
             // E - Pick up/Drop
             if (action == 1 && (key == 'e' || key == 'E')) {
                 if (grabbedEntity == 0) {
                     // Find closest object in front of camera
                     float minDist = 10.0f;
                     ECS::EntityId closest = 0;
-                    
+
                     Registry.ForEach<Physics::RigidBody>([&](ECS::EntityId eid, const Physics::RigidBody& rb) {
                         Vec3 toObj = rb.Position - Cam.Position;
                         float dist = toObj.Magnitude();
                         Vec3 forward = Cam.Front;
                         float dot = toObj.Normalized().Dot(forward);
-                        
+
                         if (dot > 0.7f && dist < minDist) {
                             minDist = dist;
                             closest = eid;
                         }
                     });
-                    
+
                     if (closest != 0) {
                         grabbedEntity = closest;
                         grabbedDistance = minDist;
@@ -299,7 +347,7 @@ int main() {
                     SIMPLE_LOG("Dropped object");
                 }
             }
-            
+
             // Ctrl+Alt - lock mouse
             if (action == 1 && (mods & (MOD_CTRL|MOD_ALT)) == (MOD_CTRL|MOD_ALT)) {
                 mouseLocked = true;
@@ -315,12 +363,12 @@ int main() {
                 Core::Audio::AudioManager::Instance().PlaySound3D("assets/test.wav", {0, 0, 0}, 50.0f);
             }
         });
-        
+
         window.SetCursorPosCallback([&](double dx, double dy){
             if (!mouseLocked) return;
             Cam.ProcessMouseMovement(static_cast<float>(dx), static_cast<float>(-dy));
         });
-        
+
         window.SetMouseButtonCallback([&](int button, int action, int mods){
             if (button == 2 && action == 1) {
                 mouseLocked = !mouseLocked;
@@ -336,21 +384,21 @@ int main() {
         auto fpsLast = last;
         int frameCount = 0;
         float currentFPS = 0.0f;
-        
+
         // Camera movement speed
         const float camSpeed = 5.0f;
-        
+
         while (!window.ShouldClose()) {
             window.PollEvents();
-            
+
             // Start new ImGui frame
             UISystem::Instance().NewFrame();
-            
+
             auto nowTs = std::chrono::high_resolution_clock::now();
             float dt = std::chrono::duration<float>(nowTs - last).count();
             dt = std::min(dt, 0.033f); // Cap at 30 FPS to avoid instability
             last = nowTs;
-            
+
             // Camera movement (WASD or ZQSD depending on layout, plus arrow keys)
             // Use scancodes (position-based) instead of keycodes (character-based)
             if (mouseLocked) {
@@ -379,22 +427,26 @@ int main() {
                     Cam.Position.y -= camSpeed * dt;
                 }
             }
-            
+
             // Update Audio Listener
             Core::Audio::Listener listener;
             listener.Position = Cam.Position;
             listener.Forward = Cam.Front;
             listener.Up = Cam.Up;
             Core::Audio::AudioManager::Instance().SetListener(listener);
-            
+
             // Handle resize
             if (pendingResize) {
                 if (std::chrono::duration<float, std::milli>(nowTs - lastResizeEvent).count() > 120.0f) {
+                    // Enforce minimum size
+                    pendingW = std::max(pendingW, 800);
+                    pendingH = std::max(pendingH, 600);
+
                     Renderer.Resize(pendingW, pendingH);
                     pendingResize = false;
                 }
             }
-            
+
             // Update grabbed object position
             if (grabbedEntity != 0) {
                 auto* rb = Registry.Has<Physics::RigidBody>(grabbedEntity) ? &Registry.Get<Physics::RigidBody>(grabbedEntity) : nullptr;
@@ -402,7 +454,7 @@ int main() {
                     Vec3 targetPos = Cam.Position + Cam.Front * grabbedDistance;
                     Vec3 dir = targetPos - rb->Position;
                     float dist = dir.Magnitude();
-                    
+
                     // Use a P-controller for velocity to move towards target
                     // v = (target - current) * kp, but clamp to avoid injecting large energy
                     const float kp = 6.0f;
@@ -411,53 +463,53 @@ int main() {
                     float speed = desired.Magnitude();
                     if (speed > maxSpeed) desired = desired * (maxSpeed / speed);
                     rb->Velocity = desired;
-                    
+
                     // Dampen angular velocity to prevent spinning while held
                     rb->AngularVelocity = rb->AngularVelocity * 0.9f;
-                    
+
                     // Wake up the body if it was sleeping (not implemented yet, but good practice)
-                    rb->IsStatic = false; 
+                    rb->IsStatic = false;
                 }
             }
-            
+
             // Fixed timestep accumulator
             static float accumulator = 0.0f;
             accumulator += dt;
-            
+
             const float physicsStep = 1.0f / 60.0f;
             const int maxSubSteps = 5; // Prevent spiral of death
             int steps = 0;
-            
+
             while (accumulator >= physicsStep && steps < maxSubSteps) {
                 Physics::PhysicsSystem::Instance().Update(physicsStep);
                 accumulator -= physicsStep;
                 steps++;
             }
-            
+
             // Sync physics positions to render scene
             SyncPhysicsToScene(Registry, DemoScene);
-            
+
             // Render scene
-            Renderer.Clear(Vec4(0.1f, 0.1f, 0.2f, 1.0f));
+            Renderer.Clear(Vec4(0.4f, 0.6f, 0.9f, 1.0f));
             Renderer.RenderScene(DemoScene, Cam);
-            
+
             // Render Dear ImGui debug overlay
             ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
             ImGui::SetNextWindowSize(ImVec2(320, 200), ImGuiCond_FirstUseEver);
             if (ImGui::Begin("Debug Info", nullptr, ImGuiWindowFlags_NoResize)) {
                 ImGui::Text("Solstice Engine - Physics Playground");
                 ImGui::Separator();
-                
+
                 ImGui::Text("FPS: %.1f", currentFPS);
                 ImGui::Text("Frame Time: %.2f ms", dt * 1000.0f);
                 ImGui::Separator();
-                
+
                 ImGui::Text("Camera Position:");
                 ImGui::Text("  X: %.2f  Y: %.2f  Z: %.2f", Cam.Position.x, Cam.Position.y, Cam.Position.z);
                 ImGui::Text("Camera Rotation:");
                 ImGui::Text("  Yaw: %.1f  Pitch: %.1f", Cam.Yaw, Cam.Pitch);
                 ImGui::Separator();
-                
+
                 ImGui::Text("Physics Objects: %zu", dynamicObjects.size());
                 if (grabbedEntity != 0) {
                     ImGui::Text("Object Grabbed: Yes");
@@ -465,20 +517,20 @@ int main() {
                     ImGui::Text("Object Grabbed: No");
                 }
                 ImGui::Separator();
-                
+
                 ImGui::Text("Controls:");
                 ImGui::BulletText("E - Pick up/Drop object");
                 ImGui::BulletText("Right Mouse - Lock camera");
                 ImGui::BulletText("WASD - Move camera");
             }
             ImGui::End();
-            
+
             // Render ImGui
             UISystem::Instance().Render();
-            
+
             // Present frame
             Renderer.Present();
-            
+
             // FPS counter
             frameCount++;
             float secElapsed = std::chrono::duration<float>(nowTs - fpsLast).count();
@@ -495,7 +547,7 @@ int main() {
         Physics::PhysicsSystem::Instance().Stop();
         Core::Audio::AudioManager::Instance().Shutdown();
         Core::JobSystem::Instance().Shutdown();
-        
+
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         return -1;

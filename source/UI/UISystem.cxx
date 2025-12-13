@@ -118,7 +118,6 @@ void UISystem::Initialize(SDL_Window* Window) {
     CreateBGFXResources();
     
     m_Initialized = true;
-    SIMPLE_LOG("UISystem initialized with BGFX rendering backend");
 }
 
 void UISystem::CreateBGFXResources() {
@@ -129,9 +128,6 @@ void UISystem::CreateBGFXResources() {
         .add(bgfx::Attrib::TexCoord0, 2, bgfx::AttribType::Float)
         .add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
         .end();
-    
-    SIMPLE_LOG("UISystem: Vertex layout stride: " + std::to_string(m_Layout.getStride()) + 
-               ", sizeof(ImDrawVert): " + std::to_string(sizeof(ImDrawVert)));
     
     // Load shaders
     bgfx::ShaderHandle vsh = LoadShader("vs_imgui.bin");
@@ -160,8 +156,6 @@ void UISystem::CreateBGFXResources() {
     }
     
     // Note: Texture creation will happen lazily during render via ProcessTextureUpdates()
-    
-    SIMPLE_LOG("UISystem: Created BGFX resources successfully");
 }
 
 void UISystem::DestroyBGFXResources() {
@@ -189,7 +183,6 @@ void UISystem::Shutdown() {
     
     m_Initialized = false;
     m_Window = nullptr;
-    SIMPLE_LOG("UISystem shutdown");
 }
 
 void UISystem::NewFrame() {
@@ -253,8 +246,6 @@ void UISystem::RenderDrawData() {
                     
                     texData->SetTexID(static_cast<ImTextureID>(th.idx));
                     texData->SetStatus(ImTextureStatus_OK);
-                    
-                    SIMPLE_LOG("UISystem: Created texture " + std::to_string(width) + "x" + std::to_string(height));
                 }
                 break;
                 

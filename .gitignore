@@ -1,3 +1,5 @@
+./a.py
+
 out/
 build/
 cmake-build-*/

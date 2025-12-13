@@ -1,7 +1,7 @@
 // Debug.hxx
 #pragma once
 
-#include "../SolsticeExport.hxx"
+#include "../Solstice.hxx"
 #include <string>
 #include <sstream>
 #include "Async.hxx"

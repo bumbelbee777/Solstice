@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../SolsticeExport.hxx"
+#include "../Solstice.hxx"
 #include <Entity/System.hxx>
 #include <bgfx/bgfx.h>
 

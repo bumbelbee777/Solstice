@@ -7,6 +7,7 @@
 #include <string>
 #include <functional>
 #include <unordered_map>
+#include "../Solstice.hxx"
 
 namespace Solstice::Scripting {
 
@@ -67,7 +68,7 @@ namespace Solstice::Scripting {
         }
     };
 
-    class BytecodeVM {
+    class SOLSTICE_API BytecodeVM {
     public:
         BytecodeVM();
         

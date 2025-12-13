@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../SolsticeExport.hxx"
+#include "../Solstice.hxx"
 #include <Math/Vector.hxx>
 #include <Math/Matrix.hxx>
 #include <vector>

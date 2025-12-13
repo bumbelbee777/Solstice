@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../SolsticeExport.hxx"
+#include "../Solstice.hxx"
 #include "../Entity/Registry.hxx"
 #include "../Core/Async.hxx"
 #include <functional>

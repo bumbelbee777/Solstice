@@ -505,7 +505,7 @@ void PhysicsSystem::ResolveCollisions() {
     m_Solver.WarmStart();
     
     // Solve Velocity (ENHANCED: More iterations for box stacking)
-    for (int i = 0; i < 64; ++i) {
+    for (int i = 0; i < 48; ++i) {
         m_Solver.SolveVelocity();
     }
     
@@ -521,7 +521,7 @@ void PhysicsSystem::ResolveCollisions() {
     IntegratePosition(0.016f); // Use fixed dt matching the solver
     
     // Solve Position (ENHANCED: Aggressive projection-based correction)
-    for (int i = 0; i < 32; ++i) {
+    for (int i = 0; i < 64; ++i) {
         m_Solver.SolvePosition();
     }
     
