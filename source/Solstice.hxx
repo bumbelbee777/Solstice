@@ -1,7 +1,14 @@
-﻿#pragma once
+#pragma once
+
+#include <atomic>
 
 #define SOLSTICE_VERSION "0.1.0"
-#define SOLSTICE_BUILD_NUM "7"
+#define SOLSTICE_BUILD_NUM_MAJOR "7"
+#define SOLSTICE_BUILD_NUM_MINOR "0"
+#define SOLSTICE_BUILD_NUM_PATCH "0"
+#ifndef SOLSTICE_BUILD_GIT_COMMIT
+    #define SOLSTICE_BUILD_GIT_COMMIT "UNKNOWN" // To be set via CMake compiler options
+#endif
 #define SOLSTICE_DEVELOPMENT_BUILD 1
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -13,3 +20,11 @@
 #else
     #define SOLSTICE_API
 #endif
+
+namespace Solstice {
+extern std::atomic<bool> Initialized;
+
+SOLSTICE_API bool Initialize();
+SOLSTICE_API bool Reinitialize();
+SOLSTICE_API void Shutdown();
+}

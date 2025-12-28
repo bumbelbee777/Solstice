@@ -3,6 +3,7 @@
 #include "../Math/Quaternion.hxx"
 #include "../Math/Matrix.hxx"
 #include "../Math/SIMDVec3.hxx"
+#include "../Core/SIMD.hxx"
 #include "../Core/Debug.hxx"
 #include <cmath>
 #include <algorithm>
@@ -67,10 +68,21 @@ Math::Vec3 GetSupportPoint(const RigidBody& rb, const Math::Vec3& direction) {
             break;
 
         case ColliderType::Box: {
-            // Box support: pick corner with max dot product
-            localSupport.x = (localDir.x > 0) ? rb.HalfExtents.x : -rb.HalfExtents.x;
-            localSupport.y = (localDir.y > 0) ? rb.HalfExtents.y : -rb.HalfExtents.y;
-            localSupport.z = (localDir.z > 0) ? rb.HalfExtents.z : -rb.HalfExtents.z;
+            // Box support: pick corner with max dot product (SIMD optimized)
+            using Solstice::Core::SIMD::Vec4;
+            Vec4 dirVec(localDir.x, localDir.y, localDir.z, 0.0f);
+            Vec4 extents(rb.HalfExtents.x, rb.HalfExtents.y, rb.HalfExtents.z, 0.0f);
+
+            // Create sign mask: (dir > 0) ? 1.0 : -1.0
+            // Use comparison and blend (simplified with scalar for now, but structure allows SIMD)
+            Vec4 signs = dirVec; // Will use sign check
+            float dirArr[4], extArr[4];
+            dirVec.Store(dirArr);
+            extents.Store(extArr);
+
+            localSupport.x = (dirArr[0] > 0) ? extArr[0] : -extArr[0];
+            localSupport.y = (dirArr[1] > 0) ? extArr[1] : -extArr[1];
+            localSupport.z = (dirArr[2] > 0) ? extArr[2] : -extArr[2];
             break;
         }
 
@@ -82,37 +94,141 @@ Math::Vec3 GetSupportPoint(const RigidBody& rb, const Math::Vec3& direction) {
             }
             break;
 
+        case ColliderType::Capsule: {
+            // Capsule = sphere-swept line segment along local Y axis
+            // Support point is the furthest point on the capsule surface along direction
+            float halfHeight = rb.CapsuleHeight * 0.5f;
+            float radius = rb.CapsuleRadius;
+
+            // Project direction onto Y axis
+            float yProj = localDir.y;
+            float xyMag = std::sqrt(localDir.x * localDir.x + localDir.z * localDir.z);
+
+            if (xyMag < 1e-6f) {
+                // Direction is along Y axis - return top or bottom cap center
+                localSupport = Math::Vec3(0, (yProj > 0) ? (halfHeight + radius) : -(halfHeight + radius), 0);
+            } else {
+                // Normalize XY direction
+                float invXYMag = 1.0f / xyMag;
+                Math::Vec3 xyDir(localDir.x * invXYMag, 0, localDir.z * invXYMag);
+
+                // Check if we're in the cylindrical section or caps
+                // The cylindrical section extends from -halfHeight to +halfHeight
+                // The caps are hemispheres at y = ±halfHeight
+                float yAbs = std::abs(yProj);
+
+                if (yAbs * xyMag < halfHeight * xyMag) {
+                    // Cylindrical section - support is on the side
+                    localSupport = Math::Vec3(xyDir.x * radius, (yProj > 0) ? halfHeight : -halfHeight, xyDir.z * radius);
+                } else {
+                    // Spherical cap - support is on the hemisphere
+                    Math::Vec3 capCenter(0, (yProj > 0) ? halfHeight : -halfHeight, 0);
+                    // Direction from cap center to support point
+                    Math::Vec3 capDir(localDir.x, localDir.y, localDir.z);
+                    capDir = capDir.Normalized();
+                    localSupport = capCenter + capDir * radius;
+                }
+            }
+            break;
+        }
+
+        case ColliderType::Cylinder: {
+            // Oriented cylinder - support point on cylinder surface (caps + side)
+            // Cylinder axis is along local Y axis
+            float halfHeight = rb.CylinderHeight * 0.5f;
+            float radius = rb.CylinderRadius;
+
+            // Project direction onto Y axis
+            float yProj = localDir.y;
+            float xyMag = std::sqrt(localDir.x * localDir.x + localDir.z * localDir.z);
+
+            if (xyMag < 1e-6f) {
+                // Direction is along Y axis - return point on cap edge
+                // For a cylinder, when direction is purely vertical, we want a point on the cap edge
+                // Use an arbitrary direction in XZ plane (e.g., X axis)
+                localSupport = Math::Vec3(radius, (yProj > 0) ? halfHeight : -halfHeight, 0);
+            } else {
+                // Normalize XY direction for side/cap calculations
+                float invXYMag = 1.0f / xyMag;
+                Math::Vec3 xyDir(localDir.x * invXYMag, 0, localDir.z * invXYMag);
+
+                // Determine if we're hitting the cap or the side
+                // For a cylinder, the support point maximizes d · p where p is on the cylinder surface
+                // On the side: p = (r*dx/|dxz|, y, r*dz/|dxz|) with -h/2 ≤ y ≤ h/2
+                // Dot product = r*|dxz| + dy*y, maximized when y = sign(dy) * h/2
+                // On the cap: p = (r*dx/|dxz|, ±h/2, r*dz/|dxz|)
+                // Dot product = r*|dxz| + dy*(±h/2)
+
+                // Compare: side gives r*|dxz| + |dy|*h/2, cap gives r*|dxz| + |dy|*h/2
+                // They're equal at the boundary! So we need to check which region we're in.
+                // The boundary occurs when the direction's angle from horizontal equals the cap's angle.
+                // Actually, the correct check: we're on the cap if the direction vector, when projected
+                // onto the cap plane, would hit the cap edge. This happens when |dy|/|dxz| > h/(2r)
+
+                float yRatio = std::abs(yProj) / xyMag;
+                float capAngle = halfHeight / radius; // tan of cap angle
+
+                // Use a small bias to prefer side when close to boundary for stability
+                const float bias = 0.01f;
+                if (yRatio > capAngle + bias) {
+                    // Hitting the cap (top or bottom flat disk)
+                    // Y is fixed at ±halfHeight, X/Z are on the disk edge
+                    localSupport = Math::Vec3(xyDir.x * radius, (yProj > 0) ? halfHeight : -halfHeight, xyDir.z * radius);
+                } else {
+                    // Hitting the side (vertical cylindrical surface)
+                    // Maximize dot product: r*|dxz| + dy*y where y ∈ [-h/2, h/2]
+                    // Maximum occurs at y = sign(dy) * h/2
+                    float yCoord = (yProj > 0) ? halfHeight : -halfHeight;
+                    localSupport = Math::Vec3(xyDir.x * radius, yCoord, xyDir.z * radius);
+                }
+            }
+            break;
+        }
+
         case ColliderType::Tetrahedron:
             // Tetrahedron support: max dot product among up to 4 vertices
             // Use HullVertices if present (expected 4 vertices), otherwise fallback to ConvexHull support
             if (!rb.HullVertices.empty()) {
-                float maxDot = -1e9f;
-                for (const auto& v : rb.HullVertices) {
-                    float dot = v.Dot(localDir);
-                    if (dot > maxDot) { maxDot = dot; localSupport = v; }
-                }
-            } else if (rb.Hull) {
-                localSupport = rb.Hull->GetSupportPoint(localDir);
-            }
-            break;
-            // Let's assume Triangle is just a special case of ConvexHull or uses HullVertices.
-            // Let's use HullVertices for now as a fallback if Hull is null, or just assume Hull is used.
-            // Actually, for a specific Triangle type, we might want explicit vertices.
-            // But `RigidBody` struct in `RigidBody.hxx` (which I read) DOES NOT have `TriangleVertices`.
-            // It has `HullVertices`.
-            // Let's use `HullVertices` for Triangle type for now.
+                // Use SIMD to compute max dot product among vertices
+                using Solstice::Core::SIMD::Vec4;
+                if (rb.HullVertices.size() >= 4) {
+                    // Load 4 vertices
+                    Vec4 v0(rb.HullVertices[0].x, rb.HullVertices[0].y, rb.HullVertices[0].z, 0);
+                    Vec4 v1(rb.HullVertices[1].x, rb.HullVertices[1].y, rb.HullVertices[1].z, 0);
+                    Vec4 v2(rb.HullVertices[2].x, rb.HullVertices[2].y, rb.HullVertices[2].z, 0);
+                    Vec4 v3(rb.HullVertices[3].x, rb.HullVertices[3].y, rb.HullVertices[3].z, 0);
+                    Vec4 dir(localDir.x, localDir.y, localDir.z, 0);
 
-            if (!rb.HullVertices.empty()) {
-                float maxDot = -1e9f;
-                for (const auto& v : rb.HullVertices) {
-                    float dot = v.Dot(localDir);
-                    if (dot > maxDot) {
-                        maxDot = dot;
-                        localSupport = v;
+                    float dots[4];
+                    dots[0] = v0.Dot(dir);
+                    dots[1] = v1.Dot(dir);
+                    dots[2] = v2.Dot(dir);
+                    dots[3] = v3.Dot(dir);
+
+                    int maxIdx = 0;
+                    float maxDot = dots[0];
+                    for (int i = 1; i < 4; ++i) {
+                        if (dots[i] > maxDot) {
+                            maxDot = dots[i];
+                            maxIdx = i;
+                        }
+                    }
+                    localSupport = rb.HullVertices[maxIdx];
+                } else {
+                    // Fallback to scalar for fewer vertices
+                    float maxDot = -1e9f;
+                    for (const auto& v : rb.HullVertices) {
+                        float dot = v.Dot(localDir);
+                        if (dot > maxDot) {
+                            maxDot = dot;
+                            localSupport = v;
+                        }
                     }
                 }
             } else if (rb.Hull) {
-                 localSupport = rb.Hull->GetSupportPoint(localDir);
+                localSupport = rb.Hull->GetSupportPoint(localDir);
+            } else {
+                localSupport = Math::Vec3(0, 0, 0);
             }
             break;
 
@@ -320,8 +436,16 @@ bool GJK(const RigidBody& A, const RigidBody& B, Simplex& simplex) {
         direction = direction / dirMag2;
     }
 
-    const int maxIterations = 64;  // Increased for robustness
+    const int maxIterations = 32;  // Reduced to prevent long hangs
     const float tolerance = 1e-6f;
+    const float convergenceThreshold = 1e-5f; // Threshold for detecting convergence
+
+    // Initialize for convergence detection
+    Math::Vec3 prevSupport = support;
+    Math::Vec3 prevDirection = direction;
+    int oscillationCount = 0;
+    float bestDistToOrigin = support.Magnitude();
+    int noImprovementCount = 0;
 
     for (int iter = 0; iter < maxIterations; ++iter) {
         support = GetMinkowskiSupport(A, B, direction);
@@ -337,6 +461,42 @@ bool GJK(const RigidBody& A, const RigidBody& B, Simplex& simplex) {
         if (distToOrigin < tolerance && simplex.Count >= 2) {
             // Close enough - treat as collision
             return true;
+        }
+
+        // Track best distance to origin
+        if (distToOrigin < bestDistToOrigin) {
+            bestDistToOrigin = distToOrigin;
+            noImprovementCount = 0;
+        } else {
+            noImprovementCount++;
+            // If we haven't improved in several iterations, we're likely stuck
+            if (noImprovementCount > 5 && iter > 5) {
+                // No improvement - likely converged or stuck, treat as collision if close
+                if (bestDistToOrigin < 0.1f) {
+                    return true;
+                }
+            }
+        }
+
+        // Check for convergence: support point hasn't changed significantly
+        Math::Vec3 supportDiff = support - prevSupport;
+        if (supportDiff.Magnitude() < convergenceThreshold && iter > 2) {
+            // Support point converged - likely collision
+            return true;
+        }
+
+        // Check for oscillation: direction is alternating
+        float dirDot = direction.Dot(prevDirection);
+        if (dirDot < -0.9f) {
+            oscillationCount++;
+            if (oscillationCount > 2) {
+                // Oscillating - likely numerical issue, treat as collision if close to origin
+                if (bestDistToOrigin < 0.1f) {
+                    return true;
+                }
+            }
+        } else {
+            oscillationCount = 0;
         }
 
         simplex.Add(support);
@@ -367,9 +527,16 @@ bool GJK(const RigidBody& A, const RigidBody& B, Simplex& simplex) {
             return true;  // Treat as collision
         }
         direction = direction / dirMag2;
+
+        // Store for next iteration
+        prevSupport = support;
+        prevDirection = direction;
     }
 
     // Max iterations reached - check if we have a valid simplex
+    // Log warning about GJK not converging (can be enabled for debugging)
+    // SIMPLE_LOG("Warning: GJK reached max iterations");
+
     if (simplex.Count >= 4) {
         // We have a tetrahedron, likely collision
         return true;
@@ -465,8 +632,16 @@ bool EPA(const Simplex& initialSimplex, const RigidBody& A, const RigidBody& B,
         return false;
     }
 
-    const int maxIterations = 64;  // Increased for robustness
+    const int maxIterations = 32;  // Reduced from 64 to prevent long hangs
     const float tolerance = 1e-5f;  // Tighter tolerance
+    const float convergenceThreshold = 1e-4f; // Threshold for detecting convergence
+
+    float prevMinDist = std::numeric_limits<float>::max();
+    int noProgressCount = 0;
+    Math::Vec3 prevSupport(0, 0, 0);
+    int duplicateSupportCount = 0;
+    float bestDist = std::numeric_limits<float>::max();
+    Math::Vec3 bestNormal(0, 1, 0);
 
     for (int iter = 0; iter < maxIterations; ++iter) {
         // Find closest face to origin
@@ -491,11 +666,67 @@ bool EPA(const Simplex& initialSimplex, const RigidBody& A, const RigidBody& B,
         Math::Vec3 support = GetMinkowskiSupport(A, B, closestFace.Normal);
         float supportDist = support.Dot(closestFace.Normal);
 
+        // Check for duplicate support points (numerical stability)
+        if (iter > 0) {
+            Math::Vec3 supportDiff = support - prevSupport;
+            if (supportDiff.Magnitude() < tolerance * 10.0f) {
+                duplicateSupportCount++;
+                if (duplicateSupportCount > 2) {
+                    // Same support point multiple times - converged
+                    outNormal = closestFace.Normal;
+                    outPenetration = minDist;
+                    return true;
+                }
+            } else {
+                duplicateSupportCount = 0;
+            }
+        }
+        prevSupport = support;
+
+        // Check for convergence: distance hasn't changed significantly
+        if (iter > 2) {
+            float distChange = std::abs(minDist - prevMinDist);
+            if (distChange < convergenceThreshold) {
+                noProgressCount++;
+                if (noProgressCount > 3) {
+                    // No progress for several iterations - converged
+                    outNormal = closestFace.Normal;
+                    outPenetration = minDist;
+                    return true;
+                }
+            } else {
+                noProgressCount = 0;
+            }
+        }
+        prevMinDist = minDist;
+
+        // Track best result so far
+        if (minDist < bestDist) {
+            bestDist = minDist;
+            bestNormal = closestFace.Normal;
+        }
+
         // Check if we found the true closest point (convergence)
         float expansion = supportDist - minDist;
         if (expansion < tolerance) {
             outNormal = closestFace.Normal;
             outPenetration = minDist;
+            return true;
+        }
+
+        // Safety check: if expansion is extremely small or negative, we might be stuck
+        if (expansion < tolerance * 0.1f && iter > 5) {
+            // Very small expansion - likely converged
+            outNormal = closestFace.Normal;
+            outPenetration = minDist;
+            return true;
+        }
+
+        // Early exit if expansion is negative (shouldn't happen, but numerical issues)
+        if (expansion < -tolerance && iter > 3) {
+            // Negative expansion - numerical error, use best result
+            outNormal = bestNormal;
+            outPenetration = bestDist;
             return true;
         }
 
@@ -582,6 +813,31 @@ bool EPA(const Simplex& initialSimplex, const RigidBody& A, const RigidBody& B,
         if (faces.empty()) {
             // All faces removed - fallback
             outNormal = closestFace.Normal;
+            outPenetration = minDist;
+            return true;
+        }
+
+        // Safety check: if we've added too many points, something is wrong
+        if (points.size() > 50) {
+            // Too many points - likely numerical issue, use best result so far
+            outNormal = bestNormal;
+            outPenetration = bestDist;
+            return true;
+        }
+    }
+
+    // Max iterations reached - use best result found
+    if (!faces.empty()) {
+        int closestFaceIdx = 0;
+        float minDist = std::numeric_limits<float>::max();
+        for (size_t i = 0; i < faces.size(); ++i) {
+            if (!faces[i].Obsolete && faces[i].Distance < minDist) {
+                minDist = faces[i].Distance;
+                closestFaceIdx = static_cast<int>(i);
+            }
+        }
+        if (closestFaceIdx >= 0 && closestFaceIdx < (int)faces.size()) {
+            outNormal = faces[closestFaceIdx].Normal;
             outPenetration = minDist;
             return true;
         }

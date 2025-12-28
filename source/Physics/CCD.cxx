@@ -58,6 +58,16 @@ static float GetBoundingRadius(const RigidBody& rb) {
                 return maxDist;
             }
             return 0.5f; // Fallback
+        case ColliderType::Capsule: {
+            // Capsule bounding radius = radius + half height
+            float halfHeight = rb.CapsuleHeight * 0.5f;
+            return rb.CapsuleRadius + halfHeight;
+        }
+        case ColliderType::Cylinder: {
+            // Cylinder bounding radius = sqrt(radius^2 + (height/2)^2)
+            float halfHeight = rb.CylinderHeight * 0.5f;
+            return std::sqrt(rb.CylinderRadius * rb.CylinderRadius + halfHeight * halfHeight);
+        }
         case ColliderType::Tetrahedron:
             // Tetrahedron uses HullVertices (expected 4 vertices)
             if (!rb.HullVertices.empty()) {

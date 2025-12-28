@@ -10,6 +10,7 @@
 #include <queue>
 #include <deque>
 #include <vector>
+#include <chrono>
 
 #if defined(_MSC_VER)
 #include <intrin.h>
@@ -37,7 +38,7 @@ struct Spinlock {
 
     void lock() { Lock(); }
     void unlock() { Unlock(); }
-    
+
     Spinlock() = default;
     Spinlock(const Spinlock&) = delete;
     Spinlock& operator=(const Spinlock&) = delete;
@@ -61,6 +62,51 @@ struct LockGuard {
     }
 };
 
+// Execution guard with timeout support for preventing concurrent execution
+struct ExecutionGuard {
+    std::atomic<bool> m_Executing{false};
+    std::atomic<std::chrono::high_resolution_clock::time_point> m_StartTime{};
+
+    ExecutionGuard() = default;
+    ExecutionGuard(const ExecutionGuard&) = delete;
+    ExecutionGuard& operator=(const ExecutionGuard&) = delete;
+    ExecutionGuard(ExecutionGuard&&) noexcept = default;
+    ExecutionGuard& operator=(ExecutionGuard&&) noexcept = default;
+
+    bool IsExecuting() const {
+        return m_Executing.load(std::memory_order_acquire);
+    }
+
+    // Try to acquire execution lock, returns true if acquired
+    // TimeoutMs: Maximum execution time in milliseconds (0 = no timeout check)
+    bool TryExecute(uint32_t TimeoutMs = 0) {
+        bool Expected = false;
+        if (m_Executing.compare_exchange_strong(Expected, true, std::memory_order_acq_rel)) {
+            m_StartTime.store(std::chrono::high_resolution_clock::now(), std::memory_order_release);
+            return true;
+        }
+
+        // Check if previous execution timed out
+        if (TimeoutMs > 0) {
+            auto StartTime = m_StartTime.load(std::memory_order_acquire);
+            auto Now = std::chrono::high_resolution_clock::now();
+            auto Elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(Now - StartTime).count();
+            if (Elapsed > TimeoutMs) {
+                // Force release on timeout (previous execution hung)
+                m_Executing.store(false, std::memory_order_release);
+                m_StartTime.store(Now, std::memory_order_release);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void Release() {
+        m_Executing.store(false, std::memory_order_release);
+    }
+};
+
 // Simple job wrapper
 template<class F>
 struct Job {
@@ -75,19 +121,23 @@ struct Job {
 };
 
 // Asynchronous job
-template<class F>
+template<typename R>
 struct AsyncJob {
-    F Task;
-    std::shared_ptr<std::promise<void>> Promise;
+    std::function<R()> Task;
+    std::shared_ptr<std::promise<R>> Promise;
 
-    explicit AsyncJob(F t) : Task(std::move(t)), Promise(std::make_shared<std::promise<void>>()) {}
+    explicit AsyncJob(std::function<R()> t) : Task(std::move(t)), Promise(std::make_shared<std::promise<R>>()) {}
 
-    std::future<void> Future() { return Promise->get_future(); }
+    std::future<R> Future() { return Promise->get_future(); }
 
     void Execute() {
         try {
-            Task();
-            Promise->set_value();
+            if constexpr (std::is_void_v<R>) {
+                Task();
+                Promise->set_value();
+            } else {
+                Promise->set_value(Task());
+            }
         } catch (...) {
             Promise->set_exception(std::current_exception());
         }
@@ -163,12 +213,13 @@ public:
     }
 
     template<typename F>
-    std::future<void> SubmitAsync(F&& task) {
+    auto SubmitAsync(F&& task) -> std::future<decltype(task())> {
+        using R = decltype(task());
         if (m_Queues.empty()) {
             throw std::runtime_error("JobSystem not initialized");
         }
 
-        AsyncJob<std::function<void()>> aj(std::function<void()>(std::forward<F>(task)));
+        AsyncJob<R> aj(std::function<R()>(std::forward<F>(task)));
         auto fut = aj.Future();
 
         const auto idx = m_NextQueueIndex.fetch_add(1, std::memory_order_relaxed) % m_Queues.size();
@@ -181,20 +232,29 @@ private:
     ~JobSystem() { Shutdown(); }
 
     void WorkerLoop(unsigned int threadIndex) {
-        (void)threadIndex;
+        const size_t queueIndex = threadIndex % m_Queues.size();
+        size_t stealAttempts = 0;
+        const size_t maxStealAttempts = m_Queues.size() * 2; // Try all queues twice before yielding
+
         while (m_Running) {
             Job<std::function<void()>> job;
-
-            // Try pop from own queue first
             bool found = false;
+
             if (!m_Queues.empty()) {
-                if (m_Queues[threadIndex % m_Queues.size()]->PopLocal(job)) {
+                // Try pop from own queue first (most common case, no contention)
+                if (m_Queues[queueIndex]->PopLocal(job)) {
                     found = true;
+                    stealAttempts = 0; // Reset on success
                 } else {
-                    // Steal from other queues
-                    for (size_t i = 0; i < m_Queues.size(); ++i) {
-                        if (i == (threadIndex % m_Queues.size())) continue;
-                        if (m_Queues[i]->Steal(job)) { found = true; break; }
+                    // Work-stealing: try other queues with round-robin
+                    size_t startSteal = (queueIndex + 1) % m_Queues.size();
+                    for (size_t i = 0; i < m_Queues.size() - 1; ++i) {
+                        size_t stealIndex = (startSteal + i) % m_Queues.size();
+                        if (m_Queues[stealIndex]->Steal(job)) {
+                            found = true;
+                            stealAttempts = 0;
+                            break;
+                        }
                     }
                 }
             }
@@ -202,7 +262,16 @@ private:
             if (found && job) {
                 job.Execute();
             } else {
-                std::this_thread::yield();
+                // Exponential backoff to reduce CPU spinning
+                stealAttempts++;
+                if (stealAttempts < 4) {
+                    std::this_thread::yield();
+                } else if (stealAttempts < 16) {
+                    std::this_thread::sleep_for(std::chrono::microseconds(1));
+                } else {
+                    std::this_thread::sleep_for(std::chrono::microseconds(10));
+                    stealAttempts = 0; // Reset after long wait
+                }
             }
         }
     }

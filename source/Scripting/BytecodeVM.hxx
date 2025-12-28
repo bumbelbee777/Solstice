@@ -7,13 +7,29 @@
 #include <string>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
+#include <memory>
 #include "../Solstice.hxx"
+#include "../Core/Async.hxx"
+#include "../Math/Vector.hxx"
+#include "../Math/Matrix.hxx"
+#include "../Math/Quaternion.hxx"
+#include "VMError.hxx"
+
+// Forward declarations
+namespace Solstice::ECS { class Registry; }
+namespace Solstice::Scripting { class JIT; }
 
 namespace Solstice::Scripting {
 
+    // Forward declare collection types (defined below)
+    class Array;
+    class Dictionary;
+    class Set;
+
     enum class OpCode : uint8_t {
         NOP,
-        
+
         // Stack Operations
         PUSH_CONST, // Push immediate value to stack
         POP,        // Pop from stack
@@ -28,6 +44,11 @@ namespace Solstice::Scripting {
         SUB,
         MUL,
         DIV,
+        MOD,        // Modulo
+        POW,        // Power
+        ABS,        // Absolute value
+        MIN,        // Minimum
+        MAX,        // Maximum
         INC,        // Increment top of stack or register
 
         // Logic
@@ -35,6 +56,16 @@ namespace Solstice::Scripting {
         NEQ,
         LT,
         GT,
+        LE,        // Less than or equal
+        GE,        // Greater than or equal
+
+        // Bitwise
+        AND,       // Bitwise AND
+        OR,        // Bitwise OR
+        XOR,       // Bitwise XOR
+        NOT,       // Bitwise NOT
+        SHL,       // Shift left
+        SHR,       // Shift right
 
         // Control Flow
         JMP,
@@ -42,13 +73,35 @@ namespace Solstice::Scripting {
         CALL,       // Call script function (int operand) or native (string operand)
         RET,
 
-        // Native / IO
-        PRINT,      // Temporary for WriteLn
-        
+        // Object & Module Operations
+        IMPORT_MODULE, // Import a module by name (string operand)
+        GET_ATTR,      // Get attribute from object (string operand)
+        SET_ATTR,      // Set attribute on object (string operand)
+        NEW_OBJ,       // Instantiate a class (string operand)
+
+        // Array Operations
+        ARRAY_GET,  // Get element at index
+        ARRAY_SET,  // Set element at index
+        ARRAY_PUSH, // Push value to end
+        ARRAY_POP,  // Pop value from end
+
+        // String Operations
+        STR_CONCAT, // Concatenate strings
+        STR_LEN,    // String length
+        STR_SUBSTR, // Substring
+
         HALT
     };
 
-    using Value = std::variant<int64_t, double, std::string>;
+    using Value = std::variant<
+        int64_t, double, std::string,
+        Solstice::Math::Vec2, Solstice::Math::Vec3, Solstice::Math::Vec4,
+        Solstice::Math::Matrix2, Solstice::Math::Matrix3, Solstice::Math::Matrix4,
+        Solstice::Math::Quaternion,
+        std::shared_ptr<Array>,
+        std::shared_ptr<Dictionary>,
+        std::shared_ptr<Set>
+    >;
 
     struct Instruction {
         OpCode Op;
@@ -58,48 +111,317 @@ namespace Solstice::Scripting {
 
     struct Program {
         std::vector<Instruction> Instructions;
+        std::unordered_map<std::string, size_t> Exports;
+
         // Helper to add instruction
         void Add(OpCode op, Value operand = 0) {
             Instructions.push_back({op, 0, operand});
         }
-        
+
         void AddReg(OpCode op, uint8_t reg) {
             Instructions.push_back({op, reg, 0});
         }
+
+        void Serialize(std::vector<uint8_t>& out) const;
+        static Program Deserialize(const std::vector<uint8_t>& in);
     };
 
     class SOLSTICE_API BytecodeVM {
     public:
         BytecodeVM();
-        
+        ~BytecodeVM();
+
         void LoadProgram(const Program& prog);
+        void ReloadProgram(const Program& prog);
         void Run();
-        
+
         // Native function registration
         using NativeFunc = std::function<Value(const std::vector<Value>& args)>;
         void RegisterNative(const std::string& name, NativeFunc func);
 
         void Push(Value v);
         Value Pop();
-        
+
         // Helper to peek
         Value Peek(size_t offset = 0);
+
+        // Registry access
+        void SetRegistry(ECS::Registry* registry) { m_Registry = registry; }
+        ECS::Registry* GetRegistry() const { return m_Registry; }
+
+        // Module management
+        void AddModule(const std::string& name, const Program& prog);
+        bool HasModule(const std::string& name) const;
+        const Program& GetModule(const std::string& name) const;
+
+        // System registration
+        struct SystemInfo {
+            std::string Name;
+            size_t FunctionAddress;
+            std::vector<std::string> ComponentNames;
+        };
+        void RegisterSystem(const SystemInfo& system);
+        const std::vector<SystemInfo>& GetSystems() const {
+            Core::LockGuard Guard(m_VMLock);
+            return m_Systems;
+        }
+
+        // Debugging support
+        void SetDebugMode(bool enabled) { m_DebugMode = enabled; }
+        bool IsDebugMode() const { return m_DebugMode; }
+        void SetBreakpoint(size_t instructionIndex);
+        void ClearBreakpoint(size_t instructionIndex);
+        bool HasBreakpoint(size_t instructionIndex) const;
+        void Step(); // Execute single instruction in debug mode
+        struct CallStackFrame {
+            size_t ReturnIP;
+            std::string FunctionName;
+        };
+        std::vector<CallStackFrame> GetCallStack() const;
+
+        // Debug info
+        struct DebugInfo {
+            size_t LineNumber = 0;
+            std::string SourceFile;
+            std::string SourceLine;
+        };
+        void SetDebugInfo(size_t instructionIndex, const DebugInfo& info);
+        DebugInfo GetDebugInfo(size_t instructionIndex) const;
+
+        // Error handling
+        VMError GetVMError() const { return m_LastError; }
+        void ClearError() { m_LastError = VMError("", 0); }
+
+        // JIT compilation
+        void EnableJIT();
+        void DisableJIT();
+        bool IsJITEnabled() const;
 
     private:
         Program m_Program;
         size_t m_IP = 0; // Instruction Pointer
-        
+
         // Stack
         std::vector<Value> m_Stack;
-        
+
         // Registers (R0-R15)
         std::array<Value, 16> m_Registers;
-        
+
         // Call Stack (for function calls, stores return IP)
         std::vector<size_t> m_CallStack;
 
         // Native functions
         std::unordered_map<std::string, NativeFunc> m_Natives;
+
+        // ECS Registry
+        ECS::Registry* m_Registry = nullptr;
+
+        // Modules
+        std::unordered_map<std::string, Program> m_Modules;
+
+        // Registered systems
+        std::vector<SystemInfo> m_Systems;
+
+        // Thread safety
+        mutable Core::Spinlock m_VMLock;
+
+        // Debugging
+        bool m_DebugMode = false;
+        std::unordered_set<size_t> m_Breakpoints;
+        std::unordered_map<size_t, DebugInfo> m_DebugInfo;
+        bool m_StepMode = false;
+        bool m_Paused = false;
+
+        // Error handling
+        VMError m_LastError = VMError("", 0);
+
+        // JIT compilation
+        std::unique_ptr<class JIT> m_JIT;
+
+        // Helper method to execute a single instruction
+        // Returns: (nextIP, shouldContinue)
+        std::pair<size_t, bool> ExecuteInstruction(const Instruction& inst, size_t currentIP);
+    };
+
+    // Collection wrapper classes
+    class SOLSTICE_API Array {
+    public:
+        std::vector<Value> Data;
+
+        Array() = default;
+        explicit Array(size_t size) : Data(size) {}
+        Array(std::initializer_list<Value> init) : Data(init) {}
+
+        Value Get(size_t index) const {
+            if (index >= Data.size()) return (int64_t)0;
+            return Data[index];
+        }
+
+        void Set(size_t index, const Value& value) {
+            if (index >= Data.size()) Data.resize(index + 1);
+            Data[index] = value;
+        }
+
+        void Push(const Value& value) {
+            Data.push_back(value);
+        }
+
+        Value Pop() {
+            if (Data.empty()) return (int64_t)0;
+            Value v = Data.back();
+            Data.pop_back();
+            return v;
+        }
+
+        size_t Length() const { return Data.size(); }
+
+        void Clear() { Data.clear(); }
+
+        void Insert(size_t index, const Value& value) {
+            if (index > Data.size()) Data.resize(index);
+            Data.insert(Data.begin() + index, value);
+        }
+
+        void Remove(size_t index) {
+            if (index < Data.size()) {
+                Data.erase(Data.begin() + index);
+            }
+        }
+
+        Array Slice(size_t start, size_t end) const {
+            Array result;
+            size_t actualEnd = std::min(end, Data.size());
+            if (start < Data.size()) {
+                result.Data.assign(Data.begin() + start, Data.begin() + actualEnd);
+            }
+            return result;
+        }
+
+        int64_t IndexOf(const Value& value) const {
+            for (size_t i = 0; i < Data.size(); ++i) {
+                if (Data[i] == value) return (int64_t)i;
+            }
+            return -1;
+        }
+    };
+
+    class SOLSTICE_API Dictionary {
+    public:
+        std::unordered_map<std::string, Value> Data;
+
+        Dictionary() = default;
+
+        Value Get(const std::string& key) const {
+            auto it = Data.find(key);
+            if (it != Data.end()) return it->second;
+            return (int64_t)0;
+        }
+
+        void Set(const std::string& key, const Value& value) {
+            Data[key] = value;
+        }
+
+        bool Has(const std::string& key) const {
+            return Data.find(key) != Data.end();
+        }
+
+        void Remove(const std::string& key) {
+            Data.erase(key);
+        }
+
+        std::shared_ptr<Array> Keys() const {
+            auto arr = std::make_shared<Array>();
+            for (const auto& [key, _] : Data) {
+                arr->Push(key);
+            }
+            return arr;
+        }
+
+        std::shared_ptr<Array> Values() const {
+            auto arr = std::make_shared<Array>();
+            for (const auto& [_, value] : Data) {
+                arr->Push(value);
+            }
+            return arr;
+        }
+
+        size_t Size() const { return Data.size(); }
+
+        void Clear() { Data.clear(); }
+    };
+
+    // Hash function for Value (needed for Set)
+    struct ValueHash {
+        size_t operator()(const Value& v) const {
+            size_t h = std::hash<size_t>{}(v.index());
+            if (std::holds_alternative<int64_t>(v)) {
+                return h ^ (std::hash<int64_t>{}(std::get<int64_t>(v)) << 1);
+            } else if (std::holds_alternative<double>(v)) {
+                return h ^ (std::hash<double>{}(std::get<double>(v)) << 1);
+            } else if (std::holds_alternative<std::string>(v)) {
+                return h ^ (std::hash<std::string>{}(std::get<std::string>(v)) << 1);
+            } else if (std::holds_alternative<Solstice::Math::Vec2>(v)) {
+                const auto& vec = std::get<Solstice::Math::Vec2>(v);
+                return h ^ (std::hash<float>{}(vec.x) << 1) ^ (std::hash<float>{}(vec.y) << 2);
+            } else if (std::holds_alternative<Solstice::Math::Vec3>(v)) {
+                const auto& vec = std::get<Solstice::Math::Vec3>(v);
+                return h ^ (std::hash<float>{}(vec.x) << 1) ^ (std::hash<float>{}(vec.y) << 2) ^ (std::hash<float>{}(vec.z) << 3);
+            } else if (std::holds_alternative<Solstice::Math::Vec4>(v)) {
+                const auto& vec = std::get<Solstice::Math::Vec4>(v);
+                return h ^ (std::hash<float>{}(vec.x) << 1) ^ (std::hash<float>{}(vec.y) << 2) ^ (std::hash<float>{}(vec.z) << 3) ^ (std::hash<float>{}(vec.w) << 4);
+            } else if (std::holds_alternative<Solstice::Math::Quaternion>(v)) {
+                const auto& q = std::get<Solstice::Math::Quaternion>(v);
+                return h ^ (std::hash<float>{}(q.w) << 1) ^ (std::hash<float>{}(q.x) << 2) ^ (std::hash<float>{}(q.y) << 3) ^ (std::hash<float>{}(q.z) << 4);
+            } else if (std::holds_alternative<std::shared_ptr<Array>>(v)) {
+                return h ^ std::hash<void*>{}(std::get<std::shared_ptr<Array>>(v).get());
+            } else if (std::holds_alternative<std::shared_ptr<Dictionary>>(v)) {
+                return h ^ std::hash<void*>{}(std::get<std::shared_ptr<Dictionary>>(v).get());
+            } else if (std::holds_alternative<std::shared_ptr<Set>>(v)) {
+                return h ^ std::hash<void*>{}(std::get<std::shared_ptr<Set>>(v).get());
+            }
+            return h;
+        }
+    };
+
+    class SOLSTICE_API Set {
+    public:
+        std::unordered_set<Value, ValueHash> Data;
+
+        Set() = default;
+        Set(std::initializer_list<Value> init) : Data(init) {}
+
+        void Add(const Value& value) {
+            Data.insert(value);
+        }
+
+        void Remove(const Value& value) {
+            Data.erase(value);
+        }
+
+        bool Contains(const Value& value) const {
+            return Data.find(value) != Data.end();
+        }
+
+        size_t Size() const { return Data.size(); }
+
+        void Clear() { Data.clear(); }
+
+        std::shared_ptr<Set> Union(const Set& other) const {
+            auto result = std::make_shared<Set>();
+            result->Data = Data;
+            result->Data.insert(other.Data.begin(), other.Data.end());
+            return result;
+        }
+
+        std::shared_ptr<Set> Intersection(const Set& other) const {
+            auto result = std::make_shared<Set>();
+            for (const auto& value : Data) {
+                if (other.Data.find(value) != other.Data.end()) {
+                    result->Data.insert(value);
+                }
+            }
+            return result;
+        }
     };
 
 }

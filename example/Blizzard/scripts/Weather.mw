@@ -1,0 +1,11 @@
+module Weather;
+
+@function SetHeavySnow() {
+    Blizzard.SetSnowIntensity(2.0);
+    Blizzard.SetWind(0.8, 0.0, 1.0, 5.0);
+}
+
+@function SetLightSnow() {
+    Blizzard.SetSnowIntensity(0.5);
+    Blizzard.SetWind(0.2, 0.0, 0.3, 1.5);
+}

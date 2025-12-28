@@ -46,6 +46,14 @@ struct SOLSTICE_API Quaternion {
         );
     }
 
+    bool operator==(const Quaternion& Rhs) const {
+        return w == Rhs.w && x == Rhs.x && y == Rhs.y && z == Rhs.z;
+    }
+
+    bool operator!=(const Quaternion& Rhs) const {
+        return !(*this == Rhs);
+    }
+
     float Dot(const Quaternion& Other) const {
         return w * Other.w + x * Other.x + y * Other.y + z * Other.z;
     }
@@ -90,6 +98,22 @@ struct SOLSTICE_API Quaternion {
         float bFactor = std::sin(t * Theta) / SinTheta;
 
         return a * aFactor + End * bFactor;
+    }
+
+    static Quaternion FromEuler(float Pitch, float Yaw, float Roll) {
+        float CP = std::cos(Pitch * 0.5f);
+        float SP = std::sin(Pitch * 0.5f);
+        float CY = std::cos(Yaw * 0.5f);
+        float SY = std::sin(Yaw * 0.5f);
+        float CR = std::cos(Roll * 0.5f);
+        float SR = std::sin(Roll * 0.5f);
+
+        Quaternion Q;
+        Q.w = CP * CY * CR + SP * SY * SR;
+        Q.x = SP * CY * CR - CP * SY * SR;
+        Q.y = CP * SY * CR + SP * CY * SR;
+        Q.z = CP * CY * SR - SP * SY * CR;
+        return Q;
     }
 
     Matrix4 ToMatrix() const;

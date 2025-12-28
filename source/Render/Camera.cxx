@@ -8,7 +8,7 @@ namespace Solstice::Render {
 Camera::Camera(Math::Vec3 Position, Math::Vec3 Up, float Yaw, float Pitch)
     : Front(Math::Vec3(0.0f, 0.0f, -1.0f)),
       MovementSpeed(2.5f),
-      MouseSensitivity(0.1f),
+      MouseSensitivity(0.2f),
       Zoom(45.0f) {
     this->Position = Position;
     WorldUp = Up;
@@ -21,7 +21,7 @@ Camera::Camera(Math::Vec3 Position, Math::Vec3 Up, float Yaw, float Pitch)
 Camera::Camera(float PosX, float PosY, float PosZ, float UpX, float UpY, float UpZ, float Yaw, float Pitch)
     : Front(Math::Vec3(0.0f, 0.0f, -1.0f)),
       MovementSpeed(2.5f),
-      MouseSensitivity(0.1f),
+      MouseSensitivity(0.2f),
       Zoom(45.0f) {
     Position = Math::Vec3(PosX, PosY, PosZ);
     WorldUp = Math::Vec3(UpX, UpY, UpZ);
@@ -39,6 +39,75 @@ Math::Matrix4 Camera::GetViewMatrix() const {
     return Math::Matrix4::LookAt(eye, eye + Front, Up);
 }
 
+// VR stereo view matrix (offset by IPD)
+Math::Matrix4 Camera::GetViewMatrixVR(bool leftEye) const {
+    Math::Vec3 eye = Position;
+    if (std::fabs(eye.x) < 1e-6f && std::fabs(eye.y) < 1e-6f && std::fabs(eye.z) < 1e-6f) {
+        eye = Math::Vec3(0.0f, 0.0f, 2.0f);
+    }
+    
+    // Offset eye position by half IPD in the right direction
+    float eyeOffset = m_VRConfig.IPD * 0.5f;
+    Math::Vec3 eyePos = eye + Right * (leftEye ? -eyeOffset : eyeOffset);
+    
+    return Math::Matrix4::LookAt(eyePos, eyePos + Front, Up);
+}
+
+// VR asymmetric frustum projection
+Math::Matrix4 Camera::GetProjectionMatrixVR(bool leftEye, float aspect) const {
+    const auto& frustum = leftEye ? m_VRConfig.LeftEye : m_VRConfig.RightEye;
+    float near = m_VRConfig.NearPlane;
+    float far = m_VRConfig.FarPlane;
+    
+    // Create asymmetric perspective projection
+    // Using OpenGL-style frustum (left, right, bottom, top, near, far)
+    return Math::Matrix4::Frustum(frustum.Left, frustum.Right, 
+                                  frustum.Bottom, frustum.Top, 
+                                  near, far);
+}
+
+// VR frustum culling
+Frustum Camera::GetFrustumVR(bool leftEye, float aspect) const {
+    Frustum frustum;
+    Math::Matrix4 view = GetViewMatrixVR(leftEye);
+    Math::Matrix4 proj = GetProjectionMatrixVR(leftEye, aspect);
+    Math::Matrix4 viewProj = proj * view;
+    
+    // Extract frustum planes (same as regular GetFrustum)
+    frustum.Planes[0].x = viewProj.M[3][0] + viewProj.M[0][0];
+    frustum.Planes[0].y = viewProj.M[3][1] + viewProj.M[0][1];
+    frustum.Planes[0].z = viewProj.M[3][2] + viewProj.M[0][2];
+    frustum.Planes[0].w = viewProj.M[3][3] + viewProj.M[0][3];
+    
+    frustum.Planes[1].x = viewProj.M[3][0] - viewProj.M[0][0];
+    frustum.Planes[1].y = viewProj.M[3][1] - viewProj.M[0][1];
+    frustum.Planes[1].z = viewProj.M[3][2] - viewProj.M[0][2];
+    frustum.Planes[1].w = viewProj.M[3][3] - viewProj.M[0][3];
+    
+    frustum.Planes[2].x = viewProj.M[3][0] + viewProj.M[1][0];
+    frustum.Planes[2].y = viewProj.M[3][1] + viewProj.M[1][1];
+    frustum.Planes[2].z = viewProj.M[3][2] + viewProj.M[1][2];
+    frustum.Planes[2].w = viewProj.M[3][3] + viewProj.M[1][3];
+    
+    frustum.Planes[3].x = viewProj.M[3][0] - viewProj.M[1][0];
+    frustum.Planes[3].y = viewProj.M[3][1] - viewProj.M[1][1];
+    frustum.Planes[3].z = viewProj.M[3][2] - viewProj.M[1][2];
+    frustum.Planes[3].w = viewProj.M[3][3] - viewProj.M[1][3];
+    
+    frustum.Planes[4].x = viewProj.M[3][0] + viewProj.M[2][0];
+    frustum.Planes[4].y = viewProj.M[3][1] + viewProj.M[2][1];
+    frustum.Planes[4].z = viewProj.M[3][2] + viewProj.M[2][2];
+    frustum.Planes[4].w = viewProj.M[3][3] + viewProj.M[2][3];
+    
+    frustum.Planes[5].x = viewProj.M[3][0] - viewProj.M[2][0];
+    frustum.Planes[5].y = viewProj.M[3][1] - viewProj.M[2][1];
+    frustum.Planes[5].z = viewProj.M[3][2] - viewProj.M[2][2];
+    frustum.Planes[5].w = viewProj.M[3][3] - viewProj.M[2][3];
+    
+    frustum.Normalize();
+    return frustum;
+}
+
 Frustum Camera::GetFrustum(float Aspect, float FOV, float Near, float Far) const {
     Frustum frustum;
     Math::Matrix4 view = GetViewMatrix();
@@ -48,7 +117,7 @@ Frustum Camera::GetFrustum(float Aspect, float FOV, float Near, float Far) const
     // Assuming Row-Major memory layout but Column-Vector multiplication (OpenGL style)
     // If Math::Matrix4 is standard, M[row][col]
     // Gribb/Hartmann method for plane extraction
-    
+
     // Left plane
     frustum.Planes[0].x = viewProj.M[3][0] + viewProj.M[0][0];
     frustum.Planes[0].y = viewProj.M[3][1] + viewProj.M[0][1];
@@ -124,15 +193,17 @@ void Camera::UpdateCameraVectors() {
     Math::Vec3 FrontVec;
     float radYaw = Yaw * (3.14159f / 180.0f);
     float radPitch = Pitch * (3.14159f / 180.0f);
-    
+
     FrontVec.x = std::cos(radYaw) * std::cos(radPitch);
     FrontVec.y = std::sin(radPitch);
     FrontVec.z = std::sin(radYaw) * std::cos(radPitch);
     Front = FrontVec.Normalized();
-    
-    // Also re-calculate the Right and Up vector
-    Right = Front.Cross(WorldUp).Normalized();
-    Up = Right.Cross(Front).Normalized();
+
+    // For FPS camera: always use WorldUp to prevent rolling/tilting
+    // Calculate Right vector from WorldUp and Front
+    Right = WorldUp.Cross(Front).Normalized();
+    // Always use WorldUp directly (prevents camera roll)
+    Up = WorldUp;
 }
 
 } // namespace Solstice::Render

@@ -24,6 +24,29 @@ struct RenderStats {
     float FrameTime{0.0f};
 };
 
+// Viewport structure for rendering
+struct SOLSTICE_API Viewport {
+    uint32_t X{0};
+    uint32_t Y{0};
+    uint32_t Width{0};
+    uint32_t Height{0};
+    Math::Vec4 ClearColor{0.1f, 0.1f, 0.1f, 1.0f};
+    bool Active{true};
+};
+
+// Base class for render targets
+class SOLSTICE_API RenderTarget {
+public:
+    virtual ~RenderTarget() = default;
+    virtual void Bind() const = 0;
+    virtual void Unbind() const = 0;
+    virtual Math::Vec2 GetSize() const = 0;
+    virtual void Resize(Math::Vec2 NewSize) = 0;
+    virtual uint16_t GetFramebufferHandle() const { return UINT16_MAX; }
+    virtual uint16_t GetColorTextureHandle() const { return UINT16_MAX; }
+    virtual uint16_t GetDepthTextureHandle() const { return UINT16_MAX; }
+};
+
 class DefaultRenderTarget : public RenderTarget {
 public:
     void Bind() const override;

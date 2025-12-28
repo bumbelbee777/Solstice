@@ -2,7 +2,7 @@
 # Solstice Engine - Git Submodules Configuration
 # ============================================================================
 # This file defines external dependencies managed as Git submodules.
-# 
+#
 # To clone the repository with all submodules:
 #   git clone --recursive https://github.com/<username>/Solstice.git
 #
@@ -47,3 +47,8 @@
 	path = 3rdparty/tinygltf
 	url = https://github.com/syoyo/tinygltf.git
 	branch = release
+
+[submodule "3rdparty/reactphysics3d"]
+    path = 3rdparty/reactphysics3d
+    url = https://github.com/DanielChappuis/reactphysics3d.git
+    branch = master

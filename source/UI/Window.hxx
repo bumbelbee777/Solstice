@@ -25,11 +25,12 @@ public:
     // Core window operations
     bool ShouldClose() const;
     void PollEvents();
-    
+
     // Window state
     void SetTitle(const std::string& Title);
     void SetSize(int Width, int Height);
     void SetFullscreen(bool Fullscreen);
+    void SetMaximized(bool Maximized);
     void SetResizable(bool Resizable);
     void SetCursorGrab(bool Grab);
     void SetRelativeMouse(bool Enable);
@@ -43,33 +44,33 @@ public:
     bool IsFullscreen() const;
     bool IsMinimized() const;
     SDL_Window* NativeWindow() const { return m_Window; }
-    
+
     // Input polling
     bool IsKeyScanPressed(int Scancode) const;
-    
+
     // Callback setters
     void SetResizeCallback(ResizeCallback Callback);
     void SetKeyCallback(KeyCallback Callback);
     void SetMouseButtonCallback(MouseButtonCallback Callback);
     void SetCursorPosCallback(CursorPosCallback Callback);
     void SetScrollCallback(ScrollCallback Callback);
-    
+
 private:
     SDL_Window* m_Window{nullptr};
-    
+
     int m_Width;
     int m_Height;
     std::string m_Title;
     bool m_Fullscreen{false};
     bool m_ShouldClose{false};
     bool m_RelativeMouse{false};
-    
+
     // Windowed mode state (for toggling fullscreen)
     struct {
         int X, Y;
         int Width, Height;
     } m_WindowedState;
-    
+
     // Callbacks
     ResizeCallback m_ResizeCallback;
     KeyCallback m_KeyCallback;

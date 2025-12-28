@@ -1,0 +1,17 @@
+module Blizzard;
+
+import Weather;
+import Ambience;
+
+@Entry {
+    Print("Solstice Blizzard Demo Initializing...");
+
+    // Call functions from imported modules
+    // Note: Inter-module calls are simplified in this demo VM
+    Ambience.PlayStormMusic();
+    Ambience.PlayWindHowl();
+
+    Weather.SetHeavySnow();
+
+    Print("Blizzard Game Logic Started.");
+}

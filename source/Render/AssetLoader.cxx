@@ -1,6 +1,6 @@
 #include "AssetLoader.hxx"
-#include "Mesh.hxx"
-#include "Material.hxx"
+#include <Render/Mesh.hxx>
+#include <Core/Material.hxx>
 #include <Core/Debug.hxx>
 
 #define TINYGLTF_IMPLEMENTATION
@@ -11,7 +11,7 @@
 #include <iostream>
 #include <cstring>
 
-namespace Solstice::Render {
+namespace Solstice::Core {
 
 // --------------------------------------------------------------------------
 //  Static member definitions
@@ -179,7 +179,7 @@ AssetLoadResult AssetLoader::LoadGLTF(const std::filesystem::path& Path) {
 // --------------------------------------------------------------------------
 //  Convenience loaders
 // --------------------------------------------------------------------------
-std::unique_ptr<Mesh> AssetLoader::LoadMesh(const std::filesystem::path& Path) {
+std::unique_ptr<Render::Mesh> AssetLoader::LoadMesh(const std::filesystem::path& Path) {
     AssetLoadResult result = LoadGLTF(Path);
     if (result.Success && !result.Meshes.empty())
         return std::move(result.Meshes[0]);
@@ -194,7 +194,7 @@ std::vector<Material> AssetLoader::LoadMaterials(const std::filesystem::path& Pa
 }
 
 int AssetLoader::LoadGLTFIntoLibraries(const std::filesystem::path& Path,
-                                      MeshLibrary& MeshLib,
+                                      Render::MeshLibrary& MeshLib,
                                       MaterialLibrary& MatLib) {
     AssetLoadResult result = LoadGLTF(Path);
     if (!result.Success)
@@ -223,7 +223,7 @@ void AssetLoader::ClearCache() {
 // --------------------------------------------------------------------------
 //  Mesh conversion (returns mesh + extended vertex data)
 // --------------------------------------------------------------------------
-std::pair<std::unique_ptr<Mesh>, ExtendedVertexData>
+std::pair<std::unique_ptr<Render::Mesh>, ExtendedVertexData>
 AssetLoader::ConvertMesh(const void* GLTFModelPtr, int MeshIndex) {
     const tinygltf::Model* Model = static_cast<const tinygltf::Model*>(GLTFModelPtr);
 
@@ -233,7 +233,7 @@ AssetLoader::ConvertMesh(const void* GLTFModelPtr, int MeshIndex) {
     }
 
     const tinygltf::Mesh& GLTFMesh = Model->meshes[MeshIndex];
-    auto MeshPtr = std::make_unique<Mesh>();
+    auto MeshPtr = std::make_unique<Render::Mesh>();
     ExtendedVertexData ExtData;
 
     SOLSTICE_LOG("AssetLoader: Converting mesh '" + GLTFMesh.name + "' with " +
@@ -257,7 +257,7 @@ AssetLoader::ConvertMesh(const void* GLTFModelPtr, int MeshIndex) {
 // --------------------------------------------------------------------------
 void AssetLoader::ExtractPrimitiveData(const void* GLTFModelPtr,
                                       const void* GLTFPrimitivePtr,
-                                      Mesh& OutMesh,
+                                      Render::Mesh& OutMesh,
                                       ExtendedVertexData& OutExtendedData,
                                       uint32_t& IndexOffset) {
     const tinygltf::Model* Model     = static_cast<const tinygltf::Model*>(GLTFModelPtr);
@@ -442,9 +442,9 @@ void AssetLoader::ExtractPrimitiveData(const void* GLTFModelPtr,
 // --------------------------------------------------------------------------
 //  Material conversion
 // --------------------------------------------------------------------------
-Material AssetLoader::ConvertMaterial(const void* GLTFModelPtr, int MaterialIndex) {
+Core::Material AssetLoader::ConvertMaterial(const void* GLTFModelPtr, int MaterialIndex) {
     const tinygltf::Model* Model = static_cast<const tinygltf::Model*>(GLTFModelPtr);
-    Material Mat;
+    Core::Material Mat;
 
     if (MaterialIndex < 0 || MaterialIndex >= static_cast<int>(Model->materials.size())) {
         Mat.SetAlbedoColor(Math::Vec3(0.8f, 0.8f, 0.8f), 0.5f);
@@ -576,4 +576,4 @@ LightData AssetLoader::ConvertLight(const void* GLTFModelPtr, int LightIndex) {
     return Light;
 }
 
-} // namespace Solstice::Render
+} // namespace Solstice::Core

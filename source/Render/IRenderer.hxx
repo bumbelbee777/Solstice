@@ -1,72 +1,72 @@
 #pragma once
 
+#include "../Solstice.hxx"
+#include <Render/Scene.hxx>
 #include <Render/Camera.hxx>
-#include <Render/Framebuffer.hxx>
 #include <Math/Vector.hxx>
-#include <Math/Matrix.hxx>
-#include <cstdint>
 #include <vector>
 #include <memory>
 
 namespace Solstice::Render {
 
-struct RenderTarget {
-    virtual ~RenderTarget() = default;
-    
-    virtual void Bind() const = 0;
-    virtual void Unbind() const = 0;
-    virtual Math::Vec2 GetSize() const = 0;
-    virtual void Resize(Math::Vec2 NewSize) = 0;
-    
-    // Optional: Access to underlying BGFX handles
-    virtual uint16_t GetFramebufferHandle() const { return UINT16_MAX; }
-    virtual uint16_t GetColorTextureHandle() const { return UINT16_MAX; }
-    virtual uint16_t GetDepthTextureHandle() const { return UINT16_MAX; }
-};
+// Forward declarations
+struct SDL_Window;
+namespace Physics { struct LightSource; }
 
-struct Viewport {
-    Math::Vec2 Position{0.0f, 0.0f};
-    Math::Vec2 Size{0.0f, 0.0f};
-    std::shared_ptr<::Solstice::Render::Camera> Camera{nullptr};
-    std::shared_ptr<RenderTarget> Target{nullptr};
-    Math::Vec4 ClearColor{0.1f, 0.1f, 0.1f, 1.0f};
-    bool IsActive{true};
-    bool ClearOnBind{true};
-    
-    Viewport() = default;
-    Viewport(const Math::Vec2& Pos, const Math::Vec2& Dims, 
-             std::shared_ptr<::Solstice::Render::Camera> Cam = {},
-             std::shared_ptr<RenderTarget> RT = {})
-        : Position(Pos), Size(Dims), Camera(Cam), Target(RT) {}
-};
-
-struct IRenderer {
-
-    IRenderer(int Width, int Height)  : Framebuffer(Width, Height) {}
-
+/**
+ * IRenderer - Abstract renderer interface for platform-specific implementations
+ * Supports desktop, VR, and web renderers through a common interface
+ */
+class SOLSTICE_API IRenderer {
+public:
     virtual ~IRenderer() = default;
 
-    virtual void Clear(const Math::Vec4& Color) = 0;
+    // Initialization
+    virtual bool Initialize(int width, int height, SDL_Window* window = nullptr) = 0;
+    virtual void Shutdown() = 0;
+    virtual bool IsInitialized() const = 0;
 
-    virtual void DrawTriangle(const Math::Vec3& v1, const Math::Vec3& v2, const Math::Vec3& v3
-        , const Math::Vec4& Color) = 0;
-    virtual void DrawLine(const Math::Vec3& Start, const Math::Vec3& End, const Math::Vec4& Color
-        , float Width = 1.0f) = 0;
-    virtual void DrawPoint(const Math::Vec3& Position, const Math::Vec4& Color
-        , float Size = 1.0f) = 0;
+    // Rendering
+    virtual void RenderScene(Scene& scene, const Camera& camera) = 0;
+    virtual void RenderScene(Scene& scene, const Camera& camera, 
+                           const std::vector<Physics::LightSource>& lights) = 0;
+    
+    // VR stereo rendering
+    virtual void RenderSceneVR(Scene& scene, const Camera& camera, bool leftEye) = 0;
+    
+    // Multi-viewport support (for VR, split-screen, etc.)
+    virtual void SetViewportCount(uint32_t count) = 0;
+    virtual uint32_t GetViewportCount() const = 0;
+    virtual void SetViewport(uint32_t index, uint32_t x, uint32_t y, uint32_t width, uint32_t height) = 0;
+    virtual void GetViewport(uint32_t index, uint32_t& x, uint32_t& y, uint32_t& width, uint32_t& height) const = 0;
 
-    virtual void EnableDepthTest(bool Enable) = 0;
-    virtual void EnableBlend(bool Enable) = 0;
+    // Buffer management
+    virtual void Clear(const Math::Vec4& color) = 0;
+    virtual void Present() = 0;
 
-    // Matrix setters
-    virtual void SetProjectionMatrix(const Math::Matrix4& mat) { ProjectionMatrix = mat; }
-    virtual void SetViewMatrix(const Math::Matrix4& mat) { ViewMatrix = mat; }
-    virtual void SetModelMatrix(const Math::Matrix4& mat) { ModelMatrix = mat; }
+    // Configuration
+    virtual void Resize(int width, int height) = 0;
+    virtual void SetVSync(bool enable) = 0;
+    virtual void SetWireframe(bool enable) = 0;
+    virtual void SetShowDebugOverlay(bool enable) = 0;
 
-protected:
-    Math::Matrix4 ProjectionMatrix, ViewMatrix, ModelMatrix;
-    Viewport Viewport;
-    Framebuffer Framebuffer;
+    // Stats
+    struct RenderStats {
+        uint32_t VisibleObjects = 0;
+        uint32_t TrianglesSubmitted = 0;
+        uint32_t TrianglesCulled = 0;
+        uint32_t TrianglesRendered = 0;
+        float CullTimeMs = 0.0f;
+        float TransformTimeMs = 0.0f;
+        float RasterTimeMs = 0.0f;
+        float TotalTimeMs = 0.0f;
+    };
+    virtual const RenderStats& GetStats() const = 0;
+
+    // VR support
+    virtual bool IsVRSupported() const = 0;
+    virtual bool IsVREnabled() const = 0;
+    virtual void SetVREnabled(bool enable) = 0;
 };
 
-}
+} // namespace Solstice::Render

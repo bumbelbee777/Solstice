@@ -8,6 +8,7 @@ import sys
 import subprocess
 import argparse
 import platform
+import shutil
 from pathlib import Path
 
 
@@ -22,6 +23,17 @@ def get_platform_info():
         return "linux", "440", ""
     else:
         return "linux", "440", ""  # Default to Linux
+
+def get_web_platform_info(target):
+    """Get platform info for web targets (WebGL/WebGPU)."""
+    if target == "webgl":
+        return "webgl", "100_web", ""
+    elif target == "webgl2":
+        return "webgl2", "300_web", ""
+    elif target == "webgpu":
+        return "webgpu", "webgpu", ""
+    else:
+        return None, None, None
 
 
 def find_executable(name: str, start_dir: Path) -> Path | None:
@@ -42,22 +54,22 @@ def find_shaderc(args, exe_suffix: str) -> Path | None:
         print(f"WARNING: Specified shaderc not found: {shaderc_path}")
 
     exe_name = f"shaderc{exe_suffix}"
-    
+
     # Default locations to check (relative to script location or CWD)
     script_dir = Path(__file__).parent.resolve()
     project_root = script_dir.parent
-    
+
     default_paths = [
         project_root / "out" / "build" / "3rdparty" / "cmake" / "bgfx" / "Release" / exe_name,
         project_root / "out" / "build" / "3rdparty" / "cmake" / "bgfx" / "Debug" / exe_name,
         project_root / "build" / "3rdparty" / "cmake" / "bgfx" / "Release" / exe_name,
         project_root / "build" / "3rdparty" / "cmake" / "bgfx" / "Debug" / exe_name,
     ]
-    
+
     for path in default_paths:
         if path.exists():
             return path
-    
+
     # Search recursively as fallback
     print(f"Searching for {exe_name}...")
     found = find_executable(exe_name, project_root)
@@ -74,7 +86,7 @@ def compile_shaders(args):
     detected_platform, detected_profile, exe_suffix = get_platform_info()
     target_platform = args.platform or detected_platform
     target_profile = args.profile or detected_profile
-    
+
     print(f"Target platform: {target_platform}")
     print(f"Shader profile: {target_profile}\n")
 
@@ -91,11 +103,11 @@ def compile_shaders(args):
     # Resolve directories
     script_dir = Path(__file__).parent.resolve()
     project_root = script_dir.parent
-    
+
     shader_dir = Path(args.input_dir) if args.input_dir else project_root / "source" / "Shaders"
     output_dir = Path(args.output_dir) if args.output_dir else shader_dir / "bin"
     bgfx_include = Path(args.bgfx_include) if args.bgfx_include else project_root / "3rdparty" / "bgfx" / "src"
-    
+
     if not shader_dir.exists():
         print(f"ERROR: Shader directory does not exist: {shader_dir}")
         return 1
@@ -142,6 +154,10 @@ def compile_shaders(args):
             varying_def = shader_dir / "varying_imgui.def.sc"
         elif "_ui" in stem_lower:
             varying_def = shader_dir / "varying_ui.def.sc"
+        elif "_particle" in stem_lower:
+            varying_def = shader_dir / "varying_particle.def.sc"
+        elif "_debug" in stem_lower:
+            varying_def = shader_dir / "varying_debug.def.sc"
 
         if not varying_def.exists():
             print(f"WARNING: Varying definition not found: {varying_def}")
@@ -177,6 +193,24 @@ def compile_shaders(args):
 
         compiled_count += 1
 
+    # Copy compiled shaders to game directory if requested
+    if args.copy_dir:
+        copy_dir = Path(args.copy_dir)
+        shaders_dest = copy_dir / "shaders"
+        shaders_dest.mkdir(parents=True, exist_ok=True)
+
+        # Copy all .bin files from output_dir to shaders_dest
+        bin_files = list(output_dir.glob("*.bin"))
+        if bin_files:
+            copied_count = 0
+            for bin_file in bin_files:
+                dest_file = shaders_dest / bin_file.name
+                shutil.copy2(bin_file, dest_file)
+                copied_count += 1
+            print(f"Copied {copied_count} compiled shader(s) to {shaders_dest}")
+        else:
+            print(f"WARNING: No shader binaries found in {output_dir} to copy")
+
     print(f"\n========================================")
     print(f"Shader compilation complete!")
     print(f"Compiled {compiled_count} shader(s) to {output_dir}")
@@ -193,6 +227,7 @@ Examples:
   %(prog)s                              # Auto-detect everything
   %(prog)s --platform linux --profile 440
   %(prog)s --shaderc /path/to/shaderc --input-dir ./Shaders
+  %(prog)s --copy-dir /path/to/game/dir  # Compile and copy to game/shaders/
         """
     )
     parser.add_argument(
@@ -219,6 +254,10 @@ Examples:
     parser.add_argument(
         "--profile",
         help="Shader profile (e.g., s_5_0, metal, 440)"
+    )
+    parser.add_argument(
+        "--copy-dir",
+        help="Directory to copy compiled shader binaries to (creates shaders/ subdirectory)"
     )
 
     args = parser.parse_args()

@@ -3,7 +3,16 @@ project(PhysicsPlayground)
 
 # Create the executable
 add_executable(PhysicsPlayground
-    "Test.cxx"
+    "PhysicsPlayground.cxx"
+    "PhysicsPlayground.hxx"
+    "ObjectSpawner.cxx"
+    "ObjectSpawner.hxx"
+    "SelectionSystem.cxx"
+    "SelectionSystem.hxx"
+    "UIManager.cxx"
+    "UIManager.hxx"
+    "TerminalHub.cxx"
+    "TerminalHub.hxx"
 )
 
 # Link against the Solstice engine
@@ -26,7 +35,7 @@ if(WIN32)
         $<TARGET_FILE_DIR:PhysicsPlayground>
         COMMENT "Copying SolsticeEngine.dll to executable directory"
     )
-    
+
     # Copy SDL3.dll
     add_custom_command(TARGET PhysicsPlayground POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -43,3 +52,6 @@ add_custom_command(TARGET PhysicsPlayground POST_BUILD
     $<TARGET_FILE_DIR:PhysicsPlayground>/assets
     COMMENT "Copying assets directory to executable directory"
 )
+
+# Copy shaders to the executable directory
+copy_shaders_to_target(PhysicsPlayground)

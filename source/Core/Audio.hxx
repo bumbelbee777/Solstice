@@ -44,6 +44,7 @@ namespace Solstice::Core::Audio {
         float RolloffFactor;   // How quickly volume decreases with distance (1.0 = inverse square)
         float OcclusionFactor; // 0.0 = unoccluded, 1.0 = fully occluded
         float PitchVariance;   // Random pitch deviation (e.g., 0.02 for +/- 2%)
+        float Volume;          // Volume multiplier (0.0 - 1.0, default 1.0)
         bool IsLooping;
         MIX_Track* Track;      // SDL_mixer track assigned (nullptr if not playing)
     };
@@ -68,6 +69,7 @@ namespace Solstice::Core::Audio {
         void FadeInMusic(const char* Path, int Ms, int Loops = -1);
         void FadeOutMusic(int Ms);
         void SetMusicVolume(float Volume); // 0.0 - 1.0
+        void SetMasterVolume(float Volume); // 0.0 - 1.0
 
         // SFX (Chunked)
         void PlaySound(const char* Path, int Loops = 0);
@@ -76,14 +78,14 @@ namespace Solstice::Core::Audio {
         // Spatial Audio
         void SetListener(const Listener& ListenerData);
         const Listener& GetListener() const;
-        
+
         // Plays a sound at a 3D position and returns a handle to the source
-        AudioSource PlaySound3D(const char* Path, const Math::Vec3& Position, 
+        AudioSource PlaySound3D(const char* Path, const Math::Vec3& Position,
                                 float MaxDistance = 50.0f, bool Loop = false);
-        
+
         // Updates the spatial properties of an active audio source
         void UpdateAudioSource(AudioSource& Source);
-        
+
         // Stops an audio source
         void StopAudioSource(AudioSource& Source);
 
@@ -101,10 +103,10 @@ namespace Solstice::Core::Audio {
         Listener m_Listener;
         MIX_Mixer* m_Mixer{ nullptr };
         MIX_Track* m_MusicTrack{ nullptr };
-        
+
         // Resources
         std::unordered_map<std::string, MIX_Audio*> m_CachedAudio;
-        
+
         // Thread safety
         Spinlock m_Lock;
     };

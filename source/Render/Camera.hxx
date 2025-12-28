@@ -36,6 +36,24 @@ struct SOLSTICE_API Frustum {
     }
 };
 
+// VR Camera configuration for stereo rendering
+struct SOLSTICE_API VRCameraConfig {
+    float IPD = 0.064f; // Inter-pupillary distance in meters (64mm default)
+    float NearPlane = 0.1f;
+    float FarPlane = 100.0f;
+    float FOV = 90.0f; // Vertical FOV in degrees
+    
+    // Asymmetric frustum parameters (for VR)
+    struct AsymmetricFrustum {
+        float Left;
+        float Right;
+        float Bottom;
+        float Top;
+    } LeftEye, RightEye;
+    
+    bool IsVR = false;
+};
+
 struct SOLSTICE_API Camera {
     Camera(Math::Vec3 Position = Math::Vec3(0.0f, 0.0f, 3.0f),
            Math::Vec3 Up = Math::Vec3(0.0f, 1.0f, 0.0f),
@@ -48,6 +66,16 @@ struct SOLSTICE_API Camera {
 
     Math::Matrix4 GetViewMatrix() const;
     Frustum GetFrustum(float Aspect, float FOV, float Near, float Far) const;
+
+    // VR stereo camera support
+    Math::Matrix4 GetViewMatrixVR(bool leftEye) const;
+    Math::Matrix4 GetProjectionMatrixVR(bool leftEye, float aspect) const;
+    Frustum GetFrustumVR(bool leftEye, float aspect) const;
+    
+    // Set VR configuration
+    void SetVRConfig(const VRCameraConfig& config) { m_VRConfig = config; }
+    const VRCameraConfig& GetVRConfig() const { return m_VRConfig; }
+    bool IsVR() const { return m_VRConfig.IsVR; }
 
     void ProcessKeyboard(Math::Vec3 Direction, float DeltaTime);
     void ProcessMouseMovement(float XOffset, float YOffset, bool ConstrainPitch = true);
@@ -65,6 +93,9 @@ struct SOLSTICE_API Camera {
 private:
     // Calculates the front vector from the Camera's (updated) Euler angles
     void UpdateCameraVectors();
+    
+    // VR configuration
+    VRCameraConfig m_VRConfig;
 };
 
 } // namespace Solstice::Render

@@ -6,7 +6,7 @@
 #include <Math/Quaternion.hxx>
 #include <Math/Matrix.hxx>
 #include <Render/Mesh.hxx>
-#include <Render/Material.hxx>
+#include <Core/Material.hxx>
 #include <Render/Camera.hxx>
 #include <Core/BSP.hxx>
 #include <Core/Octree.hxx>
@@ -95,12 +95,14 @@ struct BoundingBoxData {
 // SoA for Mesh Instances
 struct MeshInstanceData {
     std::vector<uint32_t> MeshIDs;
+    std::vector<uint32_t> MaterialIDs;
     std::vector<uint8_t> ObjectTypes;
     std::vector<uint8_t> VisibilityFlags;
     std::vector<uint8_t> CurrentLOD;
 
     void Resize(size_t Size) {
         MeshIDs.resize(Size);
+        MaterialIDs.resize(Size);
         ObjectTypes.resize(Size);
         VisibilityFlags.resize(Size);
         CurrentLOD.resize(Size);
@@ -108,6 +110,7 @@ struct MeshInstanceData {
 
     void Reserve(size_t Capacity) {
         MeshIDs.reserve(Capacity);
+        MaterialIDs.reserve(Capacity);
         ObjectTypes.reserve(Capacity);
         VisibilityFlags.reserve(Capacity);
         CurrentLOD.reserve(Capacity);
@@ -118,10 +121,11 @@ struct MeshInstanceData {
 struct SceneObject {
     SceneObjectID ID;
     uint32_t MeshID;
+    uint32_t MaterialID;
     ObjectType Type;
     uint8_t VisibilityMask;
-    
-    SceneObject() : ID(InvalidObjectID), MeshID(0), Type(ObjectType_Static), VisibilityMask(Visible_Camera) {}
+
+    SceneObject() : ID(InvalidObjectID), MeshID(0), MaterialID(0), Type(ObjectType_Static), VisibilityMask(Visible_Camera) {}
 };
 
 class Scene {
@@ -129,7 +133,7 @@ public:
     Scene() {
         // Initialize with reasonable capacity
         Reserve(1024);
-        
+
         // Create default octree for dynamic objects
         m_Octree = std::make_unique<Core::Octree>(
             Math::Vec3(-1000, -1000, -1000),
@@ -141,12 +145,12 @@ public:
     ~Scene() = default;
 
     // Object Management
-    SceneObjectID AddObject(uint32_t MeshID, const Math::Vec3& Position, 
+    SceneObjectID AddObject(uint32_t MeshID, const Math::Vec3& Position,
                            const Math::Quaternion& Rotation = Math::Quaternion(),
                            const Math::Vec3& Scale = Math::Vec3(1, 1, 1),
                            ObjectType Type = ObjectType_Static) {
         SceneObjectID ID = static_cast<SceneObjectID>(m_Count++);
-        
+
         // Resize if needed
         if (m_Count > m_Transforms.PosX.size()) {
             size_t NewSize = m_Transforms.PosX.size() == 0 ? 128 : m_Transforms.PosX.size() * 2;
@@ -155,9 +159,10 @@ public:
 
         // Set transform
         SetTransform(ID, Position, Rotation, Scale);
-        
+
         // Set mesh instance data
         m_MeshInstances.MeshIDs[ID] = MeshID;
+        m_MeshInstances.MaterialIDs[ID] = 0; // Default material
         m_MeshInstances.ObjectTypes[ID] = static_cast<uint8_t>(Type);
         m_MeshInstances.VisibilityFlags[ID] = Visible_Camera | Visible_Shadow;
         m_MeshInstances.CurrentLOD[ID] = 0;
@@ -177,7 +182,7 @@ public:
 
     void RemoveObject(SceneObjectID ID) {
         if (ID >= m_Count) return;
-        
+
         // Swap with last and pop (invalidates IDs but keeps data compact)
         if (ID != m_Count - 1) {
             SwapObjects(ID, m_Count - 1);
@@ -185,24 +190,35 @@ public:
         m_Count--;
     }
 
+    // Material Access
+    void SetMaterial(SceneObjectID ID, uint32_t MaterialID) {
+        if (ID >= m_Count) return;
+        m_MeshInstances.MaterialIDs[ID] = MaterialID;
+    }
+
+    uint32_t GetMaterial(SceneObjectID ID) const {
+        if (ID >= m_Count) return 0;
+        return m_MeshInstances.MaterialIDs[ID];
+    }
+
     // Transform Access
-    void SetTransform(SceneObjectID ID, const Math::Vec3& Pos, 
+    void SetTransform(SceneObjectID ID, const Math::Vec3& Pos,
                      const Math::Quaternion& Rot, const Math::Vec3& Scale) {
         if (ID >= m_Count) return;
 
-        m_Transforms.PosX[ID] = Pos.x; 
-        m_Transforms.PosY[ID] = Pos.y; 
+        m_Transforms.PosX[ID] = Pos.x;
+        m_Transforms.PosY[ID] = Pos.y;
         m_Transforms.PosZ[ID] = Pos.z;
-        
-        m_Transforms.RotW[ID] = Rot.w; 
-        m_Transforms.RotX[ID] = Rot.x; 
-        m_Transforms.RotY[ID] = Rot.y; 
+
+        m_Transforms.RotW[ID] = Rot.w;
+        m_Transforms.RotX[ID] = Rot.x;
+        m_Transforms.RotY[ID] = Rot.y;
         m_Transforms.RotZ[ID] = Rot.z;
-        
-        m_Transforms.ScaleX[ID] = Scale.x; 
-        m_Transforms.ScaleY[ID] = Scale.y; 
+
+        m_Transforms.ScaleX[ID] = Scale.x;
+        m_Transforms.ScaleY[ID] = Scale.y;
         m_Transforms.ScaleZ[ID] = Scale.z;
-        
+
         m_Transforms.IsDirty[ID] = true;
     }
 
@@ -230,7 +246,7 @@ public:
 
     Math::Quaternion GetRotation(SceneObjectID ID) const {
         if (ID >= m_Count) return Math::Quaternion();
-        return Math::Quaternion(m_Transforms.RotW[ID], m_Transforms.RotX[ID], 
+        return Math::Quaternion(m_Transforms.RotW[ID], m_Transforms.RotX[ID],
                                m_Transforms.RotY[ID], m_Transforms.RotZ[ID]);
     }
 
@@ -251,13 +267,13 @@ public:
                 // Reconstruct matrix: T * R * S
                 Math::Vec3 Pos(m_Transforms.PosX[i], m_Transforms.PosY[i], m_Transforms.PosZ[i]);
                 Math::Vec3 Scale(m_Transforms.ScaleX[i], m_Transforms.ScaleY[i], m_Transforms.ScaleZ[i]);
-                Math::Quaternion Rot(m_Transforms.RotW[i], m_Transforms.RotX[i], 
+                Math::Quaternion Rot(m_Transforms.RotW[i], m_Transforms.RotX[i],
                                     m_Transforms.RotY[i], m_Transforms.RotZ[i]);
-                
+
                 Math::Matrix4 T = Math::Matrix4::Translation(Pos);
                 Math::Matrix4 R = Rot.ToMatrix();
                 Math::Matrix4 S = Math::Matrix4::Scale(Scale);
-                
+
                 m_Transforms.LocalMatrices[i] = T * R * S;
                 m_Transforms.WorldMatrices[i] = m_Transforms.LocalMatrices[i];
                 m_Transforms.IsDirty[i] = false;
@@ -269,11 +285,12 @@ public:
     }
 
     // Culling and Visibility
-    void FrustumCull(const Camera& Cam, std::vector<SceneObjectID>& VisibleObjects) {
+    void FrustumCull(const Camera& Cam, std::vector<SceneObjectID>& VisibleObjects, float AspectRatio = 16.0f / 9.0f) {
         VisibleObjects.clear();
-        
-        // Get frustum from camera
-        Frustum Frust = Cam.GetFrustum(16.0f / 9.0f, Cam.GetZoom(), 0.1f, 1000.0f);
+
+        // Get frustum from camera with extended far plane for vast terrain (Phase 7)
+        // Far plane extended to 2000.0f to see distant landmarks
+        Frustum Frust = Cam.GetFrustum(AspectRatio, Cam.GetZoom(), 0.1f, 2000.0f);
 
         // Test all objects
         for (size_t i = 0; i < m_Count; ++i) {
@@ -294,14 +311,23 @@ public:
             Math::Vec3 ObjPos(m_Transforms.PosX[i], m_Transforms.PosY[i], m_Transforms.PosZ[i]);
             float Distance = ObjPos.Distance(CameraPos);
 
-            // Simple distance-based LOD
-            if (Distance < 10.0f) {
+            // Enhanced distance-based LOD for vast terrain (Phase 7)
+            // Near (0-150 units): detailed, high poly
+            // Mid (150-300 units): medium detail
+            // Far (300-500+ units): low detail, silhouette-focused
+            if (Distance < 150.0f) {
                 m_MeshInstances.CurrentLOD[i] = 0; // High detail
-            } else if (Distance < 50.0f) {
+            } else if (Distance < 300.0f) {
                 m_MeshInstances.CurrentLOD[i] = 1; // Medium detail
-            } else {
+            } else if (Distance < 500.0f) {
                 m_MeshInstances.CurrentLOD[i] = 2; // Low detail
+            } else {
+                // Beyond 500 units, don't render (distance culling)
+                m_MeshInstances.VisibilityFlags[i] &= ~Visible_Camera;
+                continue;
             }
+            // Ensure object is visible if within render distance
+            m_MeshInstances.VisibilityFlags[i] |= Visible_Camera;
         }
     }
 
@@ -323,10 +349,10 @@ public:
 
     // Mesh and Material Libraries
     void SetMeshLibrary(MeshLibrary* Library) { m_MeshLibrary = Library; }
-    void SetMaterialLibrary(MaterialLibrary* Library) { m_MaterialLibrary = Library; }
+    void SetMaterialLibrary(Core::MaterialLibrary* Library) { m_MaterialLibrary = Library; }
 
     MeshLibrary* GetMeshLibrary() { return m_MeshLibrary; }
-    MaterialLibrary* GetMaterialLibrary() { return m_MaterialLibrary; }
+    Core::MaterialLibrary* GetMaterialLibrary() { return m_MaterialLibrary; }
 
     // BSP for static geometry
     void BuildBSP(const std::vector<Core::Triangle>& StaticGeometry) {
@@ -356,6 +382,7 @@ private:
         std::swap(m_Transforms.PosZ[A], m_Transforms.PosZ[B]);
         // ... swap all other fields
         std::swap(m_MeshInstances.MeshIDs[A], m_MeshInstances.MeshIDs[B]);
+        std::swap(m_MeshInstances.MaterialIDs[A], m_MeshInstances.MaterialIDs[B]);
         std::swap(m_AABBs.MinX[A], m_AABBs.MinX[B]);
         // etc.
     }
@@ -368,19 +395,19 @@ private:
                 // Transform mesh bounds by world matrix
                 Math::Vec3 MeshMin = MeshPtr->BoundsMin;
                 Math::Vec3 MeshMax = MeshPtr->BoundsMax;
-                
+
                 // Simple AABB transform (not perfect but fast)
                 const Math::Matrix4& WorldMat = m_Transforms.WorldMatrices[ID];
                 Math::Vec3 Center = (MeshMin + MeshMax) * 0.5f;
                 Math::Vec3 Extent = (MeshMax - MeshMin) * 0.5f;
-                
+
                 Math::Vec3 WorldCenter = WorldMat.TransformPoint(Center);
-                
+
                 // Conservative bounds
                 float MaxExtent = std::max(std::max(Extent.x, Extent.y), Extent.z);
                 Math::Vec3 WorldMin = WorldCenter - Math::Vec3(MaxExtent, MaxExtent, MaxExtent);
                 Math::Vec3 WorldMax = WorldCenter + Math::Vec3(MaxExtent, MaxExtent, MaxExtent);
-                
+
                 m_AABBs.Set(ID, WorldMin, WorldMax);
             }
         }
@@ -397,7 +424,7 @@ private:
 
     // Resource references
     MeshLibrary* m_MeshLibrary{nullptr};
-    MaterialLibrary* m_MaterialLibrary{nullptr};
+    Core::MaterialLibrary* m_MaterialLibrary{nullptr};
 };
 
 } // namespace Solstice::Render

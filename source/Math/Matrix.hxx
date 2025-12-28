@@ -63,6 +63,17 @@ struct Matrix2 {
     Matrix2& operator*=(const Matrix2& O) { *this = *this * O; return *this; }
     Matrix2& operator*=(float S) { *this = *this * S; return *this; }
 
+    bool operator==(const Matrix2& Rhs) const {
+        for (int i = 0; i < 2; ++i)
+            for (int j = 0; j < 2; ++j)
+                if (M[i][j] != Rhs.M[i][j]) return false;
+        return true;
+    }
+
+    bool operator!=(const Matrix2& Rhs) const {
+        return !(*this == Rhs);
+    }
+
     Matrix2 Transposed() const {
         Matrix2 Result;
         Result.M[0][0] = M[0][0]; Result.M[0][1] = M[1][0];
@@ -144,6 +155,17 @@ struct Matrix3 {
     Matrix3& operator*=(const Matrix3& O) { *this = *this * O; return *this; }
     Matrix3& operator*=(float S) { *this = *this * S; return *this; }
 
+    bool operator==(const Matrix3& Rhs) const {
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                if (M[i][j] != Rhs.M[i][j]) return false;
+        return true;
+    }
+
+    bool operator!=(const Matrix3& Rhs) const {
+        return !(*this == Rhs);
+    }
+
     Matrix3 Transposed() const {
         Matrix3 Result;
         for (int i = 0; i < 3; ++i)
@@ -171,6 +193,10 @@ struct Matrix4 {
     }
 
     static Matrix4 Identity() { return Matrix4(); }
+
+    Vec3 GetTranslation() const {
+        return Vec3(M[0][3], M[1][3], M[2][3]);
+    }
 
     void Print() const {
         for (int i = 0; i < 4; ++i) {
@@ -220,6 +246,17 @@ struct Matrix4 {
     Matrix4& operator-=(const Matrix4& O) { *this = *this - O; return *this; }
     Matrix4& operator*=(const Matrix4& O) { *this = *this * O; return *this; }
     Matrix4& operator*=(float S) { *this = *this * S; return *this; }
+
+    bool operator==(const Matrix4& Rhs) const {
+        for (int i = 0; i < 4; ++i)
+            for (int j = 0; j < 4; ++j)
+                if (M[i][j] != Rhs.M[i][j]) return false;
+        return true;
+    }
+
+    bool operator!=(const Matrix4& Rhs) const {
+        return !(*this == Rhs);
+    }
 
     Matrix4 Transposed() const {
         Matrix4 Result;
@@ -278,6 +315,28 @@ struct Matrix4 {
         return Result;
     }
 
+    static Matrix4 RotationAxis(const Vec3& Axis, float Angle) {
+        Matrix4 Result = Identity();
+        float C = std::cos(Angle);
+        float S = std::sin(Angle);
+        float T = 1.0f - C;
+        Vec3 A = Axis.Normalized();
+
+        Result.M[0][0] = T * A.x * A.x + C;
+        Result.M[0][1] = T * A.x * A.y - S * A.z;
+        Result.M[0][2] = T * A.x * A.z + S * A.y;
+
+        Result.M[1][0] = T * A.x * A.y + S * A.z;
+        Result.M[1][1] = T * A.y * A.y + C;
+        Result.M[1][2] = T * A.y * A.z - S * A.x;
+
+        Result.M[2][0] = T * A.x * A.z - S * A.y;
+        Result.M[2][1] = T * A.y * A.z + S * A.x;
+        Result.M[2][2] = T * A.z * A.z + C;
+
+        return Result;
+    }
+
     static Matrix4 Perspective(float FovY, float Aspect, float NearPlane, float FarPlane) {
         Matrix4 Result{};
         float F = 1.0f / std::tan(FovY * 0.5f);
@@ -287,6 +346,36 @@ struct Matrix4 {
         Result.M[2][3] = (2 * FarPlane * NearPlane) / (NearPlane - FarPlane);
         Result.M[3][2] = -1.0f;
         Result.M[3][3] = 0.0f;
+        return Result;
+    }
+
+    // Asymmetric frustum projection (for VR)
+    static Matrix4 Frustum(float Left, float Right, float Bottom, float Top, float NearPlane, float FarPlane) {
+        Matrix4 Result{};
+        float invWidth = 1.0f / (Right - Left);
+        float invHeight = 1.0f / (Top - Bottom);
+        float invDepth = 1.0f / (FarPlane - NearPlane);
+        
+        Result.M[0][0] = 2.0f * NearPlane * invWidth;
+        Result.M[0][1] = 0.0f;
+        Result.M[0][2] = 0.0f;
+        Result.M[0][3] = 0.0f;
+        
+        Result.M[1][0] = 0.0f;
+        Result.M[1][1] = 2.0f * NearPlane * invHeight;
+        Result.M[1][2] = 0.0f;
+        Result.M[1][3] = 0.0f;
+        
+        Result.M[2][0] = (Right + Left) * invWidth;
+        Result.M[2][1] = (Top + Bottom) * invHeight;
+        Result.M[2][2] = -(FarPlane + NearPlane) * invDepth;
+        Result.M[2][3] = -1.0f;
+        
+        Result.M[3][0] = 0.0f;
+        Result.M[3][1] = 0.0f;
+        Result.M[3][2] = -2.0f * FarPlane * NearPlane * invDepth;
+        Result.M[3][3] = 0.0f;
+        
         return Result;
     }
 

@@ -77,7 +77,7 @@ void RenderContext::BeginViewport(size_t Index) {
     }
     
     const auto& viewport = GetViewport(Index);
-    if (!viewport.IsActive) return;
+    if (!viewport.Active) return;
     
     // BGFX viewport is set via bgfx::setViewRect
     // This would typically be done when setting up the view for rendering
@@ -117,11 +117,11 @@ void RenderContext::EnableFaceCulling(bool Enable) {
 }
 
 Math::Matrix4 RenderContext::CalculateProjectionMatrix(const Viewport& Viewport, float FOV, float Near, float Far) {
-    if (Viewport.Size.x <= 0 || Viewport.Size.y <= 0) {
+    if (Viewport.Width <= 0 || Viewport.Height <= 0) {
         return Math::Matrix4::Identity();
     }
     
-    float aspect = Viewport.Size.x / Viewport.Size.y;
+    float aspect = static_cast<float>(Viewport.Width) / static_cast<float>(Viewport.Height);
     float fovRadians = FOV * 3.14159265359f / 180.0f; // Convert to radians
     return Math::Matrix4::Perspective(fovRadians, aspect, Near, Far);
 }

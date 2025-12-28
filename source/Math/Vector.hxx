@@ -73,6 +73,20 @@ struct Vec3 {
         return std::sqrt(x * x + y * y + z * z);
     }
 
+    float Length() const { return Magnitude(); }
+
+    float operator[](int i) const {
+        if (i == 0) return x;
+        if (i == 1) return y;
+        return z;
+    }
+
+    float& operator[](int i) {
+        if (i == 0) return x;
+        if (i == 1) return y;
+        return z;
+    }
+
     float Dot(const Vec3& Other) const {
         return x * Other.x + y * Other.y + z * Other.z;
     }

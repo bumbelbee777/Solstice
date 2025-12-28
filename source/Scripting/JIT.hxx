@@ -1,0 +1,40 @@
+#pragma once
+
+#include "../Solstice.hxx"
+#include "BytecodeVM.hxx"
+#include "Backend/IBackend.hxx"
+#include <unordered_map>
+#include <memory>
+
+namespace Solstice::Scripting {
+
+/**
+ * JIT - Just-In-Time compiler for hot path optimization
+ */
+class SOLSTICE_API JIT {
+public:
+    JIT();
+    ~JIT();
+
+    void SetBackend(std::unique_ptr<Backend::IBackend> backend);
+    void Enable();
+    void Disable();
+    bool IsEnabled() const { return m_Enabled; }
+
+    // Hot path detection
+    void RecordFunctionCall(size_t functionIP);
+    bool IsHotPath(size_t functionIP) const;
+
+    // Compilation
+    Backend::IBackend::CompiledFunction CompileHotFunction(const Solstice::Scripting::Program& program, size_t functionIP);
+
+private:
+    bool m_Enabled = false;
+    std::unique_ptr<Backend::IBackend> m_Backend;
+    std::unordered_map<size_t, uint32_t> m_FunctionCallCounts;
+    std::unordered_map<size_t, Backend::IBackend::CompiledFunction> m_CompiledFunctions;
+    static constexpr uint32_t HOT_PATH_THRESHOLD = 100; // Calls before JIT compilation
+};
+
+} // namespace Solstice::Scripting
+

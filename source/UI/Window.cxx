@@ -10,19 +10,19 @@ namespace Solstice::UI {
 
 Window::Window(int Width, int Height, const std::string& Title)
     : m_Width(Width), m_Height(Height), m_Title(Title) {
-    
+
     // Initialize SDL
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
         throw std::runtime_error(std::string("Failed to initialize SDL: ") + SDL_GetError());
     }
-    
+
     // Create window (without OpenGL)
     m_Window = SDL_CreateWindow(m_Title.c_str(), m_Width, m_Height, SDL_WINDOW_RESIZABLE);
     if (!m_Window) {
         SDL_Quit();
         throw std::runtime_error(std::string("Failed to create SDL window: ") + SDL_GetError());
     }
-    
+
     // Store window position and size for later use
     SDL_GetWindowPosition(m_Window, &m_WindowedState.X, &m_WindowedState.Y);
     SDL_GetWindowSize(m_Window, &m_WindowedState.Width, &m_WindowedState.Height);
@@ -46,12 +46,12 @@ void Window::PollEvents() {
         if (UISystem::Instance().IsInitialized()) {
             UISystem::Instance().ProcessEvent(&event);
         }
-        
+
         switch (event.type) {
             case SDL_EVENT_QUIT:
                 m_ShouldClose = true;
                 break;
-            
+
             case SDL_EVENT_WINDOW_RESIZED:
                 if (event.window.windowID == SDL_GetWindowID(m_Window)) {
                     m_Width = event.window.data1;
@@ -67,7 +67,7 @@ void Window::PollEvents() {
                 if (event.key.windowID == SDL_GetWindowID(m_Window)) {
                     if (m_KeyCallback) {
                         // Map SDL key event to callback signature
-                        // Note: SDL3 key codes are different from GLFW. 
+                        // Note: SDL3 key codes are different from GLFW.
                         // Passing raw SDL values for now.
                         int action = (event.type == SDL_EVENT_KEY_DOWN) ? 1 : 0; // 1 = Press, 0 = Release
                         m_KeyCallback(event.key.key, event.key.scancode, action, event.key.mod);
@@ -122,20 +122,28 @@ void Window::SetSize(int Width, int Height) {
 
 void Window::SetFullscreen(bool Fullscreen) {
     if (Fullscreen == m_Fullscreen) return;
-    
+
     m_Fullscreen = Fullscreen;
-    
+
     if (m_Fullscreen) {
         // Save current window position and size
         SDL_GetWindowPosition(m_Window, &m_WindowedState.X, &m_WindowedState.Y);
         SDL_GetWindowSize(m_Window, &m_WindowedState.Width, &m_WindowedState.Height);
-        
+
         SDL_SetWindowFullscreen(m_Window, true);
     } else {
         SDL_SetWindowFullscreen(m_Window, false);
         // Restore windowed mode
         SDL_SetWindowSize(m_Window, m_WindowedState.Width, m_WindowedState.Height);
         SDL_SetWindowPosition(m_Window, m_WindowedState.X, m_WindowedState.Y);
+    }
+}
+
+void Window::SetMaximized(bool Maximized) {
+    if (Maximized) {
+        SDL_MaximizeWindow(m_Window);
+    } else {
+        SDL_RestoreWindow(m_Window);
     }
 }
 
