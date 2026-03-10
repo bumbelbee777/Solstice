@@ -1,7 +1,7 @@
 #include <atomic>
 #include <Render/SoftwareRenderer.hxx>
-#include <Render/Mesh.hxx>
-#include <Render/ShaderLoader.hxx>
+#include <Render/Assets/Mesh.hxx>
+#include <Render/Assets/ShaderLoader.hxx>
 #include <Math/Vector.hxx>
 #include <Core/Debug.hxx>
 #include <Core/SIMD.hxx>
@@ -529,6 +529,21 @@ void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam) {
     m_Stats.TrianglesSubmitted = TotalTriangles;
     m_Stats.TrianglesRendered = TotalTriangles;
 
+    if (m_VolumetricLighting) {
+        Math::Matrix4 View = Cam.GetViewMatrix();
+        float aspectRatio = static_cast<float>(m_Width) / static_cast<float>(m_Height);
+        Math::Matrix4 Proj = Math::Matrix4::Perspective(Cam.GetZoom() * 0.0174533f, aspectRatio, 0.1f, 2000.0f);
+        Math::Matrix4 ViewProj = Proj * View;
+
+        // Use cached lights from RenderScene(..., Lights) call, or empty list
+        m_VolumetricLighting->TraceVolumetricRays(m_VolumetricLights, Cam.GetPosition(), ViewProj);
+
+        // Pass volumetric texture to post-processing
+        bgfx::TextureHandle volTex = m_VolumetricLighting->GetVolumetricTexture();
+        if (bgfx::isValid(volTex)) {
+            m_PostProcessing->SetVolumetricTexture(volTex);
+        }
+    }
 
     // --- POST PROCESS PASS ---
     m_PostProcessing->EndScenePass();
@@ -1019,6 +1034,7 @@ void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam, const s
         static int frameCount = 0;
         if (frameCount % 60 == 0) {
             m_Raytracing->BuildVoxelGrid(SceneGraph);
+            m_Raytracing->UpdateReflectionProbe(SceneGraph, Cam.GetPosition());
         }
         frameCount++;
 
@@ -1048,7 +1064,13 @@ void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam, const s
                 m_Raytracing->GetAOTexture()
             );
         }
+        if (bgfx::isValid(m_Raytracing->GetReflectionProbeTexture())) {
+            m_PostProcessing->SetReflectionProbeTexture(m_Raytracing->GetReflectionProbeTexture());
+        }
     }
+
+    // Store lights for volumetric lighting (will be used in RenderScene)
+    m_VolumetricLights = Lights;
 
     // Render the scene normally
     RenderScene(SceneGraph, Cam);
@@ -1104,6 +1126,20 @@ void SoftwareRenderer::GetViewport(uint32_t Index, uint32_t& X, uint32_t& Y, uin
     } else {
         X = Y = Width = Height = 0;
     }
+}
+
+bgfx::ProgramHandle SoftwareRenderer::GetSceneProgram() const {
+    if (m_SceneRenderer) {
+        return m_SceneRenderer->GetSceneProgram();
+    }
+    return BGFX_INVALID_HANDLE;
+}
+
+bgfx::FrameBufferHandle SoftwareRenderer::GetSceneFramebuffer() const {
+    if (m_PostProcessing) {
+        return m_PostProcessing->GetSceneFramebuffer();
+    }
+    return BGFX_INVALID_HANDLE;
 }
 
 } // namespace Solstice::Render

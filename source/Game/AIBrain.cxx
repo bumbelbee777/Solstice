@@ -1,7 +1,7 @@
 #include "AIBrain.hxx"
 #include "Enemy.hxx"
 #include "Health.hxx"
-#include "Weapon.hxx"
+#include "FPS/Weapon.hxx"
 #include "../Core/Debug.hxx"
 #include "../Entity/Transform.hxx"
 #include "../Physics/RigidBody.hxx"

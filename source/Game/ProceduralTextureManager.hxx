@@ -2,7 +2,7 @@
 
 #include "../Solstice.hxx"
 #include "../Core/Async.hxx"
-#include "../Render/SoftwareRenderer.hxx"
+#include <Render/SoftwareRenderer.hxx>
 #include "../Core/Material.hxx"
 #include "../Arzachel/ProceduralTexture.hxx"
 #include "../Arzachel/MaterialSerializer.hxx"

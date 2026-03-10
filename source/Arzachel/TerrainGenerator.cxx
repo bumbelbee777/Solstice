@@ -5,7 +5,7 @@
 #include "GeometryOps.hxx"
 #include "AssetBuilder.hxx"
 #include "MeshData.hxx"
-#include "../Render/Mesh.hxx"
+#include <Render/Assets/Mesh.hxx>
 #include "../Core/Debug.hxx"
 #include <algorithm>
 #include <cmath>

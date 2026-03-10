@@ -2,6 +2,10 @@ $input v_texcoord0, v_color0
 
 #include <bgfx_shader.sh>
 
+float random(vec2 uv) {
+    return fract(sin(dot(uv, vec2(12.9898, 78.233))) * 43758.5453);
+}
+
 void main()
 {
     // Get color from vertex
@@ -15,17 +19,20 @@ void main()
     vec2 uv = v_texcoord0;
     float dist = distance(uv, center);
 
-    // Create smooth circular falloff (soft edges)
-    // dist goes from 0 (center) to ~0.707 (corner)
-    float alpha = 1.0 - smoothstep(0.3, 0.707, dist);
+    // Softer circular falloff (more visible core, smoother edge)
+    float edge = smoothstep(0.25, 0.78, dist);
+    float alpha = pow(1.0 - edge, 1.35);
+
+    // Subtle noise to break uniformity
+    float n = random(uv * 12.7);
+    alpha *= mix(0.85, 1.0, n);
 
     // Apply alpha to color
     color.a *= alpha;
 
-    // Optional: Add subtle glow for snowflakes
-    // Slight brightness increase at center
-    float glow = 1.0 - dist * 0.3;
-    color.rgb *= (1.0 + glow * 0.2);
+    // Slight core boost for prominence
+    float glow = 1.0 - dist * 0.6;
+    color.rgb *= (1.0 + glow * 0.3);
 
     gl_FragColor = color;
 }

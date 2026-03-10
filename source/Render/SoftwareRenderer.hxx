@@ -1,24 +1,25 @@
 #pragma once
 
-#include "../Solstice.hxx"
+#include <Solstice.hxx>
 #include <Core/Allocator.hxx>
 #include <Core/Async.hxx>
-#include <Render/Mesh.hxx>
+#include <Render/Assets/Mesh.hxx>
 #include <Core/Material.hxx>
-#include <Render/Camera.hxx>
+#include <Render/Scene/Camera.hxx>
 #include <Math/Matrix.hxx>
 #include <Math/Vector.hxx>
 #include <memory>
 #include <vector>
 #include <array>
 #include <string>
-#include <Render/PostProcessing.hxx>
-#include <Render/Scene.hxx>
-#include <Render/Skybox.hxx>
-#include <Render/TextureRegistry.hxx>
-#include <Render/Raytracing.hxx>
-#include <Render/ShadowRenderer.hxx>
-#include <Render/SceneRenderer.hxx>
+#include <Render/Post/PostProcessing.hxx>
+#include <Render/Scene/Scene.hxx>
+#include <Render/Scene/Skybox.hxx>
+#include <Render/Assets/TextureRegistry.hxx>
+#include <Render/Lighting/Raytracing.hxx>
+#include <Render/Lighting/VolumetricLighting.hxx>
+#include <Render/Lighting/ShadowRenderer.hxx>
+#include <Render/Scene/SceneRenderer.hxx>
 #include <Physics/LightSource.hxx>
 #include <bgfx/bgfx.h>
 #include <set>
@@ -43,7 +44,7 @@ public:
     virtual uint32_t cacheReadSize(uint64_t _id) override { return 0; }
     virtual bool cacheRead(uint64_t _id, void* _data, uint32_t _size) override { return false; }
     virtual void cacheWrite(uint64_t _id, const void* _data, uint32_t _size) override {}
-    virtual void screenShot(const char* _filePath, uint32_t _width, uint32_t _height, uint32_t _pitch, const void* _data, uint32_t _size, bool _yflip) override {}
+    virtual void screenShot(const char* _filePath, uint32_t _width, uint32_t _height, uint32_t _pitch, bgfx::TextureFormat::Enum _format, const void* _data, uint32_t _size, bool _yflip) override {}
     virtual void captureBegin(uint32_t _width, uint32_t _height, uint32_t _pitch, bgfx::TextureFormat::Enum _format, bool _yflip) override {}
     virtual void captureEnd() override {}
     virtual void captureFrame(const void* _data, uint32_t _size) override {}
@@ -151,6 +152,15 @@ public:
     PostProcessing* GetPostProcessing() { return m_PostProcessing.get(); }
     const PostProcessing* GetPostProcessing() const { return m_PostProcessing.get(); }
 
+    // Volumetric lighting access
+    void SetVolumetricLighting(VolumetricLighting* volumetrics) { m_VolumetricLighting = volumetrics; }
+    VolumetricLighting* GetVolumetricLighting() { return m_VolumetricLighting; }
+
+    // World-space UI rendering support
+    bgfx::ProgramHandle GetSceneProgram() const;
+    bgfx::ViewId GetSceneViewId() const { return PostProcessing::VIEW_SCENE; }
+    bgfx::FrameBufferHandle GetSceneFramebuffer() const;
+
 private:
     // BGFX specific
     void UploadFramebufferToGPU();
@@ -216,6 +226,10 @@ private:
 
     // Raytracing for advanced lighting
     std::unique_ptr<Raytracing> m_Raytracing;
+
+    // Volumetric lighting (owned by game/example, not renderer)
+    VolumetricLighting* m_VolumetricLighting = nullptr;
+    std::vector<Physics::LightSource> m_VolumetricLights; // Cached lights for volumetric lighting
 
     // Rendering helper classes
     std::unique_ptr<ShadowRenderer> m_ShadowRenderer;

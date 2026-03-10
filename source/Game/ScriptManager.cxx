@@ -30,6 +30,28 @@ bool ScriptManager::Initialize(
     Scripting::RegisterScriptBindings(m_ScriptVM, Registry, Scene, PhysicsSystem, Camera);
     SIMPLE_LOG("ScriptManager: Script bindings registered");
 
+    // Coroutine and wait natives (require ScriptManager to start coroutines / request yield)
+    m_ScriptVM.RegisterNative("WaitFrames", [this](const std::vector<Scripting::Value>& args) -> Scripting::Value {
+        if (args.size() > 0) m_ScriptVM.RequestYieldFrames(Scripting::GetInt(args[0]));
+        return (int64_t)0;
+    });
+    m_ScriptVM.RegisterNative("WaitSeconds", [this](const std::vector<Scripting::Value>& args) -> Scripting::Value {
+        if (args.size() > 0) m_ScriptVM.RequestYieldSeconds(Scripting::GetFloat(args[0]));
+        return (int64_t)0;
+    });
+    m_ScriptVM.RegisterNative("Coroutine.Start", [this](const std::vector<Scripting::Value>& args) -> Scripting::Value {
+        if (args.size() < 1 || !std::holds_alternative<Scripting::ScriptFunc>(args[0])) return (int64_t)0;
+        const auto& sf = std::get<Scripting::ScriptFunc>(args[0]);
+        StartCoroutine(m_ScriptVM.GetProgram(), sf.entryIP, {});
+        return (int64_t)0;
+    });
+    m_ScriptVM.RegisterNative("WaitUntil", [this](const std::vector<Scripting::Value>& args) -> Scripting::Value {
+        if (args.size() < 1 || !std::holds_alternative<Scripting::ScriptFunc>(args[0])) return (int64_t)0;
+        const auto& cond = std::get<Scripting::ScriptFunc>(args[0]);
+        m_ScriptVM.RequestYieldUntil(cond);
+        return (int64_t)0;
+    });
+
     // Try multiple possible script directory paths
     std::vector<std::filesystem::path> ScriptDirCandidates = {
         ScriptDirectory,
@@ -115,13 +137,14 @@ bool ScriptManager::ExecuteModule(const std::string& ModuleName, uint32_t Timeou
 
         SIMPLE_LOG("Executing module: " + ModuleName);
         m_ScriptVM.LoadProgram(m_ScriptVM.GetModule(ModuleName));
-        try {
-        m_ScriptVM.Run();
-        SIMPLE_LOG("Module " + ModuleName + " executed successfully");
-        } catch (const std::exception& e) {
-            SIMPLE_LOG("ERROR: Exception in VM::Run() for " + ModuleName + ": " + std::string(e.what()));
-            throw; // Re-throw to be caught by outer catch
+        Scripting::CoroutineState state;
+        Scripting::RunResult r = m_ScriptVM.Run(&state);
+        if (r == Scripting::RunResult::Yielded) {
+            if (state.yieldRequest.type == Scripting::YieldRequest::Type::Seconds)
+                state.yieldRequest.resumeAtTime = m_GameTime + state.yieldRequest.secondsDelay;
+            m_Coroutines.push_back(std::move(state));
         }
+        SIMPLE_LOG("Module " + ModuleName + " executed successfully");
         m_ExecutionGuard.Release();
         return true;
     } catch (const std::exception& e) {
@@ -133,6 +156,18 @@ bool ScriptManager::ExecuteModule(const std::string& ModuleName, uint32_t Timeou
         m_ExecutionGuard.Release();
         return false;
     }
+}
+
+void ScriptManager::StartCoroutine(const Scripting::Program& program, size_t entryIP, const std::vector<Scripting::Value>& args) {
+    Scripting::CoroutineState state;
+    state.program = program;
+    state.IP = entryIP;
+    state.stack = args;
+    state.callStack.clear();
+    state.registers = {};
+    state.yieldRequest = Scripting::YieldRequest{};
+    Core::LockGuard Guard(m_VMLock);
+    m_Coroutines.push_back(std::move(state));
 }
 
 void ScriptManager::ExecuteModuleWhen(
@@ -151,7 +186,47 @@ void ScriptManager::ExecuteModuleWhen(
 }
 
 void ScriptManager::Update(float DeltaTime) {
-    (void)DeltaTime;
+    m_GameTime += static_cast<double>(DeltaTime);
+    m_FrameCount++;
+
+    // Tick coroutines (decrement frame counters)
+    for (auto& s : m_Coroutines)
+        s.tick(m_FrameCount, m_GameTime);
+
+    // Resume due coroutines
+    for (auto it = m_Coroutines.begin(); it != m_Coroutines.end(); ) {
+        bool due = it->isDue(m_FrameCount, m_GameTime);
+        if (!due && it->yieldRequest.type == Scripting::YieldRequest::Type::Condition) {
+            try {
+                Core::LockGuard Guard(m_VMLock);
+                due = m_ScriptVM.RunCondition(it->program, it->yieldRequest.conditionFunc);
+            } catch (const std::exception& e) {
+                SIMPLE_LOG("ERROR: WaitUntil condition exception: " + std::string(e.what()));
+                it = m_Coroutines.erase(it);
+                continue;
+            }
+        }
+        if (!due) {
+            ++it;
+            continue;
+        }
+        Scripting::RunResult r = Scripting::RunResult::Completed;
+        try {
+            Core::LockGuard Guard(m_VMLock);
+            r = m_ScriptVM.RunFromState(*it);
+        } catch (const std::exception& e) {
+            SIMPLE_LOG("ERROR: Coroutine exception: " + std::string(e.what()));
+            it = m_Coroutines.erase(it);
+            continue;
+        }
+        if (r == Scripting::RunResult::Completed)
+            it = m_Coroutines.erase(it);
+        else {
+            if (r == Scripting::RunResult::Yielded && it->yieldRequest.type == Scripting::YieldRequest::Type::Seconds)
+                it->yieldRequest.resumeAtTime = m_GameTime + it->yieldRequest.secondsDelay;
+            ++it;
+        }
+    }
 
     // Check deferred execution conditions
     for (auto& Task : m_DeferredExecutions) {
@@ -184,6 +259,7 @@ void ScriptManager::Shutdown() {
     }
 
     m_DeferredExecutions.clear();
+    m_Coroutines.clear();
     SIMPLE_LOG("ScriptManager: Shutdown complete");
 }
 

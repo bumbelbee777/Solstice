@@ -4,6 +4,7 @@
 #include "../Solstice.hxx"
 #include <Math/Vector.hxx>
 #include <Math/Matrix.hxx>
+#include <bgfx/bgfx.h>
 #include <string>
 #include <functional>
 #include <memory>
@@ -37,7 +38,7 @@ namespace Solstice::UI::ViewportUI {
         void SetPosition(const Math::Vec3& Position) { m_Position = Position; }
         Math::Vec3 GetPosition() const { return m_Position; }
 
-        void SetSize(float Width, float Height) { m_Width = Width; m_Height = Height; }
+        void SetSize(float Width, float Height);
         void GetSize(float& Width, float& Height) const { Width = m_Width; Height = m_Height; }
 
         void SetVisible(bool Visible) { m_Visible = Visible; }
@@ -47,10 +48,16 @@ namespace Solstice::UI::ViewportUI {
         bool GetDepthTest() const { return m_DepthTest; }
 
         // Render the dialog (call from render loop)
-        void Render(const Math::Matrix4& ViewMatrix, const Math::Matrix4& ProjectionMatrix, int ScreenWidth, int ScreenHeight);
+        // If bgfx resources are provided, renders as 3D billboard; otherwise uses ImGui (screen-space)
+        void Render(const Math::Matrix4& ViewMatrix, const Math::Matrix4& ProjectionMatrix, int ScreenWidth, int ScreenHeight,
+                   bgfx::ProgramHandle SceneProgram = BGFX_INVALID_HANDLE, bgfx::ViewId ViewId = 2,
+                   bgfx::FrameBufferHandle SceneFramebuffer = BGFX_INVALID_HANDLE);
 
         // Content callback - called during render to draw ImGui content
-        void SetContentCallback(std::function<void()> Callback) { m_ContentCallback = Callback; }
+        void SetContentCallback(std::function<void()> Callback);
+
+        // Invalidate cached texture (call when content changes)
+        void InvalidateTexture() { m_TextureValid = false; }
 
     private:
         Math::Vec3 m_Position;
@@ -59,6 +66,8 @@ namespace Solstice::UI::ViewportUI {
         bool m_Visible{true};
         bool m_DepthTest{true};
         std::function<void()> m_ContentCallback;
+        bgfx::TextureHandle m_CachedTexture{BGFX_INVALID_HANDLE};
+        bool m_TextureValid{false};
     };
 
     // World-space text label
@@ -76,7 +85,8 @@ namespace Solstice::UI::ViewportUI {
         void SetVisible(bool Visible) { m_Visible = Visible; }
         bool IsVisible() const { return m_Visible; }
 
-        void Render(const Math::Matrix4& ViewMatrix, const Math::Matrix4& ProjectionMatrix, int ScreenWidth, int ScreenHeight);
+        void Render(const Math::Matrix4& ViewMatrix, const Math::Matrix4& ProjectionMatrix, int ScreenWidth, int ScreenHeight,
+                   bgfx::ProgramHandle SceneProgram = BGFX_INVALID_HANDLE, bgfx::ViewId ViewId = 2);
 
     private:
         Math::Vec3 m_Position;
@@ -93,10 +103,10 @@ namespace Solstice::UI::ViewportUI {
         void SetPosition(const Math::Vec3& Position) { m_Position = Position; }
         Math::Vec3 GetPosition() const { return m_Position; }
 
-        void SetSize(float Width, float Height) { m_Width = Width; m_Height = Height; }
+        void SetSize(float Width, float Height);
         void GetSize(float& Width, float& Height) const { Width = m_Width; Height = m_Height; }
 
-        void SetLabel(const std::string& Label) { m_Label = Label; }
+        void SetLabel(const std::string& Label);
         std::string GetLabel() const { return m_Label; }
 
         void SetVisible(bool Visible) { m_Visible = Visible; }
@@ -105,7 +115,9 @@ namespace Solstice::UI::ViewportUI {
         void SetOnClick(std::function<void()> Callback) { m_OnClick = Callback; }
 
         // Returns true if button was clicked this frame
-        bool Render(const Math::Matrix4& ViewMatrix, const Math::Matrix4& ProjectionMatrix, int ScreenWidth, int ScreenHeight);
+        // If bgfx resources are provided, renders as 3D billboard; otherwise uses ImGui (screen-space)
+        bool Render(const Math::Matrix4& ViewMatrix, const Math::Matrix4& ProjectionMatrix, int ScreenWidth, int ScreenHeight,
+                   bgfx::ProgramHandle SceneProgram = BGFX_INVALID_HANDLE, bgfx::ViewId ViewId = 2);
 
     private:
         Math::Vec3 m_Position;
@@ -114,6 +126,8 @@ namespace Solstice::UI::ViewportUI {
         std::string m_Label;
         bool m_Visible{true};
         std::function<void()> m_OnClick;
+        bgfx::TextureHandle m_CachedTexture{BGFX_INVALID_HANDLE};
+        bool m_TextureValid{false};
     };
 
     // Screen-Space Overlay Elements
@@ -248,5 +262,26 @@ namespace Solstice::UI::ViewportUI {
 
     // Utility function to calculate anchor position
     SOLSTICE_API ::ImVec2 CalculateAnchorPosition(Anchor AnchorPos, float Width, float Height, int ScreenWidth, int ScreenHeight, float OffsetX = 0.0f, float OffsetY = 0.0f);
+
+    // Check if billboard shader is available for world-space rendering
+    SOLSTICE_API bool IsBillboardShaderAvailable();
+
+    // Render a billboard quad in world space
+    // If Program is invalid, uses the built-in billboard shader
+    SOLSTICE_API void RenderBillboardQuad(
+        const Math::Vec3& WorldPos,
+        float Width, float Height,
+        bgfx::TextureHandle Texture,
+        const Math::Matrix4& ViewMatrix,
+        const Math::Matrix4& ProjectionMatrix,
+        bgfx::ProgramHandle Program,
+        bgfx::ViewId ViewId,
+        bool DepthTest,
+        const Math::Vec4& ColorTint = Math::Vec4(1.0f, 1.0f, 1.0f, 1.0f));
+
+    // Render ImGui content to a texture (for world-space UI)
+    // Returns texture handle, or BGFX_INVALID_HANDLE on failure
+    // The callback should draw ImGui content (e.g., ImGui::Begin, ImGui::Text, ImGui::End)
+    SOLSTICE_API bgfx::TextureHandle RenderImGuiToTexture(int Width, int Height, std::function<void()> ContentCallback, bgfx::ViewId ViewId = 255);
 
 } // namespace Solstice::UI::ViewportUI

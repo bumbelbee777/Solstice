@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Render/Camera.hxx>
+#include <Render/Scene/Camera.hxx>
 #include <string>
 #include <functional>
 #include "ObjectSpawner.hxx"

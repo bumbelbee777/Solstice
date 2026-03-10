@@ -60,13 +60,16 @@ auto DamagedCar = Damaged(Car(MySeed), MySeed, 0.2f).Build(MySeed);
 
 ## Animation & Rigging
 
-Arzachel supports automated rigging and advanced animation blending:
+Arzachel supports automated rigging and advanced animation blending. Skeleton and posing types (BoneID, Bone, Skeleton, BoneTransform, Pose, BlendPoses, SolveIK) live in the **Skeleton** module (`Solstice::Skeleton`). Arzachel owns animation clips, bone-pattern tracks, and rigging (MergeSkeletons, RemapWeights, SkinWeights, RiggedMesh); Skeleton owns the bone tree and pose types. See [Skeleton.md](Skeleton.md) for the Skeleton API.
 
 ```cpp
+using namespace Solstice::Arzachel;
+using namespace Solstice::Skeleton;
+
 auto Human = HumanoidRig(MySeed).Build(MySeed);
 // Includes auto-generated skeleton and proximity-based weights
 
-// Animation Blending
+// Animation blending (Pose and BlendPoses from Solstice::Skeleton)
 Pose PoseA = ClipA.Evaluate(Time, Skel);
 Pose PoseB = ClipB.Evaluate(Time, Skel);
 Pose Mixed = BlendPoses(PoseA, PoseB, 0.5f);

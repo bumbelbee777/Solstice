@@ -1,4 +1,4 @@
-﻿{
+{
     "version": 6,
     "cmakeMinimumRequired": {
         "major": 3,
@@ -22,7 +22,8 @@
             "inherits": "base",
             "cacheVariables": {
                 "CMAKE_C_COMPILER": "cl.exe",
-                "CMAKE_CXX_COMPILER": "cl.exe"
+                "CMAKE_CXX_COMPILER": "cl.exe",
+                "CMAKE_MAKE_PROGRAM": "C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/Ninja/ninja.exe"
             },
             "condition": {
                 "type": "equals",

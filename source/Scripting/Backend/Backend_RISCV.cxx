@@ -26,8 +26,10 @@ bool Backend_RISCV::IsSupported() const {
     return m_Supported;
 }
 
-IBackend::CompiledFunction Backend_RISCV::CompileFunction(const Program& program, size_t functionStartIP) {
-    // Placeholder: Return interpreter function for now
+IBackend::CompiledFunction Backend_RISCV::CompileFunction(const Program& program, size_t functionStartIP, BytecodeVM* vm) {
+    (void)program;
+    (void)functionStartIP;
+    (void)vm;
     return nullptr;
 }
 

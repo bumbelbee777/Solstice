@@ -5,6 +5,7 @@ build/
 cmake-build-*/
 bin/
 lib/
+.cpm-cache/
 *.dll
 *.exe
 *.pdb
@@ -22,6 +23,7 @@ Makefile
 !CMakeLists.txt
 !CMakePresets.json
 !3rdparty/cmake/**
+compile_commands.json
 
 .vs/
 *.sln

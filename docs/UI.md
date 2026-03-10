@@ -12,7 +12,7 @@ The UI system consists of:
 - **UIRenderSettings**: Configurable rendering parameters for different UI layers
 - **Widgets**: Comprehensive widget library wrapping ImGui
 - **ViewportUI**: World-space and screen-space UI elements
-- **Animation**: Keyframe-based animation system
+- **Animation**: Keyframe-based animation system (uses **MinGfx** for easing and keyframe types)
 - **Transition**: State transition system for UI elements
 
 ```mermaid

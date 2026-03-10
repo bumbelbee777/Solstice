@@ -2,9 +2,9 @@
 
 #include <UI/Window.hxx>
 #include <Render/SoftwareRenderer.hxx>
-#include <Render/Scene.hxx>
-#include <Render/Camera.hxx>
-#include <Render/Mesh.hxx>
+#include <Render/Scene/Scene.hxx>
+#include <Render/Scene/Camera.hxx>
+#include <Render/Assets/Mesh.hxx>
 #include <Core/Material.hxx>
 #include <Physics/PhysicsSystem.hxx>
 #include <Entity/Registry.hxx>
@@ -15,8 +15,8 @@
 #include <Game/GameBase.hxx>
 #include <Game/InputManager.hxx>
 #include <Game/ScriptManager.hxx>
-#include <Render/ParticleSystem.hxx>
-#include <Render/ParticlePresets.hxx>
+#include <Render/Particle/ParticleSystem.hxx>
+#include <Render/Particle/ParticlePresets.hxx>
 #include <Physics/Fluid.hxx>
 #include <memory>
 #include <vector>

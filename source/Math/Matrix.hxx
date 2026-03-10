@@ -14,45 +14,52 @@ struct Matrix2 {
         M[1][0] = 0.0f; M[1][1] = 1.0f;
     }
 
-    static Matrix2 Identity() { return Matrix2(); }
+    static Matrix2 Identity() { return {}; }
 
     void Print() const {
-        for (int i = 0; i < 2; ++i) {
-            for (int j = 0; j < 2; ++j)
-                std::cout << M[i][j] << " ";
+        for (const auto *I : M) {
+            for (int J = 0; J < 2; ++J) {
+                std::cout << I[J] << " ";
+}
             std::cout << std::endl;
         }
     }
 
     Matrix2 operator+(const Matrix2& Other) const {
         Matrix2 Result;
-        for (int i = 0; i < 2; ++i)
-            for (int j = 0; j < 2; ++j)
-                Result.M[i][j] = M[i][j] + Other.M[i][j];
+        for (int I = 0; I < 2; ++I) {
+            for (int J = 0; J < 2; ++J) {
+                Result.M[I][J] = M[I][J] + Other.M[I][J];
+}
+}
         return Result;
     }
 
     Matrix2 operator-(const Matrix2& Other) const {
         Matrix2 Result;
-        for (int i = 0; i < 2; ++i)
-            for (int j = 0; j < 2; ++j)
-                Result.M[i][j] = M[i][j] - Other.M[i][j];
+        for (int I = 0; I < 2; ++I) {
+            for (int J = 0; J < 2; ++J) {
+                Result.M[I][J] = M[I][J] - Other.M[I][J];
+            }
+        }
         return Result;
     }
 
     Matrix2 operator*(float Scalar) const {
         Matrix2 Result;
-        for (int i = 0; i < 2; ++i)
-            for (int j = 0; j < 2; ++j)
-                Result.M[i][j] = M[i][j] * Scalar;
+        for (int I = 0; I < 2; ++I) {
+            for (int J = 0; J < 2; ++J) {
+                Result.M[I][J] = M[I][J] * Scalar;
+            }
+        }
         return Result;
     }
 
     Matrix2 operator*(const Matrix2& Other) const {
         Matrix2 Result;
-        for (int i = 0; i < 2; ++i) {
-            for (int j = 0; j < 2; ++j) {
-                Result.M[i][j] = M[i][0] * Other.M[0][j] + M[i][1] * Other.M[1][j];
+        for (int I = 0; I < 2; ++I) {
+            for (int J = 0; J < 2; ++J) {
+                Result.M[I][J] = M[I][0] * Other.M[0][J] + M[I][1] * Other.M[1][J];
             }
         }
         return Result;
@@ -64,9 +71,12 @@ struct Matrix2 {
     Matrix2& operator*=(float S) { *this = *this * S; return *this; }
 
     bool operator==(const Matrix2& Rhs) const {
-        for (int i = 0; i < 2; ++i)
-            for (int j = 0; j < 2; ++j)
-                if (M[i][j] != Rhs.M[i][j]) return false;
+        for (int I = 0; I < 2; ++I) {
+            for (int J = 0; J < 2; ++J) {
+                if (M[I][J] != Rhs.M[I][J]) { return false;
+}
+}
+}
         return true;
     }
 
@@ -74,18 +84,18 @@ struct Matrix2 {
         return !(*this == Rhs);
     }
 
-    Matrix2 Transposed() const {
+    [[nodiscard]] Matrix2 Transposed() const {
         Matrix2 Result;
         Result.M[0][0] = M[0][0]; Result.M[0][1] = M[1][0];
         Result.M[1][0] = M[0][1]; Result.M[1][1] = M[1][1];
         return Result;
     }
 
-    float Determinant() const {
-        return M[0][0] * M[1][1] - M[0][1] * M[1][0];
+    [[nodiscard]] float Determinant() const {
+        return (M[0][0] * M[1][1]) - (M[0][1] * M[1][0]);
     }
 
-    Matrix2 Inverse() const {
+    [[nodiscard]] Matrix2 Inverse() const {
         float Det = Determinant();
         assert(Det != 0.0f);
         Matrix2 Result;
@@ -101,50 +111,59 @@ struct Matrix3 {
     float M[3][3];
 
     Matrix3() {
-        for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 3; ++j)
-                M[i][j] = (i == j) ? 1.0f : 0.0f;
+        for (int I = 0; I < 3; ++I) {
+            for (int J = 0; J < 3; ++J) {
+                M[I][J] = (I == J) ? 1.0f : 0.0f;
+}
+}
     }
 
-    static Matrix3 Identity() { return Matrix3(); }
+    static Matrix3 Identity() { return {}; }
 
     void Print() const {
-        for (int i = 0; i < 3; ++i) {
-            for (int j = 0; j < 3; ++j)
-                std::cout << M[i][j] << " ";
+        for (const auto *I : M) {
+            for (int J = 0; J < 3; ++J) {
+                std::cout << I[J] << " ";
+}
             std::cout << std::endl;
         }
     }
 
     Matrix3 operator+(const Matrix3& Other) const {
         Matrix3 Result;
-        for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 3; ++j)
-                Result.M[i][j] = M[i][j] + Other.M[i][j];
+        for (int I = 0; I < 3; ++I) {
+            for (int J = 0; J < 3; ++J) {
+                Result.M[I][J] = M[I][J] + Other.M[I][J];
+}
+}
         return Result;
     }
 
     Matrix3 operator-(const Matrix3& Other) const {
         Matrix3 Result;
-        for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 3; ++j)
-                Result.M[i][j] = M[i][j] - Other.M[i][j];
+        for (int I = 0; I < 3; ++I) {
+            for (int J = 0; J < 3; ++J) {
+                Result.M[I][J] = M[I][J] - Other.M[I][J];
+}
+}
         return Result;
     }
 
     Matrix3 operator*(float Scalar) const {
         Matrix3 Result;
-        for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 3; ++j)
-                Result.M[i][j] = M[i][j] * Scalar;
+        for (int I = 0; I < 3; ++I) {
+            for (int J = 0; J < 3; ++J) {
+                Result.M[I][J] = M[I][J] * Scalar;
+}
+}
         return Result;
     }
 
     Matrix3 operator*(const Matrix3& Other) const {
         Matrix3 Result;
-        for (int i = 0; i < 3; ++i) {
-            for (int j = 0; j < 3; ++j) {
-                Result.M[i][j] = M[i][0] * Other.M[0][j] + M[i][1] * Other.M[1][j] + M[i][2] * Other.M[2][j];
+        for (int I = 0; I < 3; ++I) {
+            for (int J = 0; J < 3; ++J) {
+                Result.M[I][J] = M[I][0] * Other.M[0][J] + M[I][1] * Other.M[1][J] + M[I][2] * Other.M[2][J];
             }
         }
         return Result;
@@ -156,9 +175,12 @@ struct Matrix3 {
     Matrix3& operator*=(float S) { *this = *this * S; return *this; }
 
     bool operator==(const Matrix3& Rhs) const {
-        for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 3; ++j)
-                if (M[i][j] != Rhs.M[i][j]) return false;
+        for (int I = 0; I < 3; ++I) {
+            for (int J = 0; J < 3; ++J) {
+                if (M[I][J] != Rhs.M[I][J]) { return false;
+}
+}
+}
         return true;
     }
 
@@ -166,20 +188,22 @@ struct Matrix3 {
         return !(*this == Rhs);
     }
 
-    Matrix3 Transposed() const {
+    [[nodiscard]] Matrix3 Transposed() const {
         Matrix3 Result;
-        for (int i = 0; i < 3; ++i)
-            for (int j = 0; j < 3; ++j)
-                Result.M[i][j] = M[j][i];
+        for (int I = 0; I < 3; ++I) {
+            for (int J = 0; J < 3; ++J) {
+                Result.M[I][J] = M[J][I];
+}
+}
         return Result;
     }
 
     Vec3 operator*(const Vec3& V) const {
-        return Vec3(
-            M[0][0] * V.x + M[0][1] * V.y + M[0][2] * V.z,
-            M[1][0] * V.x + M[1][1] * V.y + M[1][2] * V.z,
-            M[2][0] * V.x + M[2][1] * V.y + M[2][2] * V.z
-        );
+        return {
+            (M[0][0] * V.x) + (M[0][1] * V.y) + (M[0][2] * V.z),
+            (M[1][0] * V.x) + (M[1][1] * V.y) + (M[1][2] * V.z),
+            (M[2][0] * V.x) + (M[2][1] * V.y) + (M[2][2] * V.z)
+        };
     }
 };
 
@@ -187,56 +211,66 @@ struct Matrix4 {
     float M[4][4];
 
     Matrix4() {
-        for (int i = 0; i < 4; ++i)
-            for (int j = 0; j < 4; ++j)
-                M[i][j] = (i == j) ? 1.0f : 0.0f;
+        for (int I = 0; I < 4; ++I) {
+            for (int J = 0; J < 4; ++J) {
+                M[I][J] = (I == J) ? 1.0f : 0.0f;
+}
+}
     }
 
-    static Matrix4 Identity() { return Matrix4(); }
+    static Matrix4 Identity() { return {}; }
 
-    Vec3 GetTranslation() const {
-        return Vec3(M[0][3], M[1][3], M[2][3]);
+    [[nodiscard]] Vec3 GetTranslation() const {
+        return {M[0][3], M[1][3], M[2][3]};
     }
 
     void Print() const {
-        for (int i = 0; i < 4; ++i) {
-            for (int j = 0; j < 4; ++j)
-                std::cout << M[i][j] << " ";
+        for (const auto *I : M) {
+            for (int J = 0; J < 4; ++J) {
+                std::cout << I[J] << " ";
+}
             std::cout << std::endl;
         }
     }
 
     Matrix4 operator+(const Matrix4& Other) const {
         Matrix4 Result;
-        for (int i = 0; i < 4; ++i)
-            for (int j = 0; j < 4; ++j)
-                Result.M[i][j] = M[i][j] + Other.M[i][j];
+        for (int I = 0; I < 4; ++I) {
+            for (int J = 0; J < 4; ++J) {
+                Result.M[I][J] = M[I][J] + Other.M[I][J];
+}
+}
         return Result;
     }
 
     Matrix4 operator-(const Matrix4& Other) const {
         Matrix4 Result;
-        for (int i = 0; i < 4; ++i)
-            for (int j = 0; j < 4; ++j)
-                Result.M[i][j] = M[i][j] - Other.M[i][j];
+        for (int I = 0; I < 4; ++I) {
+            for (int J = 0; J < 4; ++J) {
+                Result.M[I][J] = M[I][J] - Other.M[I][J];
+}
+}
         return Result;
     }
 
     Matrix4 operator*(float Scalar) const {
         Matrix4 Result;
-        for (int i = 0; i < 4; ++i)
-            for (int j = 0; j < 4; ++j)
-                Result.M[i][j] = M[i][j] * Scalar;
+        for (int I = 0; I < 4; ++I) {
+            for (int J = 0; J < 4; ++J) {
+                Result.M[I][J] = M[I][J] * Scalar;
+}
+}
         return Result;
     }
 
     Matrix4 operator*(const Matrix4& Other) const {
         Matrix4 Result;
-        for (int i = 0; i < 4; ++i) {
-            for (int j = 0; j < 4; ++j) {
-                Result.M[i][j] = 0.0f;
-                for (int k = 0; k < 4; ++k)
-                    Result.M[i][j] += M[i][k] * Other.M[k][j];
+        for (int I = 0; I < 4; ++I) {
+            for (int J = 0; J < 4; ++J) {
+                Result.M[I][J] = 0.0f;
+                for (int K = 0; K < 4; ++K) {
+                    Result.M[I][J] += M[I][K] * Other.M[K][J];
+}
             }
         }
         return Result;
@@ -248,9 +282,12 @@ struct Matrix4 {
     Matrix4& operator*=(float S) { *this = *this * S; return *this; }
 
     bool operator==(const Matrix4& Rhs) const {
-        for (int i = 0; i < 4; ++i)
-            for (int j = 0; j < 4; ++j)
-                if (M[i][j] != Rhs.M[i][j]) return false;
+        for (int I = 0; I < 4; ++I) {
+            for (int J = 0; J < 4; ++J) {
+                if (M[I][J] != Rhs.M[I][J]) { return false;
+}
+}
+}
         return true;
     }
 
@@ -258,21 +295,23 @@ struct Matrix4 {
         return !(*this == Rhs);
     }
 
-    Matrix4 Transposed() const {
+    [[nodiscard]] Matrix4 Transposed() const {
         Matrix4 Result;
-        for (int i = 0; i < 4; ++i)
-            for (int j = 0; j < 4; ++j)
-                Result.M[i][j] = M[j][i];
+        for (int I = 0; I < 4; ++I) {
+            for (int J = 0; J < 4; ++J) {
+                Result.M[I][J] = M[J][I];
+}
+}
         return Result;
     }
 
     Vec4 operator*(const Vec4& V) const {
-        return Vec4(
-            M[0][0] * V.x + M[0][1] * V.y + M[0][2] * V.z + M[0][3] * V.w,
-            M[1][0] * V.x + M[1][1] * V.y + M[1][2] * V.z + M[1][3] * V.w,
-            M[2][0] * V.x + M[2][1] * V.y + M[2][2] * V.z + M[2][3] * V.w,
-            M[3][0] * V.x + M[3][1] * V.y + M[3][2] * V.z + M[3][3] * V.w
-        );
+        return {
+            (M[0][0] * V.x) + (M[0][1] * V.y) + (M[0][2] * V.z) + (M[0][3] * V.w),
+            (M[1][0] * V.x) + (M[1][1] * V.y) + (M[1][2] * V.z) + (M[1][3] * V.w),
+            (M[2][0] * V.x) + (M[2][1] * V.y) + (M[2][2] * V.z) + (M[2][3] * V.w),
+            (M[3][0] * V.x) + (M[3][1] * V.y) + (M[3][2] * V.z) + (M[3][3] * V.w)
+        };
     }
 
     static Matrix4 Translation(const Vec3& T) {
@@ -293,7 +332,8 @@ struct Matrix4 {
 
     static Matrix4 RotationX(float Angle) {
         Matrix4 Result = Identity();
-        float C = std::cos(Angle), S = std::sin(Angle);
+        float C = std::cos(Angle);
+        float S = std::sin(Angle);
         Result.M[1][1] = C; Result.M[1][2] = -S;
         Result.M[2][1] = S; Result.M[2][2] = C;
         return Result;
@@ -301,7 +341,8 @@ struct Matrix4 {
 
     static Matrix4 RotationY(float Angle) {
         Matrix4 Result = Identity();
-        float C = std::cos(Angle), S = std::sin(Angle);
+        float C = std::cos(Angle);
+        float S = std::sin(Angle);
         Result.M[0][0] = C; Result.M[0][2] = S;
         Result.M[2][0] = -S; Result.M[2][2] = C;
         return Result;
@@ -309,7 +350,8 @@ struct Matrix4 {
 
     static Matrix4 RotationZ(float Angle) {
         Matrix4 Result = Identity();
-        float C = std::cos(Angle), S = std::sin(Angle);
+        float C = std::cos(Angle);
+        float S = std::sin(Angle);
         Result.M[0][0] = C; Result.M[0][1] = -S;
         Result.M[1][0] = S; Result.M[1][1] = C;
         return Result;
@@ -352,30 +394,30 @@ struct Matrix4 {
     // Asymmetric frustum projection (for VR)
     static Matrix4 Frustum(float Left, float Right, float Bottom, float Top, float NearPlane, float FarPlane) {
         Matrix4 Result{};
-        float invWidth = 1.0f / (Right - Left);
-        float invHeight = 1.0f / (Top - Bottom);
-        float invDepth = 1.0f / (FarPlane - NearPlane);
-        
-        Result.M[0][0] = 2.0f * NearPlane * invWidth;
+        float InvWidth = 1.0f / (Right - Left);
+        float InvHeight = 1.0f / (Top - Bottom);
+        float InvDepth = 1.0f / (FarPlane - NearPlane);
+
+        Result.M[0][0] = 2.0f * NearPlane * InvWidth;
         Result.M[0][1] = 0.0f;
         Result.M[0][2] = 0.0f;
         Result.M[0][3] = 0.0f;
-        
+
         Result.M[1][0] = 0.0f;
-        Result.M[1][1] = 2.0f * NearPlane * invHeight;
+        Result.M[1][1] = 2.0f * NearPlane * InvHeight;
         Result.M[1][2] = 0.0f;
         Result.M[1][3] = 0.0f;
-        
-        Result.M[2][0] = (Right + Left) * invWidth;
-        Result.M[2][1] = (Top + Bottom) * invHeight;
-        Result.M[2][2] = -(FarPlane + NearPlane) * invDepth;
+
+        Result.M[2][0] = (Right + Left) * InvWidth;
+        Result.M[2][1] = (Top + Bottom) * InvHeight;
+        Result.M[2][2] = -(FarPlane + NearPlane) * InvDepth;
         Result.M[2][3] = -1.0f;
-        
+
         Result.M[3][0] = 0.0f;
         Result.M[3][1] = 0.0f;
-        Result.M[3][2] = -2.0f * FarPlane * NearPlane * invDepth;
+        Result.M[3][2] = -2.0f * FarPlane * NearPlane * InvDepth;
         Result.M[3][3] = 0.0f;
-        
+
         return Result;
     }
 
@@ -402,78 +444,79 @@ struct Matrix4 {
         return Result;
     }
 
-    Vec3 TransformPoint(const Vec3& Point) const {
+    [[nodiscard]] Vec3 TransformPoint(const Vec3& Point) const {
         Vec4 V(Point.x, Point.y, Point.z, 1.0f);
         Vec4 R = *this * V;
-        return Vec3(R.x, R.y, R.z);
+        return {R.x, R.y, R.z};
     }
 
-    Vec3 TransformVector(const Vec3& Vector) const {
+    [[nodiscard]] Vec3 TransformVector(const Vec3& Vector) const {
         Vec4 V(Vector.x, Vector.y, Vector.z, 0.0f);
         Vec4 R = *this * V;
-        return Vec3(R.x, R.y, R.z);
+        return {R.x, R.y, R.z};
     }
 
-    Matrix4 Inverse() const {
-        float s0 = M[0][0] * M[1][1] - M[1][0] * M[0][1];
-        float s1 = M[0][0] * M[1][2] - M[1][0] * M[0][2];
-        float s2 = M[0][0] * M[1][3] - M[1][0] * M[0][3];
-        float s3 = M[0][1] * M[1][2] - M[1][1] * M[0][2];
-        float s4 = M[0][1] * M[1][3] - M[1][1] * M[0][3];
-        float s5 = M[0][2] * M[1][3] - M[1][2] * M[0][3];
+    [[nodiscard]] Matrix4 Inverse() const {
+        float S0 = (M[0][0] * M[1][1]) - (M[1][0] * M[0][1]);
+        float S1 = (M[0][0] * M[1][2]) - (M[1][0] * M[0][2]);
+        float S2 = (M[0][0] * M[1][3]) - (M[1][0] * M[0][3]);
+        float S3 = (M[0][1] * M[1][2]) - (M[1][1] * M[0][2]);
+        float S4 = (M[0][1] * M[1][3]) - (M[1][1] * M[0][3]);
+        float S5 = (M[0][2] * M[1][3]) - (M[1][2] * M[0][3]);
 
-        float c5 = M[2][2] * M[3][3] - M[3][2] * M[2][3];
-        float c4 = M[2][1] * M[3][3] - M[3][1] * M[2][3];
-        float c3 = M[2][1] * M[3][2] - M[3][1] * M[2][2];
-        float c2 = M[2][0] * M[3][3] - M[3][0] * M[2][3];
-        float c1 = M[2][0] * M[3][2] - M[3][0] * M[2][2];
-        float c0 = M[2][0] * M[3][1] - M[3][0] * M[2][1];
+        float C5 = (M[2][2] * M[3][3]) - (M[3][2] * M[2][3]);
+        float C4 = (M[2][1] * M[3][3]) - (M[3][1] * M[2][3]);
+        float C3 = (M[2][1] * M[3][2]) - (M[3][1] * M[2][2]);
+        float C2 = (M[2][0] * M[3][3]) - (M[3][0] * M[2][3]);
+        float C1 = (M[2][0] * M[3][2]) - (M[3][0] * M[2][2]);
+        float C0 = (M[2][0] * M[3][1]) - (M[3][0] * M[2][1]);
 
-        float det = (s0 * c5 - s1 * c4 + s2 * c3 + s3 * c2 - s4 * c1 + s5 * c0);
-        if (std::abs(det) < 1e-6f) return Identity();
+        float Det = ((S0 * C5) - (S1 * C4) + (S2 * C3) + (S3 * C2) - (S4 * C1) + (S5 * C0));
+        if (std::abs(Det) < 1e-6f) { return Identity();
+}
 
-        float invDet = 1.0f / det;
+        float InvDet = 1.0f / Det;
 
         Matrix4 Result;
-        Result.M[0][0] = ( M[1][1] * c5 - M[1][2] * c4 + M[1][3] * c3) * invDet;
-        Result.M[0][1] = (-M[0][1] * c5 + M[0][2] * c4 - M[0][3] * c3) * invDet;
-        Result.M[0][2] = ( M[3][1] * s5 - M[3][2] * s4 + M[3][3] * s3) * invDet;
-        Result.M[0][3] = (-M[2][1] * s5 + M[2][2] * s4 - M[2][3] * s3) * invDet;
+        Result.M[0][0] = ( M[1][1] * C5 - M[1][2] * C4 + M[1][3] * C3) * InvDet;
+        Result.M[0][1] = (-M[0][1] * C5 + M[0][2] * C4 - M[0][3] * C3) * InvDet;
+        Result.M[0][2] = ( M[3][1] * S5 - M[3][2] * S4 + M[3][3] * S3) * InvDet;
+        Result.M[0][3] = (-M[2][1] * S5 + M[2][2] * S4 - M[2][3] * S3) * InvDet;
 
-        Result.M[1][0] = (-M[1][0] * c5 + M[1][2] * c2 - M[1][3] * c1) * invDet;
-        Result.M[1][1] = ( M[0][0] * c5 - M[0][2] * c2 + M[0][3] * c1) * invDet;
-        Result.M[1][2] = (-M[3][0] * s5 + M[3][2] * s2 - M[3][3] * s1) * invDet;
-        Result.M[1][3] = ( M[2][0] * s5 - M[2][2] * s2 + M[2][3] * s1) * invDet;
+        Result.M[1][0] = (-M[1][0] * C5 + M[1][2] * C2 - M[1][3] * C1) * InvDet;
+        Result.M[1][1] = ( M[0][0] * C5 - M[0][2] * C2 + M[0][3] * C1) * InvDet;
+        Result.M[1][2] = (-M[3][0] * S5 + M[3][2] * S2 - M[3][3] * S1) * InvDet;
+        Result.M[1][3] = ( M[2][0] * S5 - M[2][2] * S2 + M[2][3] * S1) * InvDet;
 
-        Result.M[2][0] = ( M[1][0] * c4 - M[1][1] * c2 + M[1][3] * c0) * invDet;
-        Result.M[2][1] = (-M[0][0] * c4 + M[0][1] * c2 - M[0][3] * c0) * invDet;
-        Result.M[2][2] = ( M[3][0] * s4 - M[3][1] * s2 + M[3][3] * s0) * invDet;
-        Result.M[2][3] = (-M[2][0] * s4 + M[2][1] * s2 - M[2][3] * s0) * invDet;
+        Result.M[2][0] = ( M[1][0] * C4 - M[1][1] * C2 + M[1][3] * C0) * InvDet;
+        Result.M[2][1] = (-M[0][0] * C4 + M[0][1] * C2 - M[0][3] * C0) * InvDet;
+        Result.M[2][2] = ( M[3][0] * S4 - M[3][1] * S2 + M[3][3] * S0) * InvDet;
+        Result.M[2][3] = (-M[2][0] * S4 + M[2][1] * S2 - M[2][3] * S0) * InvDet;
 
-        Result.M[3][0] = (-M[1][0] * c3 + M[1][1] * c1 - M[1][2] * c0) * invDet;
-        Result.M[3][1] = ( M[0][0] * c3 - M[0][1] * c1 + M[0][2] * c0) * invDet;
-        Result.M[3][2] = (-M[3][0] * s3 + M[3][1] * s1 - M[3][2] * s0) * invDet;
-        Result.M[3][3] = ( M[2][0] * s3 - M[2][1] * s1 + M[2][2] * s0) * invDet;
+        Result.M[3][0] = (-M[1][0] * C3 + M[1][1] * C1 - M[1][2] * C0) * InvDet;
+        Result.M[3][1] = ( M[0][0] * C3 - M[0][1] * C1 + M[0][2] * C0) * InvDet;
+        Result.M[3][2] = (-M[3][0] * S3 + M[3][1] * S1 - M[3][2] * S0) * InvDet;
+        Result.M[3][3] = ( M[2][0] * S3 - M[2][1] * S1 + M[2][2] * S0) * InvDet;
 
         return Result;
     }
 
-    float Determinant() const {
-        float s0 = M[0][0] * M[1][1] - M[1][0] * M[0][1];
-        float s1 = M[0][0] * M[1][2] - M[1][0] * M[0][2];
-        float s2 = M[0][0] * M[1][3] - M[1][0] * M[0][3];
-        float s3 = M[0][1] * M[1][2] - M[1][1] * M[0][2];
-        float s4 = M[0][1] * M[1][3] - M[1][1] * M[0][3];
-        float s5 = M[0][2] * M[1][3] - M[1][2] * M[0][3];
+    [[nodiscard]] float Determinant() const {
+        float S0 = (M[0][0] * M[1][1]) - (M[1][0] * M[0][1]);
+        float S1 = (M[0][0] * M[1][2]) - (M[1][0] * M[0][2]);
+        float S2 = (M[0][0] * M[1][3]) - (M[1][0] * M[0][3]);
+        float S3 = (M[0][1] * M[1][2]) - (M[1][1] * M[0][2]);
+        float S4 = (M[0][1] * M[1][3]) - (M[1][1] * M[0][3]);
+        float S5 = (M[0][2] * M[1][3]) - (M[1][2] * M[0][3]);
 
-        float c5 = M[2][2] * M[3][3] - M[3][2] * M[2][3];
-        float c4 = M[2][1] * M[3][3] - M[3][1] * M[2][3];
-        float c3 = M[2][1] * M[3][2] - M[3][1] * M[2][2];
-        float c2 = M[2][0] * M[3][3] - M[3][0] * M[2][3];
-        float c1 = M[2][0] * M[3][2] - M[3][0] * M[2][2];
-        float c0 = M[2][0] * M[3][1] - M[3][0] * M[2][1];
+        float C5 = (M[2][2] * M[3][3]) - (M[3][2] * M[2][3]);
+        float C4 = (M[2][1] * M[3][3]) - (M[3][1] * M[2][3]);
+        float C3 = (M[2][1] * M[3][2]) - (M[3][1] * M[2][2]);
+        float C2 = (M[2][0] * M[3][3]) - (M[3][0] * M[2][3]);
+        float C1 = (M[2][0] * M[3][2]) - (M[3][0] * M[2][2]);
+        float C0 = (M[2][0] * M[3][1]) - (M[3][0] * M[2][1]);
 
-        return (s0 * c5 - s1 * c4 + s2 * c3 + s3 * c2 - s4 * c1 + s5 * c0);
+        return ((S0 * C5) - (S1 * C4) + (S2 * C3) + (S3 * C2) - (S4 * C1) + (S5 * C0));
     }
 };
 

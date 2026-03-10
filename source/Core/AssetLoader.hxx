@@ -15,8 +15,10 @@ namespace Solstice::Render {
 
 namespace Solstice::Arzachel {
     class AnimationClip;
-    class Skeleton;
     class SkinWeights;
+}
+namespace Solstice::Skeleton {
+    class Skeleton;
 }
 
 namespace Solstice::Core {
@@ -88,7 +90,7 @@ struct AssetLoadResult {
 
     // Animation and skeleton data
     std::vector<std::unique_ptr<::Solstice::Arzachel::AnimationClip>> Animations;
-    std::vector<std::unique_ptr<::Solstice::Arzachel::Skeleton>> Skeletons;
+    std::vector<std::unique_ptr<::Solstice::Skeleton::Skeleton>> Skeletons;
     std::vector<std::unique_ptr<::Solstice::Arzachel::SkinWeights>> MeshSkinWeights; // Parallel array to Meshes
     std::vector<int> MeshSkinIndices; // Parallel array to Meshes, index into Skeletons array (-1 if no skin)
 
@@ -176,7 +178,7 @@ private:
         int AnimationIndex
     );
 
-    static std::unique_ptr<::Solstice::Arzachel::Skeleton> ConvertSkin(
+    static std::unique_ptr<::Solstice::Skeleton::Skeleton> ConvertSkin(
         const void* GLTFModel, // tinygltf::Model*
         int SkinIndex
     );

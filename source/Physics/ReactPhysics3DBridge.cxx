@@ -11,10 +11,8 @@
 #include <reactphysics3d/collision/shapes/BoxShape.h>
 #include <reactphysics3d/collision/shapes/CapsuleShape.h>
 #include <reactphysics3d/collision/shapes/ConvexMeshShape.h>
-#include <reactphysics3d/collision/ConvexMesh.h>
-#include <reactphysics3d/collision/VertexArray.h>
-#include <reactphysics3d/body/Body.h>
-#include <reactphysics3d/utils/Message.h>
+#include <reactphysics3d/collision/PolygonVertexArray.h>
+#include <reactphysics3d/collision/PolyhedronMesh.h>
 
 namespace Solstice::Physics {
 
@@ -194,7 +192,14 @@ void ReactPhysics3DBridge::RemoveBody(ECS::EntityId entityId) {
         } else if (auto* capsule = dynamic_cast<reactphysics3d::CapsuleShape*>(shape)) {
             m_PhysicsCommon->destroyCapsuleShape(capsule);
         } else if (auto* convex = dynamic_cast<reactphysics3d::ConvexMeshShape*>(shape)) {
-            m_PhysicsCommon->destroyConvexMeshShape(convex);
+            auto meshIt = m_ConvexShapeToPolyhedronMesh.find(convex);
+            if (meshIt != m_ConvexShapeToPolyhedronMesh.end()) {
+                m_PhysicsCommon->destroyConvexMeshShape(convex);
+                m_PhysicsCommon->destroyPolyhedronMesh(meshIt->second);
+                m_ConvexShapeToPolyhedronMesh.erase(meshIt);
+            } else {
+                m_PhysicsCommon->destroyConvexMeshShape(convex);
+            }
         }
 
         m_BodyToShape.erase(shapeIt);
@@ -278,28 +283,53 @@ reactphysics3d::CollisionShape* ReactPhysics3DBridge::CreateCollisionShape(const
 
         case ColliderType::ConvexHull:
         case ColliderType::Tetrahedron: {
-            // Create convex mesh from hull vertices
-            const std::vector<Math::Vec3>* vertices = nullptr;
-            if (rigidBody.Hull && rigidBody.Hull.get() && !rigidBody.Hull->Vertices.empty()) {
-                vertices = &rigidBody.Hull->Vertices;
-            } else if (!rigidBody.HullVertices.empty()) {
-                vertices = &rigidBody.HullVertices;
+            // ReactPhysics3D v0.9 uses PolygonVertexArray + PolyhedronMesh (no VertexArray/createConvexMesh)
+            const ConvexHull* hull = nullptr;
+            if (rigidBody.Hull && rigidBody.Hull.get() && !rigidBody.Hull->Vertices.empty() && !rigidBody.Hull->Faces.empty()) {
+                hull = rigidBody.Hull.get();
             }
 
-            if (vertices && !vertices->empty()) {
-                // Create vertex array - ReactPhysics3D will compute the convex hull automatically
-                reactphysics3d::VertexArray vertexArray(
-                    reinterpret_cast<const void*>(vertices->data()),
-                    static_cast<reactphysics3d::uint32>(sizeof(Math::Vec3)),
-                    static_cast<reactphysics3d::uint32>(vertices->size()),
-                    reactphysics3d::VertexArray::DataType::VERTEX_FLOAT_TYPE
-                );
+            if (hull) {
+                const std::vector<Math::Vec3>& vertices = hull->Vertices;
+                const std::vector<HullFace>& faces = hull->Faces;
 
-                // Create convex mesh from vertex array (automatically computes convex hull)
-                std::vector<reactphysics3d::Message> messages;
-                reactphysics3d::ConvexMesh* convexMesh = m_PhysicsCommon->createConvexMesh(vertexArray, messages);
-                if (convexMesh) {
-                    return m_PhysicsCommon->createConvexMeshShape(convexMesh);
+                // Build flat index array and polygon face descriptors for PolygonVertexArray
+                std::vector<reactphysics3d::uint32> indices;
+                std::vector<reactphysics3d::PolygonVertexArray::PolygonFace> rp3dFaces;
+                indices.reserve(vertices.size());  // approximate
+                rp3dFaces.reserve(faces.size());
+
+                reactphysics3d::uint32 indexBase = 0;
+                for (const HullFace& face : faces) {
+                    for (reactphysics3d::uint32 idx : face.VertexIndices) {
+                        indices.push_back(idx);
+                    }
+                    rp3dFaces.push_back({ static_cast<reactphysics3d::uint32>(face.VertexIndices.size()), indexBase });
+                    indexBase += static_cast<reactphysics3d::uint32>(face.VertexIndices.size());
+                }
+
+                if (!indices.empty() && !rp3dFaces.empty()) {
+                    reactphysics3d::PolygonVertexArray polygonVertexArray(
+                        static_cast<reactphysics3d::uint32>(vertices.size()),
+                        vertices.data(),
+                        static_cast<reactphysics3d::uint32>(sizeof(Math::Vec3)),
+                        indices.data(),
+                        sizeof(reactphysics3d::uint32),
+                        static_cast<reactphysics3d::uint32>(rp3dFaces.size()),
+                        rp3dFaces.data(),
+                        reactphysics3d::PolygonVertexArray::VertexDataType::VERTEX_FLOAT_TYPE,
+                        reactphysics3d::PolygonVertexArray::IndexDataType::INDEX_INTEGER_TYPE
+                    );
+
+                    reactphysics3d::PolyhedronMesh* polyhedronMesh = m_PhysicsCommon->createPolyhedronMesh(&polygonVertexArray);
+                    if (polyhedronMesh) {
+                        reactphysics3d::ConvexMeshShape* convexShape = m_PhysicsCommon->createConvexMeshShape(polyhedronMesh);
+                        if (convexShape) {
+                            m_ConvexShapeToPolyhedronMesh[convexShape] = polyhedronMesh;
+                            return convexShape;
+                        }
+                        m_PhysicsCommon->destroyPolyhedronMesh(polyhedronMesh);
+                    }
                 }
             }
             break;
@@ -328,7 +358,7 @@ void ReactPhysics3DBridge::UpdateBodyProperties(reactphysics3d::RigidBody* rp3dB
     // This ensures ReactPhysics3D respects our velocity changes
     rp3dBody->setLinearVelocity(ToRP3D(solsticeBody.Velocity));
     rp3dBody->setAngularVelocity(ToRP3D(solsticeBody.AngularVelocity));
-    
+
     // For dynamic bodies, ensure velocity is actually applied
     // ReactPhysics3D might ignore velocity changes if body is sleeping or if damping is too high
     if (!solsticeBody.IsStatic && solsticeBody.Mass > 0.0f) {
@@ -353,7 +383,7 @@ void ReactPhysics3DBridge::UpdateBodyProperties(reactphysics3d::RigidBody* rp3dB
     // Update damping
     rp3dBody->setLinearDamping(static_cast<reactphysics3d::decimal>(solsticeBody.LinearDamping));
     rp3dBody->setAngularDamping(static_cast<reactphysics3d::decimal>(solsticeBody.AngularDrag));
-    
+
     // Update gravity
     rp3dBody->enableGravity(solsticeBody.GravityScale > 0.0f);
 
@@ -446,6 +476,39 @@ void ReactPhysics3DBridge::UpdateRigidBodyProperties(RigidBody& solsticeBody, re
                 rp3dBody->applyWorldTorque(torque);
             }
         }
+    }
+}
+
+void ReactPhysics3DBridge::SetBodyTransform(ECS::EntityId entityId, const Math::Vec3& position, const Math::Quaternion& rotation) {
+    if (!m_Registry || !m_PhysicsWorld) return;
+
+    auto it = m_EntityToBody.find(entityId);
+    if (it == m_EntityToBody.end()) return;
+
+    reactphysics3d::RigidBody* rp3dBody = it->second;
+    if (!rp3dBody) return;
+
+    // Directly set transform in ReactPhysics3D (bypasses physics integration)
+    reactphysics3d::Transform transform(
+        ToRP3D(position),
+        ToRP3D(rotation)
+    );
+    rp3dBody->setTransform(transform);
+
+    // Also zero out velocities to prevent physics from interfering
+    rp3dBody->setLinearVelocity(reactphysics3d::Vector3(0, 0, 0));
+    rp3dBody->setAngularVelocity(reactphysics3d::Vector3(0, 0, 0));
+
+    // Wake up the body to ensure changes take effect
+    rp3dBody->setIsSleeping(false);
+
+    // Update the RigidBody component to match
+    if (m_Registry->Has<RigidBody>(entityId)) {
+        RigidBody& solsticeBody = m_Registry->Get<RigidBody>(entityId);
+        solsticeBody.Position = position;
+        solsticeBody.Rotation = rotation;
+        solsticeBody.Velocity = Math::Vec3(0, 0, 0);
+        solsticeBody.AngularVelocity = Math::Vec3(0, 0, 0);
     }
 }
 

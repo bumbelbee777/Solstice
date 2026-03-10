@@ -2,8 +2,8 @@
 #include "Health.hxx"
 #include "Inventory.hxx"
 #include "Stamina.hxx"
-#include "Weapon.hxx"
-#include "WeaponSwitcher.hxx"
+#include "FPS/Weapon.hxx"
+#include "FPS/WeaponSwitcher.hxx"
 #include "../Physics/RigidBody.hxx"
 #include "../Core/Debug.hxx"
 #include <imgui.h>

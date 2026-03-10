@@ -25,8 +25,8 @@ public:
     void RecordFunctionCall(size_t functionIP);
     bool IsHotPath(size_t functionIP) const;
 
-    // Compilation
-    Backend::IBackend::CompiledFunction CompileHotFunction(const Solstice::Scripting::Program& program, size_t functionIP);
+    // Compilation - returns trampoline that calls vm->RunFunctionSlice (Phase 1)
+    Backend::IBackend::CompiledFunction CompileHotFunction(BytecodeVM* vm, const Solstice::Scripting::Program& program, size_t functionIP);
 
 private:
     bool m_Enabled = false;

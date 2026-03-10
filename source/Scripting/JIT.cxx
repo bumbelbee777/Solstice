@@ -39,7 +39,7 @@ bool JIT::IsHotPath(size_t functionIP) const {
     return it != m_FunctionCallCounts.end() && it->second >= HOT_PATH_THRESHOLD;
 }
 
-Backend::IBackend::CompiledFunction JIT::CompileHotFunction(const Solstice::Scripting::Program& program, size_t functionIP) {
+Backend::IBackend::CompiledFunction JIT::CompileHotFunction(BytecodeVM* vm, const Program& program, size_t functionIP) {
     if (!m_Enabled || !m_Backend) return nullptr;
 
     // Check if already compiled
@@ -48,8 +48,11 @@ Backend::IBackend::CompiledFunction JIT::CompileHotFunction(const Solstice::Scri
         return it->second;
     }
 
-    // Compile function
-    auto compiled = m_Backend->CompileFunction(program, functionIP);
+    // Only compile when hot (call count >= threshold)
+    if (!IsHotPath(functionIP)) return nullptr;
+
+    // Compile function (trampoline that calls vm->RunFunctionSlice)
+    auto compiled = m_Backend->CompileFunction(program, functionIP, vm);
     if (compiled) {
         m_CompiledFunctions[functionIP] = compiled;
         SIMPLE_LOG("JIT: Compiled function at IP " + std::to_string(functionIP));

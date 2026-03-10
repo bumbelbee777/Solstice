@@ -1,0 +1,21 @@
+module PtrErrors;
+
+class Dummy {
+    let value = 0;
+}
+
+function UseAfterResetExample() {
+    let p: Ptr<Dummy> = Ptr.New(new Dummy());
+    Ptr.Reset(p);
+    // This pattern is intentionally invalid and should be rejected
+    // by the memory analysis pass with a use-after-free style error.
+    let v = Ptr.Get(p);
+}
+
+function DoubleResetExample() {
+    let p: Ptr<Dummy> = Ptr.New(new Dummy());
+    Ptr.Reset(p);
+    // Second reset of the same abstract pointer should be flagged.
+    Ptr.Reset(p);
+}
+

@@ -1,7 +1,7 @@
 #include "SelectionSystem.hxx"
 #include <Render/SoftwareRenderer.hxx>
-#include <Render/Scene.hxx>
-#include <Render/Camera.hxx>
+#include <Render/Scene/Scene.hxx>
+#include <Render/Scene/Camera.hxx>
 #include <Math/Matrix.hxx>
 #include <algorithm>
 #include <limits>

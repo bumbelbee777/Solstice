@@ -1,8 +1,8 @@
 #include "BlizzardGame.hxx"
-#include <Game/FPSMovement.hxx>
+#include <Game/FPS/FPSMovement.hxx>
 #include <Game/Health.hxx>
 #include <UI/UISystem.hxx>
-#include <Render/Mesh.hxx>
+#include <Render/Assets/Mesh.hxx>
 #include <Core/Material.hxx>
 #include <Arzachel/ProceduralTexture.hxx>
 #include <Arzachel/MaterialPresets.hxx>
@@ -11,7 +11,7 @@
 #include <Arzachel/AssetBuilder.hxx>
 #include <Arzachel/TerrainGenerator.hxx>
 #include <Arzachel/Seed.hxx>
-#include <Render/Skybox.hxx>
+#include <Render/Scene/Skybox.hxx>
 #include <Render/PhysicsBridge.hxx>
 #include <Physics/PhysicsSystem.hxx>
 #include <Physics/RigidBody.hxx>
@@ -1179,7 +1179,7 @@ void BlizzardGame::Render() {
                 Math::Matrix4 proj = Math::Matrix4::Perspective(
                     m_Camera.GetZoom() * 0.0174533f, aspect, 0.1f, 1000.0f);
                 Math::Matrix4 viewProj = proj * view;
-                m_SnowParticles->Render(2, viewProj);
+                m_SnowParticles->Render(2, viewProj, m_Camera.Right, m_Camera.Up);
                 } catch (const std::exception& e) {
                     SIMPLE_LOG("ERROR: Exception rendering snow particles: " + std::string(e.what()));
                 } catch (...) {

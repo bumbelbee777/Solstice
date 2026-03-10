@@ -1,11 +1,12 @@
 #include "TerminalHub.hxx"
 #include "ObjectSpawner.hxx"
 #include <UI/UISystem.hxx>
-#include <Render/Skybox.hxx>
-#include <Render/ParticlePresets.hxx>
+#include <Render/Scene/Skybox.hxx>
+#include <Render/Particle/ParticlePresets.hxx>
 #include <Core/Material.hxx>
 #include <Arzachel/MeshFactory.hxx>
 #include <Game/InputManager.hxx>
+#include <bgfx/bgfx.h>
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
@@ -59,7 +60,7 @@ TerminalHub::TerminalHub(
     for (size_t i = 0; i < positions.size(); ++i) {
         TerminalType type = static_cast<TerminalType>(i);
         m_Terminals.emplace_back(type, positions[i], 400.0f, 350.0f);
-        
+
         // Add terminal visual base
         m_Scene.AddObject(terminalMeshID, positions[i], Math::Quaternion(), Math::Vec3(1, 1, 1), Render::ObjectType_Static);
 
@@ -67,9 +68,9 @@ TerminalHub::TerminalHub(
         // Adjust position to be above the terminal mesh
         Math::Vec3 markerPos = positions[i] + Math::Vec3(0, 1.5f, 0);
         Math::Quaternion rotation = Math::Quaternion::FromEuler(180.0f, 0.0f, 0.0f);
-        
+
         auto objID = m_Scene.AddObject(markerMeshID, markerPos, rotation, Math::Vec3(1, 1, 1), Render::ObjectType_Static);
-        
+
         // Apply emissive material
         Render::Mesh* mesh = m_MeshLibrary.GetMesh(markerMeshID);
         if (mesh && !mesh->SubMeshes.empty()) {
@@ -112,9 +113,10 @@ void TerminalHub::Update(float deltaTime, const Render::Camera& camera, Solstice
     }
 }
 
-void TerminalHub::Render(const Render::Camera& camera, int screenWidth, int screenHeight) {
+void TerminalHub::Render(const Render::Camera& camera, int screenWidth, int screenHeight,
+                        bgfx::ProgramHandle sceneProgram, bgfx::ViewId viewId, bgfx::FrameBufferHandle sceneFramebuffer) {
     (void)screenWidth; (void)screenHeight; // Unused, we use ImGui dimensions
-    
+
     // Use ImGui dimensions for UI consistency
     auto& io = ImGui::GetIO();
     float uiWidth = io.DisplaySize.x;
@@ -131,7 +133,7 @@ void TerminalHub::Render(const Render::Camera& camera, int screenWidth, int scre
     // Find closest terminal
     int closestTerminalVal = -1;
     float closestDist = 100.0f; // Max range to even consider
-    
+
     // If we are actively interacting, we only care about that one
     if (m_Interacting && m_ActiveTerminal >= 0) {
         closestTerminalVal = m_ActiveTerminal;
@@ -157,7 +159,7 @@ void TerminalHub::Render(const Render::Camera& camera, int screenWidth, int scre
     if (showLabel) {
         Terminal& t = m_Terminals[closestTerminalVal];
         Math::Vec3 labelPos = t.Position + Math::Vec3(0, 2.2f, 0);
-        
+
         // Use standard projection with UI dimensions
         auto screenPos = UI::ViewportUI::ProjectToScreen(labelPos, viewMatrix, projMatrix, (int)uiWidth, (int)uiHeight);
 
@@ -179,7 +181,7 @@ void TerminalHub::Render(const Render::Camera& camera, int screenWidth, int scre
                 IM_COL32(0, 0, 0, 180), 4.0f
             );
             drawList->AddText(
-                ImVec2(screenPos.x - textSize.x * 0.5f, screenPos.y - textSize.y * 0.5f), 
+                ImVec2(screenPos.x - textSize.x * 0.5f, screenPos.y - textSize.y * 0.5f),
                 IM_COL32(255, 255, 255, 255), label.c_str()
             );
         }
@@ -220,7 +222,7 @@ void TerminalHub::Render(const Render::Camera& camera, int screenWidth, int scre
             break;
     }
 
-    terminal.Dialog->Render(viewMatrix, projMatrix, (int)uiWidth, (int)uiHeight);
+    terminal.Dialog->Render(viewMatrix, projMatrix, (int)uiWidth, (int)uiHeight, sceneProgram, viewId, sceneFramebuffer);
 }
 
 void TerminalHub::RenderTimeOfDayTerminal(Terminal& terminal, const Render::Camera& camera, int screenWidth, int screenHeight) {

@@ -411,11 +411,11 @@ namespace Solstice::Core::Audio {
 
     void AudioManager::SetMasterVolume(float Volume) {
         try {
-            MIX_SetMasterGain(m_Mixer, Volume);
+            MIX_SetMixerGain(m_Mixer, Volume);
         } catch (const std::exception& e) {
-            SOLSTICE_LOG("WARNING: Exception in MIX_SetMasterGain: ", e.what());
+            SOLSTICE_LOG("WARNING: Exception in MIX_SetMixerGain: ", e.what());
         } catch (...) {
-            SOLSTICE_LOG("WARNING: Unknown exception in MIX_SetMasterGain");
+            SOLSTICE_LOG("WARNING: Unknown exception in MIX_SetMixerGain");
         }
     }
 
@@ -435,9 +435,8 @@ namespace Solstice::Core::Audio {
     }
 
     void AudioManager::SetSoundVolume(float Volume) {
-        // Global sound volume?
-        // SDL_mixer 3.0 might allow setting mixer master gain
-        MIX_SetMasterGain(m_Mixer, Volume);
+        // Global sound volume via mixer gain (SDL_mixer 3)
+        MIX_SetMixerGain(m_Mixer, Volume);
     }
 
     void AudioManager::SetListener(const Listener& ListenerData) {

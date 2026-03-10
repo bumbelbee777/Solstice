@@ -1,21 +1,21 @@
 #pragma once
 
-#include <Game/FPSGame.hxx>
+#include <Game/FPS/FPSGame.hxx>
 #include <Game/ScriptManager.hxx>
 #include <Game/ProceduralTextureManager.hxx>
 #include <Game/SceneBuilder.hxx>
 #include <Game/MaterialPresetManager.hxx>
 #include <Game/HUDPresets.hxx>
-#include <Game/SnowSystem.hxx>
-#include <Render/ParticlePresets.hxx>
+#include <Game/FPS/SnowSystem.hxx>
+#include <Render/Particle/ParticlePresets.hxx>
 #include <Scripting/BytecodeVM.hxx>
 #include <Arzachel/Seed.hxx>
 #include <Arzachel/ProceduralTexture.hxx>
 #include <UI/Window.hxx>
 #include <Render/SoftwareRenderer.hxx>
-#include <Render/Scene.hxx>
-#include <Render/Mesh.hxx>
-#include <Render/ParticleSystem.hxx>
+#include <Render/Scene/Scene.hxx>
+#include <Render/Assets/Mesh.hxx>
+#include <Render/Particle/ParticleSystem.hxx>
 #include <Core/Material.hxx>
 #include <Core/ResourceHandle.hxx>
 #include <Physics/PhysicsSystem.hxx>

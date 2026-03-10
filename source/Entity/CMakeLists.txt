@@ -1,0 +1,7 @@
+# Entity: ECS headers only (no .cxx)
+set(SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
+add_library(Entity INTERFACE)
+target_include_directories(Entity INTERFACE ${SOURCE_DIR})
+if(MSVC)
+    target_compile_definitions(Entity INTERFACE NOMINMAX WIN32_LEAN_AND_MEAN)
+endif()

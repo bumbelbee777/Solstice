@@ -11,12 +11,17 @@ SAMPLER2D(s_texColor,  0);
 SAMPLER2D(s_texDepth,  1);
 SAMPLER2D(s_texVelocity, 2);
 SAMPLER2D(s_texVolumetric, 3);  // Volumetric lighting (god rays)
+SAMPLERCUBE(s_texReflectionProbe, 4);
 uniform vec4 u_hdrExposure; // x: exposure, yzw: unused
 uniform vec4 u_motionBlurParams; // x: strength, y: sampleCount, z: depthScale, w: unused
 uniform mat4 u_prevViewProj; // Previous frame view-projection matrix
 uniform vec4 u_viewportSize; // x: width, y: height, zw: unused
 uniform vec4 u_bloomParams; // x: threshold, y: intensity, z: radius, w: enabled
 uniform vec4 u_godRayParams; // x: density, y: decay, z: exposure, w: enabled
+uniform vec4 u_reflectionParams; // x: intensity, y: maxSteps, z: thickness, w: stride
+uniform mat4 u_reflectionViewProj;
+uniform mat4 u_reflectionInvViewProj;
+uniform vec4 u_cameraPos;
 
 // Narkowicz ACES (cheaper)
 vec3 aces(vec3 x) {
@@ -59,6 +64,20 @@ vec3 extractBrightness(vec3 Color, float Threshold) {
     return Color * Soft * Contribution;
 }
 
+vec3 reconstructWorldPos(vec2 uv, float depth) {
+    vec4 clip = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 world = mul(u_reflectionInvViewProj, clip);
+    world.xyz /= max(world.w, 0.0001);
+    return world.xyz;
+}
+
+vec3 computeNormalFromDepth(vec2 uv, float depth) {
+    vec3 p = reconstructWorldPos(uv, depth);
+    vec3 dx = dFdx(p);
+    vec3 dy = dFdy(p);
+    vec3 n = normalize(cross(dx, dy));
+    return n;
+}
 
 void main()
 {
@@ -92,6 +111,18 @@ void main()
         if (length(velocitySample) > 0.001) {
             screenVel = velocitySample;
             hasVelocity = true;
+        }
+        
+        // Fallback: Calculate camera-based velocity from previous view-projection matrix
+        // This helps smooth fast camera movement when velocity buffer isn't populated
+        if (!hasVelocity && depth < 0.999) {
+            vec3 worldPos = reconstructWorldPos(TexCoord, depth);
+            vec4 prevClip = mul(u_prevViewProj, vec4(worldPos, 1.0));
+            if (prevClip.w > 0.0001) {
+                vec2 prevUV = prevClip.xy / prevClip.w * 0.5 + 0.5;
+                screenVel = (TexCoord - prevUV) * 2.0; // Convert to screen-space velocity
+                hasVelocity = length(screenVel) > 0.001;
+            }
         }
 
         if (hasVelocity) {
@@ -164,7 +195,70 @@ void main()
         float GodRayExposure = u_godRayParams.z;
 
         // Additive blend with exposure control
+        // Values are in half-precision, so they should be in reasonable range
         color += Volumetric * GodRayExposure;
+    }
+
+    // 5d. Screen-space reflections + probe fallback (cheap)
+    float reflectionIntensity = u_reflectionParams.x;
+    if (reflectionIntensity > 0.001) {
+        float depth = texture2D(s_texDepth, TexCoord).r;
+        if (depth < 0.999) {
+            vec3 worldPos = reconstructWorldPos(TexCoord, depth);
+            vec3 normal = computeNormalFromDepth(TexCoord, depth);
+            float depthEdge = abs(dFdx(depth)) + abs(dFdy(depth));
+            vec3 viewDir = normalize(u_cameraPos.xyz - worldPos);
+            vec3 reflectDir = normalize(reflect(-viewDir, normal));
+
+            vec3 ssrColor = vec3_splat(0.0);
+            float hit = 0.0;
+            const int MAX_STEPS = 24;
+            int maxSteps = int(u_reflectionParams.y);
+            float thickness = u_reflectionParams.z;
+            float stride = u_reflectionParams.w;
+
+            vec3 rayPos = worldPos + reflectDir * stride;
+            for (int i = 0; i < MAX_STEPS; ++i) {
+                if (i >= maxSteps) { break; }
+
+                vec4 clip = mul(u_reflectionViewProj, vec4(rayPos, 1.0));
+                if (clip.w <= 0.0001) { break; }
+                vec2 uv = clip.xy / clip.w * 0.5 + 0.5;
+
+                if (uv.x < 0.001 || uv.x > 0.999 || uv.y < 0.001 || uv.y > 0.999) { break; }
+
+                float sampleDepth = texture2D(s_texDepth, uv).r;
+                if (sampleDepth < 0.0001 || sampleDepth > 0.999) {
+                    rayPos += reflectDir * stride;
+                    continue;
+                }
+
+                float rayDepth = clip.z / clip.w;
+                rayDepth = rayDepth * 0.5 + 0.5;
+                float depthDelta = abs(sampleDepth - rayDepth);
+
+                if (depthDelta < thickness) {
+                    ssrColor = texture2D(s_texColor, uv).rgb;
+                    hit = 1.0;
+                    break;
+                }
+
+                rayPos += reflectDir * stride;
+            }
+
+            vec3 probeColor = textureCube(s_texReflectionProbe, reflectDir).rgb;
+            vec3 reflectionColor = mix(probeColor, ssrColor, hit);
+
+            float packedAlpha = texture2D(s_texColor, TexCoord).a;
+            float roughness = clamp(packedAlpha, 0.05, 1.0);
+            float isTransparent = step(packedAlpha, 0.9);
+            roughness = mix(roughness, 1.0, isTransparent);
+
+            float fresnel = pow(1.0 - max(dot(normal, viewDir), 0.0), 5.0);
+            float edgeFade = 1.0 - smoothstep(0.002, 0.01, depthEdge);
+            float reflectFactor = reflectionIntensity * (1.0 - roughness) * fresnel * edgeFade;
+            color += reflectionColor * clamp(reflectFactor, 0.0, 1.0);
+        }
     }
 
     // 6. Tone Mapping (ACES - already optimized)

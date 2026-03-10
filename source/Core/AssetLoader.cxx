@@ -1,12 +1,13 @@
 #include "AssetLoader.hxx"
-#include <Render/Mesh.hxx>
+#include <Render/Assets/Mesh.hxx>
 #include <Core/Material.hxx>
 #include <Core/Debug.hxx>
 #include <Core/WavefrontParser.hxx>
+#include <Core/Relic/Relic.hxx>
 #include <Arzachel/AnimationClip.hxx>
 #include <Arzachel/AnimationTrack.hxx>
-#include <Arzachel/Keyframe.hxx>
-#include <Arzachel/Skeleton.hxx>
+#include <MinGfx/Keyframe.hxx>
+#include <Skeleton/Skeleton.hxx>
 #include <Arzachel/SkinWeights.hxx>
 #include <Math/Quaternion.hxx>
 #include <Math/Matrix.hxx>
@@ -53,28 +54,50 @@ std::filesystem::path AssetLoader::ResolvePath(const std::filesystem::path& Path
 // --------------------------------------------------------------------------
 AssetLoadResult AssetLoader::LoadGLTF(const std::filesystem::path& Path) {
     AssetLoadResult Result;
-
-    const std::filesystem::path FullPath = ResolvePath(Path);
-    if (!std::filesystem::exists(FullPath)) {
-        Result.ErrorMessage = "File not found: " + FullPath.string();
-        SOLSTICE_LOG("AssetLoader: " + Result.ErrorMessage);
-        return Result;
-    }
-
     tinygltf::Model Model;
     tinygltf::TinyGLTF Loader;
     std::string Error, Warning;
     bool LoadSuccess = false;
-    const std::string Extension = FullPath.extension().string();
 
-    if (Extension == ".gltf")
-        LoadSuccess = Loader.LoadASCIIFromFile(&Model, &Error, &Warning, FullPath.string());
-    else if (Extension == ".glb")
-        LoadSuccess = Loader.LoadBinaryFromFile(&Model, &Error, &Warning, FullPath.string());
-    else {
-        Result.ErrorMessage = "Unsupported file format: " + Extension;
-        SOLSTICE_LOG("AssetLoader: " + Result.ErrorMessage);
-        return Result;
+    if (Core::Relic::IsInitialized()) {
+        auto* svc = Core::Relic::GetAssetService();
+        if (svc) {
+            std::string pathStr = Path.string();
+            auto hashOpt = svc->PathToHash(pathStr);
+            if (hashOpt) {
+                auto bytesOpt = svc->LoadByHash(*hashOpt);
+                if (bytesOpt && !bytesOpt->empty()) {
+                    const std::byte* data = bytesOpt->data();
+                    size_t size = bytesOpt->size();
+                    if (size >= 4 && std::memcmp(data, "glTF", 4) == 0) {
+                        LoadSuccess = Loader.LoadBinaryFromMemory(&Model, &Error, &Warning,
+                            reinterpret_cast<const unsigned char*>(data), static_cast<unsigned int>(size), "");
+                    } else {
+                        LoadSuccess = Loader.LoadASCIIFromString(&Model, &Error, &Warning,
+                            reinterpret_cast<const char*>(data), size, "");
+                    }
+                }
+            }
+        }
+    }
+
+    if (!LoadSuccess) {
+        const std::filesystem::path FullPath = ResolvePath(Path);
+        if (!std::filesystem::exists(FullPath)) {
+            Result.ErrorMessage = "File not found: " + FullPath.string();
+            SOLSTICE_LOG("AssetLoader: " + Result.ErrorMessage);
+            return Result;
+        }
+        const std::string Extension = FullPath.extension().string();
+        if (Extension == ".gltf")
+            LoadSuccess = Loader.LoadASCIIFromFile(&Model, &Error, &Warning, FullPath.string());
+        else if (Extension == ".glb")
+            LoadSuccess = Loader.LoadBinaryFromFile(&Model, &Error, &Warning, FullPath.string());
+        else {
+            Result.ErrorMessage = "Unsupported file format: " + Extension;
+            SOLSTICE_LOG("AssetLoader: " + Result.ErrorMessage);
+            return Result;
+        }
     }
 
     if (!Warning.empty())
@@ -86,7 +109,8 @@ AssetLoadResult AssetLoader::LoadGLTF(const std::filesystem::path& Path) {
         return Result;
     }
 
-    SOLSTICE_LOG("AssetLoader: Successfully loaded glTF file: " + FullPath.string());
+    std::string sourceName = Path.string();
+    SOLSTICE_LOG("AssetLoader: Successfully loaded glTF file: " + sourceName);
     SOLSTICE_LOG("  Meshes: " + std::to_string(Model.meshes.size()));
     SOLSTICE_LOG("  Materials: " + std::to_string(Model.materials.size()));
     SOLSTICE_LOG("  Textures: " + std::to_string(Model.textures.size()));
@@ -719,7 +743,7 @@ LightData AssetLoader::ConvertLight(const void* GLTFModelPtr, int LightIndex) {
 // --------------------------------------------------------------------------
 //  Skin/Skeleton conversion
 // --------------------------------------------------------------------------
-std::unique_ptr<::Solstice::Arzachel::Skeleton> AssetLoader::ConvertSkin(const void* GLTFModelPtr, int SkinIndex) {
+std::unique_ptr<::Solstice::Skeleton::Skeleton> AssetLoader::ConvertSkin(const void* GLTFModelPtr, int SkinIndex) {
     const tinygltf::Model* Model = static_cast<const tinygltf::Model*>(GLTFModelPtr);
 
     if (SkinIndex < 0 || SkinIndex >= static_cast<int>(Model->skins.size())) {
@@ -752,7 +776,7 @@ std::unique_ptr<::Solstice::Arzachel::Skeleton> AssetLoader::ConvertSkin(const v
     }
 
     // Build bone hierarchy from joint nodes
-    std::vector<::Solstice::Arzachel::Bone> Bones;
+    std::vector<::Solstice::Skeleton::Bone> Bones;
     Bones.reserve(GLTFSkin.joints.size());
 
     // Map node indices to bone indices
@@ -762,7 +786,7 @@ std::unique_ptr<::Solstice::Arzachel::Skeleton> AssetLoader::ConvertSkin(const v
     }
 
     // Find root bone (skeleton root or first joint without parent in joint list)
-    ::Solstice::Arzachel::BoneID RootBoneID;
+    ::Solstice::Skeleton::BoneID RootBoneID;
     int skeletonRootNode = GLTFSkin.skeleton >= 0 ? GLTFSkin.skeleton : -1;
 
     // Build bones
@@ -774,8 +798,8 @@ std::unique_ptr<::Solstice::Arzachel::Skeleton> AssetLoader::ConvertSkin(const v
         }
 
         const tinygltf::Node& node = Model->nodes[nodeIndex];
-        ::Solstice::Arzachel::BoneID boneId(static_cast<uint32_t>(i));
-        ::Solstice::Arzachel::BoneID parentId;
+        ::Solstice::Skeleton::BoneID boneId(static_cast<uint32_t>(i));
+        ::Solstice::Skeleton::BoneID parentId;
 
         // Find parent bone (if parent is in joint list)
         if (!node.children.empty()) {
@@ -806,7 +830,7 @@ std::unique_ptr<::Solstice::Arzachel::Skeleton> AssetLoader::ConvertSkin(const v
         }
 
         if (parentBoneIndex >= 0) {
-            parentId = ::Solstice::Arzachel::BoneID(static_cast<uint32_t>(parentBoneIndex));
+            parentId = ::Solstice::Skeleton::BoneID(static_cast<uint32_t>(parentBoneIndex));
         }
 
         // Convert node transform to matrix
@@ -879,7 +903,7 @@ std::unique_ptr<::Solstice::Arzachel::Skeleton> AssetLoader::ConvertSkin(const v
         RootBoneID = Bones[0].ID;
     }
 
-    auto skeleton = std::make_unique<::Solstice::Arzachel::Skeleton>(Bones, RootBoneID);
+    auto skeleton = std::make_unique<::Solstice::Skeleton::Skeleton>(Bones, RootBoneID);
     SOLSTICE_LOG("AssetLoader: Converted skin '" + GLTFSkin.name + "' with " +
                  std::to_string(Bones.size()) + " bones");
 
@@ -949,11 +973,11 @@ std::unique_ptr<::Solstice::Arzachel::AnimationClip> AssetLoader::ConvertAnimati
         const void* values = &outputBuf.data[outputBV.byteOffset + outputAcc.byteOffset];
 
         // Map interpolation mode
-        ::Solstice::Arzachel::InterpolationMode interpMode = ::Solstice::Arzachel::InterpolationMode::Linear;
+        ::Solstice::MinGfx::InterpolationMode interpMode = ::Solstice::MinGfx::InterpolationMode::LINEAR;
         if (sampler.interpolation == "STEP") {
-            interpMode = ::Solstice::Arzachel::InterpolationMode::Step;
+            interpMode = ::Solstice::MinGfx::InterpolationMode::STEP;
         } else if (sampler.interpolation == "CUBICSPLINE") {
-            interpMode = ::Solstice::Arzachel::InterpolationMode::Cubic;
+            interpMode = ::Solstice::MinGfx::InterpolationMode::CUBIC;
         }
 
         // Convert based on target path
@@ -968,7 +992,7 @@ std::unique_ptr<::Solstice::Arzachel::AnimationClip> AssetLoader::ConvertAnimati
                     vecData[i * 3 + 1],
                     vecData[i * 3 + 2]
                 );
-                track.Translation.AddKeyframe(::Solstice::Arzachel::Keyframe<Math::Vec3>(
+                track.Translation.AddKeyframe(::Solstice::MinGfx::Keyframe<Math::Vec3>(
                     times[i], value, interpMode
                 ));
             }
@@ -982,7 +1006,7 @@ std::unique_ptr<::Solstice::Arzachel::AnimationClip> AssetLoader::ConvertAnimati
                     quatData[i * 4 + 1], // y
                     quatData[i * 4 + 2]  // z
                 );
-                track.Rotation.AddKeyframe(::Solstice::Arzachel::Keyframe<Math::Quaternion>(
+                track.Rotation.AddKeyframe(::Solstice::MinGfx::Keyframe<Math::Quaternion>(
                     times[i], value, interpMode
                 ));
             }
@@ -995,7 +1019,7 @@ std::unique_ptr<::Solstice::Arzachel::AnimationClip> AssetLoader::ConvertAnimati
                     vecData[i * 3 + 1],
                     vecData[i * 3 + 2]
                 );
-                track.Scale.AddKeyframe(::Solstice::Arzachel::Keyframe<Math::Vec3>(
+                track.Scale.AddKeyframe(::Solstice::MinGfx::Keyframe<Math::Vec3>(
                     times[i], value, interpMode
                 ));
             }

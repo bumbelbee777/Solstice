@@ -15,35 +15,35 @@ struct SOLSTICE_API Quaternion {
 
     Quaternion() : w(1), x(0), y(0), z(0) {}
     Quaternion(float w, float x, float y, float z) : w(w), x(x), y(y), z(z) {}
-    Quaternion(const Quaternion& Other) : w(Other.w), x(Other.x), y(Other.y), z(Other.z) {}
+    Quaternion(const Quaternion& Other)  = default;
 
     Quaternion operator+(const Quaternion& Other) const {
-        return Quaternion(w + Other.w, x + Other.x, y + Other.y, z + Other.z);
+        return {w + Other.w, x + Other.x, y + Other.y, z + Other.z};
     }
 
     Quaternion operator-() const {
-        return Quaternion(-w, -x, -y, -z);
+        return {-w, -x, -y, -z};
     }
 
     Quaternion operator-(const Quaternion& Other) const {
-        return Quaternion(w - Other.w, x - Other.x, y - Other.y, z - Other.z);
+        return {w - Other.w, x - Other.x, y - Other.y, z - Other.z};
     }
 
-    Quaternion operator*(float s) const {
-        return Quaternion(w * s, x * s, y * s, z * s);
+    Quaternion operator*(float S) const {
+        return {w * S, x * S, y * S, z * S};
     }
 
-    Quaternion operator/(float s) const {
-        return Quaternion(w / s, x / s, y / s, z / s);
+    Quaternion operator/(float S) const {
+        return {w / S, x / S, y / S, z / S};
     }
 
-    Quaternion operator*(const Quaternion& r) const {
-        return Quaternion(
-            w * r.w - x * r.x - y * r.y - z * r.z,
-            w * r.x + x * r.w + y * r.z - z * r.y,
-            w * r.y - x * r.z + y * r.w + z * r.x,
-            w * r.z + x * r.y - y * r.x + z * r.w
-        );
+    Quaternion operator*(const Quaternion& R) const {
+        return {
+            (w * R.w) - (x * R.x) - (y * R.y) - (z * R.z),
+            (w * R.x) + (x * R.w) + (y * R.z) - (z * R.y),
+            (w * R.y) - (x * R.z) + (y * R.w) + (z * R.x),
+            (w * R.z) + (x * R.y) - (y * R.x) + (z * R.w)
+        };
     }
 
     bool operator==(const Quaternion& Rhs) const {
@@ -54,50 +54,50 @@ struct SOLSTICE_API Quaternion {
         return !(*this == Rhs);
     }
 
-    float Dot(const Quaternion& Other) const {
-        return w * Other.w + x * Other.x + y * Other.y + z * Other.z;
+    [[nodiscard]] float Dot(const Quaternion& Other) const {
+        return (w * Other.w) + (x * Other.x) + (y * Other.y) + (z * Other.z);
     }
 
-    float Magnitude() const {
-        return std::sqrt(w * w + x * x + y * y + z * z);
+    [[nodiscard]] float Magnitude() const {
+        return std::sqrt((w * w) + (x * x) + (y * y) + (z * z));
     }
 
-    Quaternion Normalized() const {
-        float Mag = Magnitude();
-        return (Mag == 0) ? Quaternion() : *this / Mag;
+    [[nodiscard]] Quaternion Normalized() const {
+        float mag = Magnitude();
+        return (mag == 0) ? Quaternion() : *this / mag;
     }
 
-    Quaternion Conjugate() const {
-        return Quaternion(w, -x, -y, -z);
+    [[nodiscard]] Quaternion Conjugate() const {
+        return {w, -x, -y, -z};
     }
 
-    static Quaternion Lerp(const Quaternion& a, const Quaternion& b, float t) {
-        return (a * (1.0f - t) + b * t).Normalized();
+    static Quaternion Lerp(const Quaternion& A, const Quaternion& B, float T) {
+        return (A * (1.0f - T) + B * T).Normalized();
     }
 
-    static Quaternion Slerp(const Quaternion& a, const Quaternion& b, float t) {
-        float CosTheta = a.Dot(b);
-        Quaternion End = b;
+    static Quaternion Slerp(const Quaternion& A, const Quaternion& B, float T) {
+        float CosTheta = A.Dot(B);
+        Quaternion End = B;
 
         // Use the shortest path
         if (CosTheta < 0.0f) {
-            End = b * -1.0f;
+            End = B * -1.0f;
             CosTheta = -CosTheta;
         }
 
-        static constexpr float Thresh = 0.9995f;
-        if (CosTheta > Thresh) {
+        static constexpr float THRESH = 0.9995f;
+        if (CosTheta > THRESH) {
             // If very close, fallback to linear interpolation
-            return Lerp(a, End, t);
+            return Lerp(A, End, T);
         }
 
         float Theta = std::acos(CosTheta);
-        float SinTheta = std::sqrt(1.0f - CosTheta * CosTheta);
+        float SinTheta = std::sqrt(1.0f - (CosTheta * CosTheta));
 
-        float aFactor = std::sin((1.0f - t) * Theta) / SinTheta;
-        float bFactor = std::sin(t * Theta) / SinTheta;
+        float AFactor = std::sin((1.0f - T) * Theta) / SinTheta;
+        float BFactor = std::sin(T * Theta) / SinTheta;
 
-        return a * aFactor + End * bFactor;
+        return A * AFactor + End * BFactor;
     }
 
     static Quaternion FromEuler(float Pitch, float Yaw, float Roll) {
@@ -116,7 +116,7 @@ struct SOLSTICE_API Quaternion {
         return Q;
     }
 
-    Matrix4 ToMatrix() const;
+    [[nodiscard]] Matrix4 ToMatrix() const;
 
     void Print() const {
         std::cout << "Quaternion(" << w << ", " << x << ", " << y << ", " << z << ")\n";

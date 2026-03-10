@@ -35,6 +35,8 @@ public:
     // Solver configuration
     void SetVelocityIterations(int iterations);
     void SetPositionIterations(int iterations);
+    void SetMaxStepDt(float maxDt) { m_MaxStepDt = maxDt; }
+    float GetMaxStepDt() const { return m_MaxStepDt; }
 
     // Fluid simulation management
     void RegisterFluidSimulation(FluidSimulation* fluid);
@@ -42,6 +44,11 @@ public:
 
     // Get the ReactPhysics3D bridge
     ReactPhysics3DBridge& GetBridge() { return m_Bridge; }
+
+    // Check if a body would collide when moved from prevPos to targetPos
+    // Returns true if collision detected, and outputs collision point and normal
+    static bool CheckSweptCollision(RigidBody* Body, const Math::Vec3& PrevPos, const Math::Vec3& TargetPos,
+                                    Math::Vec3& OutCollisionPoint, Math::Vec3& OutCollisionNormal);
 
 private:
     PhysicsSystem() = default;
@@ -76,6 +83,8 @@ private:
 
     // Fluid simulations
     std::vector<FluidSimulation*> m_FluidSimulations;
+
+    float m_MaxStepDt{1.0f / 30.0f};
 
     // Functional integration strategy type
     using IntegrationStrategy = std::function<void(struct RigidBody&, float)>;

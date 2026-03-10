@@ -692,6 +692,51 @@ Unreachable code after `HALT` is removed.
 
 No-op instructions are removed from the bytecode.
 
+## Pointers and Memory Safety
+
+Moonwalk provides a `Ptr<T>` type for ergonomic, reference-counted pointers with additional static analysis to catch common memory bugs.
+
+### Basics
+
+```moonwalk
+// Create a new pointer to a Player instance
+let p: Ptr<Player> = Ptr.New(new Player());
+
+// Copying shares ownership (both p and q point to the same Player)
+let q: Ptr<Player> = Ptr.New(new Player());
+q = p;
+
+// Check validity and access the underlying value
+if (Ptr.IsValid(p)) {
+    let player = Ptr.Get(p);
+    player.score += 10;
+}
+
+// Explicitly shorten lifetime of a pointer (this reference)
+Ptr.Reset(p);
+```
+
+### When analysis kicks in
+
+- The compiler tracks `Ptr<T>` lifetimes at the bytecode level.
+- If it can prove that a pointer is:
+  - **Used after being reset/freed**, or
+  - **Reset/freed twice**,
+  it emits a **compile-time error** pinpointing the offending instruction and source location.
+- For more complex cases where pointers escape into containers or unknown natives, the analysis is conservative and may refuse to prove safety, but it will still flag obvious local misuse.
+
+### Error examples
+
+```moonwalk
+let p: Ptr<Player> = Ptr.New(new Player());
+Ptr.Reset(p);
+let again = Ptr.Get(p); // compile-time error: use-after-free of Ptr<Player> p
+
+let q: Ptr<Player> = Ptr.New(new Player());
+Ptr.Reset(q);
+Ptr.Reset(q); // compile-time error: double-free / double-reset of Ptr<Player> q
+```
+
 ## Error Handling
 
 Enhanced error handling with stack traces and detailed information:
@@ -863,7 +908,7 @@ let GlobalCounter = 0;
 let PlayerName = "Alice";
 
 // Local variables (in functions)
-@function MyFunction() {
+function MyFunction() {
     let LocalVar = 42;
     let Message = "Hello";
 }
@@ -1020,22 +1065,25 @@ for (let j = 0; ; j++) {
 }
 ```
 
-#### Switch Statements
+#### Match Statements (Rust-style)
 
 ```moonwalk
-switch (playerState) {
-    case "idle":
-        PlayAnimation("Idle");
-        break;
-    case "walking":
-        PlayAnimation("Walk");
-        break;
-    case "running":
-        PlayAnimation("Run");
-        break;
-    default:
-        PlayAnimation("Idle");
-        break;
+match playerState {
+    "idle" => { PlayAnimation("Idle"); },
+    "walking" => { PlayAnimation("Walk"); },
+    "running" => { PlayAnimation("Run"); },
+    _ => { PlayAnimation("Idle"); }
+}
+```
+
+Or with binding and expression arms:
+
+```moonwalk
+match value {
+    1 => print("one"),
+    2 => print("two"),
+    x => print("other: " + x),
+    _ => print("default")
 }
 ```
 
@@ -1055,6 +1103,31 @@ for i in items {
         continue;  // Skip this iteration
     }
     Process(i);
+}
+```
+
+### Enums
+
+```moonwalk
+enum State {
+    Idle,
+    Walking,
+    Running
+}
+
+enum Direction {
+    North = 0,
+    South = 1,
+    East = 2,
+    West = 3
+}
+
+let s = State.Walking;
+match s {
+    State.Idle => print("idle"),
+    State.Walking => print("walking"),
+    State.Running => print("running"),
+    _ => print("unknown")
 }
 ```
 
@@ -1109,7 +1182,7 @@ for i in Math.Range(0, 10) {
 #### Basic Functions
 
 ```moonwalk
-@function Add(a, b) {
+function Add(a, b) {
     return a + b;
 }
 
@@ -1119,7 +1192,7 @@ let result = Add(5, 3);  // 8
 #### Functions with Default Parameters
 
 ```moonwalk
-@function Greet(name, greeting = "Hello") {
+function Greet(name, greeting = "Hello") {
     return greeting + ", " + name + "!";
 }
 
@@ -1130,7 +1203,7 @@ Greet("Bob", "Hi");          // "Hi, Bob!"
 #### Variadic Functions
 
 ```moonwalk
-@function Sum(...numbers) {
+function Sum(...numbers) {
     let total = 0;
     for n in numbers {
         total += n;
@@ -1155,23 +1228,32 @@ let squared = square(4);  // 16
 #### Lambdas and Closures
 
 ```moonwalk
-@function CreateMultiplier(factor) {
-    return func(x) {
-        return x * factor;
-    };
+// Lambda syntax: lambda (params) => body
+let add = lambda (a, b) => a + b;
+let square = lambda (x) => x * x;
+let result = add(5, 3);   // 8
+
+// Function reference: &FuncName
+function Greet() { print("Hello"); }
+let f = &Greet;
+f();  // calls Greet
+
+// Functions returning functions
+function CreateMultiplier(factor) {
+    return lambda (x) => x * factor;
 }
-
 let double = CreateMultiplier(2);
-let triple = CreateMultiplier(3);
-
 double(5);  // 10
-triple(5);  // 15
+
+// Function references:
+// - Use &Name when passing a *named* function as a callback (e.g. Coroutine.Start(&Tick), Events.On("Hit", &OnHit)).
+// - Lambdas and inline arrow functions are already function values and are passed directly without &.
 ```
 
 #### Type Hints in Functions
 
 ```moonwalk
-@function Calculate(a: int, b: int): int {
+function Calculate(a: int, b: int): int {
     return a + b;
 }
 ```
@@ -1185,7 +1267,7 @@ import Math;
 import Physics;
 import Render;
 
-@function MyFunction() {
+function MyFunction() {
     Math.Sin(3.14);
     Physics.ApplyForce(body, force);
 }
@@ -1198,7 +1280,7 @@ class Player {
     let name = "";
     let score = 0;
     
-    @function GetName() {
+    function GetName() {
         return this.name;
     }
 }
@@ -1206,6 +1288,23 @@ class Player {
 let player = new Player();
 player.name = "Alice";
 player.score = 100;
+
+// Inheritance
+class Enemy inherits Player {
+    let health = 100;
+}
+
+// Manual destruction for class instances
+class EnemySpawner {
+    destructor {
+        // called when an EnemySpawner instance is deleted
+        Print("EnemySpawner cleaned up");
+    }
+}
+
+let spawner = new EnemySpawner();
+// ...
+delete spawner; // runs EnemySpawner::destructor and then discards the value
 ```
 
 ### Example: Complete Game Script
@@ -1221,7 +1320,7 @@ import UI;
 let PlayerScore = 0;
 let Enemies = [];
 
-@function SpawnEnemy() {
+function SpawnEnemy() {
     let Enemy = {
         "Position": Vec3(0, 0, 0),
         "Health": 100,
@@ -1230,7 +1329,7 @@ let Enemies = [];
     Enemies.Push(Enemy);
 }
 
-@function UpdateEnemies() {
+function UpdateEnemies() {
     for Enemy in Enemies {
         Enemy.Position.y += Enemy.Speed;
         
@@ -1240,7 +1339,7 @@ let Enemies = [];
     }
 }
 
-@function CheckCollisions() {
+function CheckCollisions() {
     let PlayerPos = Render.GetPlayerPosition();
     
     for Enemy in Enemies {
@@ -1277,6 +1376,96 @@ let Enemies = [];
 5. **Use type hints for clarity**: Especially in function signatures
 6. **Break complex logic into functions**: Keep functions focused and small
 7. **Use modules for organization**: Group related functionality together
+
+## Coroutines
+
+Moonwalk supports **coroutines**: script functions that can pause (yield) and resume later, driven by the game loop. This is useful for spread-out logic (e.g. wait N frames, wait T seconds, or run a function in the “background”).
+
+### How it works
+
+- The VM can **yield** when a native such as `WaitFrames` or `WaitSeconds` is called. Execution state (program, IP, stack, call stack, registers) is saved and execution returns to the engine.
+- **ScriptManager** keeps a list of suspended coroutines. Each frame it calls `Update(DeltaTime)`, which advances time and frame counters, then resumes any coroutine whose wait condition is satisfied.
+- A coroutine runs until it hits `HALT`/return (then it is removed) or yields again (then its state is updated and it stays in the list).
+
+### Script API (when using ScriptManager / game engine)
+
+| API | Description |
+|-----|-------------|
+| `WaitFrames(n)` | Yield for `n` frames. Resumes when the engine has advanced the frame counter by `n`. |
+| `WaitSeconds(t)` | Yield for `t` seconds (game time). Resumes when `GetGameTime()` has advanced by `t`. |
+| `WaitUntil(condition)` | Yield until `condition()` returns true. `condition` is a script function with no arguments; each frame the engine calls it and resumes the coroutine when the result is truthy (non-zero number, non-empty string). |
+| `Coroutine.Start(func)` | Start a new coroutine running the script function `func` (a function reference). It is queued and run when due; it can itself use `WaitFrames` / `WaitSeconds`. |
+
+### Example: wait and repeat
+
+```moonwalk
+function tickEverySecond() {
+    while true {
+        Print("Tick");
+        WaitSeconds(1.0);
+    }
+}
+
+// Example: yield until a condition is true (e.g. a global flag set elsewhere)
+let ready = 0;
+function isReady() {
+    return ready >= 1;
+}
+
+@Entry {
+    Coroutine.Start(&tickEverySecond);
+    Print("Started background tick");
+    WaitUntil(&isReady);  // script would set ready = 1 elsewhere (e.g. from an event) to resume
+    Print("Ready");
+}
+```
+
+### Example: main module yields
+
+If the **main module** (e.g. run via `ExecuteModule`) calls `WaitFrames` or `WaitSeconds`, it yields and is added to the coroutine list. The engine’s next `Update()` will resume it when the wait is over. So a “main” script can be a long-running coroutine.
+
+### Engine integration
+
+- **GameBase** (or your game’s main loop) should call `ScriptManager::Update(DeltaTime)` every frame. This updates internal time and frame counters and resumes all due coroutines.
+- Coroutines are single-threaded: one runs at a time on the VM. No extra locking is required for script state.
+
+---
+
+## Events and callbacks
+
+Moonwalk provides a simple **event/callback** system: script (or C++) can register handlers for named events and emit events with optional payloads.
+
+### Script API
+
+| API | Description |
+|-----|-------------|
+| `Events.On(eventName, handlerFunc)` | Register a script function as a handler for `eventName`. `handlerFunc` is a function reference (e.g. `&myHandler`). When the event is emitted, the VM calls the handler with the event’s arguments. |
+| `Events.Emit(eventName, arg1, arg2, ...)` | Emit `eventName` with the given arguments. All registered handlers for that name are invoked with those arguments. |
+
+### Example: script subscribes and emits
+
+```moonwalk
+function onPlayerHit(entityId, damage) {
+    Print("Entity " + entityId + " took " + damage + " damage");
+}
+
+@Entry {
+    Events.On("PlayerHit", &onPlayerHit);
+    Events.Emit("PlayerHit", 42, 10);
+}
+```
+
+### C++ / engine integration
+
+- The VM exposes `RegisterEventHandler(eventName, ScriptFunc)` and `EmitEvent(eventName, args)`.
+- From C++, you can emit events (e.g. after a physics collision, input, or timer) by calling `BytecodeVM::EmitEvent(name, args)`. Handlers registered from script will be run; they execute in the same thread as the caller (no lock is taken inside `EmitEvent` to avoid deadlock when a native calls it from within script).
+- **ScriptManager** holds the VM; games that use ScriptManager can get the VM with `GetVM()` and then call `EmitEvent` when appropriate (e.g. in a collision callback or input handler).
+
+### Best practices
+
+- Use clear, namespaced-like event names (e.g. `"Physics.Collision"`, `"Input.Jump"`) to avoid clashes.
+- Handlers should be quick; avoid long loops or heavy work so the frame stays responsive.
+- Events are process-wide: all modules share the same event bus. Uniqueness is by string name only.
 
 ## Performance Considerations
 

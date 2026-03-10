@@ -189,16 +189,7 @@ if(BGFX_INSTALL)
 	install(EXPORT "${TARGETS_EXPORT_NAME}" NAMESPACE "${namespace}" DESTINATION "${config_install_dir}")
 endif()
 
-# Add tinygltf
-set(TINYGLTF_INSTALL OFF CACHE BOOL "" FORCE)
-set(TINYGLTF_BUILD_LOADER_EXAMPLE OFF CACHE BOOL "" FORCE)
-set(TINYGLTF_BUILD_GL_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(TINYGLTF_BUILD_VALIDATOR_EXAMPLE OFF CACHE BOOL "" FORCE)
-set(TINYGLTF_BUILD_BUILDER_EXAMPLE OFF CACHE BOOL "" FORCE)
-add_subdirectory(tinygltf)
+# tinygltf and reactphysics3d are fetched and built by CPM in the root CMakeLists.txt.
 
-# Add ReactPhysics3D
-set(RP3D_COMPILE_LIBRARY ON CACHE BOOL "" FORCE)
-set(RP3D_COMPILE_TESTBED OFF CACHE BOOL "" FORCE)
-set(RP3D_COMPILE_TESTS OFF CACHE BOOL "" FORCE)
-add_subdirectory(reactphysics3d)
+# Dear ImGui: build imgui target from CPM-fetched sources (SDL3 + OpenGL3 backends)
+add_subdirectory(imgui)

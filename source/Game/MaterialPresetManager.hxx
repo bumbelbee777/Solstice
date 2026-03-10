@@ -3,7 +3,7 @@
 #include "../Solstice.hxx"
 #include "../Core/Material.hxx"
 #include "../Core/ResourceHandle.hxx"
-#include "../Render/TextureRegistry.hxx"
+#include <Render/Assets/TextureRegistry.hxx>
 #include "../Math/Vector.hxx"
 #include <string>
 

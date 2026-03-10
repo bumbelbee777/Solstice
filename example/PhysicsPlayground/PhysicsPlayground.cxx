@@ -4,13 +4,13 @@
 #include "UIManager.hxx"
 #include "TerminalHub.hxx"
 #include <UI/UISystem.hxx>
-#include <Render/Mesh.hxx>
+#include <Render/Assets/Mesh.hxx>
 #include <Core/Material.hxx>
 #include <Render/PhysicsBridge.hxx>
-#include <Render/Skybox.hxx>
+#include <Render/Scene/Skybox.hxx>
 #include <Arzachel/ProceduralTexture.hxx>
 #include <Solstice.hxx>
-#include <Render/ParticlePresets.hxx>
+#include <Render/Particle/ParticlePresets.hxx>
 #include <Physics/PhysicsSystem.hxx>
 #include <Physics/RigidBody.hxx>
 #include <Physics/ConvexHullFactory.hxx>
@@ -730,7 +730,7 @@ void PhysicsPlayground::Update(float DeltaTime) {
         }
     }
 
-    // Update grabbed object (pass DeltaTime for smooth interpolation)
+    // Update grabbed object positions (direct position control)
     UpdateGrabbedObject(DeltaTime);
 
     // Physics update
@@ -743,6 +743,22 @@ void PhysicsPlayground::Update(float DeltaTime) {
         Physics::PhysicsSystem::Instance().Update(physicsStep);
         m_PhysicsAccumulator -= physicsStep;
         steps++;
+    }
+
+    // Override grabbed object positions in ReactPhysics3D after physics update
+    // This ensures grabbed objects bypass physics integration and follow camera smoothly
+    if (m_GrabbedEntity != 0 && !m_GrabbedOffsets.empty()) {
+        Vec3 baseTargetPos = m_Camera.Position + m_Camera.Front * m_GrabbedDistance;
+        auto& bridge = Physics::PhysicsSystem::Instance().GetBridge();
+
+        for (auto& [eid, offset] : m_GrabbedOffsets) {
+            auto* rb = m_Registry.Has<Physics::RigidBody>(eid) ? &m_Registry.Get<Physics::RigidBody>(eid) : nullptr;
+            if (!rb || rb->IsStatic) continue;
+
+            Vec3 targetPos = baseTargetPos + offset;
+            // Directly set transform in ReactPhysics3D, bypassing physics integration
+            bridge.SetBodyTransform(eid, targetPos, rb->Rotation);
+        }
     }
 
     // Sync physics to scene
@@ -777,42 +793,27 @@ void PhysicsPlayground::UpdateGrabbedObject(float deltaTime) {
     if (m_GrabbedEntity == 0 || m_GrabbedOffsets.empty()) return;
 
     Vec3 baseTargetPos = m_Camera.Position + m_Camera.Front * m_GrabbedDistance;
-    // Increased lerp speed for responsiveness, but pure velocity control will be smoother
-    const float lerpSpeed = 25.0f; 
 
     for (auto& [eid, offset] : m_GrabbedOffsets) {
         auto* rb = m_Registry.Has<Physics::RigidBody>(eid) ? &m_Registry.Get<Physics::RigidBody>(eid) : nullptr;
         if (!rb || rb->IsStatic) continue;
 
+        Vec3 prevPos = rb->Position;
         Vec3 targetPos = baseTargetPos + offset;
-        Vec3 currentPos = rb->Position;
-        Vec3 dir = targetPos - currentPos;
-        float dist = dir.Magnitude();
 
-        if (dist > 0.001f) {
-            // Velocity-based control only
-            // P-controller for velocity: V_target = Error * Gain
-            Vec3 targetVel = dir * lerpSpeed;
-            
-            // Limit max velocity to prevent instability
-            float maxGrabVel = 20.0f;
-            if (targetVel.Magnitude() > maxGrabVel) {
-                targetVel = targetVel.Normalized() * maxGrabVel;
-            }
-            
-            // Apply a critical damping-like effect by blending current velocity
-            // This prevents overshoot/oscillations aka "stuttering"
-            rb->Velocity = targetVel;
-            
-            // Do NOT manually set Position - let the physics engine integrate it
-            // rb->Position = currentPos + moveVel * deltaTime; <--- REMOVED
-        } else {
-            rb->Velocity = Vec3(0, 0, 0);
-             // Only snap if VERY close and effectively stopped
-            if (dist < 0.01f) {
-                 rb->Position = targetPos;
-            }
+        // Check for collisions before moving
+        Math::Vec3 collisionPoint, collisionNormal;
+        if (Physics::PhysicsSystem::CheckSweptCollision(rb, prevPos, targetPos, collisionPoint, collisionNormal)) {
+            // Collision detected - move to collision point with small offset
+            const float offsetDistance = 0.01f; // Small offset to prevent jitter
+            targetPos = collisionPoint + collisionNormal * offsetDistance;
         }
+
+        // Update position (with collision correction if needed)
+        rb->Position = targetPos;
+
+        // Zero out velocity to prevent physics from interfering
+        rb->Velocity = Vec3(0, 0, 0);
 
         // Heavy damping on rotation to keep object stable while held
         rb->AngularVelocity = rb->AngularVelocity * 0.5f;
@@ -855,15 +856,18 @@ void PhysicsPlayground::Render() {
         bgfx::ViewId particleViewId = 1;
         for (auto& particleSystem : m_ParticleSystems) {
             if (particleSystem) {
-                particleSystem->Render(particleViewId, viewProj);
+                particleSystem->Render(particleViewId, viewProj, m_Camera.Right, m_Camera.Up);
             }
         }
     }
 
-    // Render TerminalHub
-    if (m_TerminalHub && window) {
+    // Render TerminalHub with world-space UI support
+    if (m_TerminalHub && window && m_Renderer) {
         auto fbSize = window->GetFramebufferSize();
-        m_TerminalHub->Render(m_Camera, fbSize.first, fbSize.second);
+        bgfx::ProgramHandle sceneProgram = m_Renderer->GetSceneProgram();
+        bgfx::ViewId sceneViewId = m_Renderer->GetSceneViewId();
+        bgfx::FrameBufferHandle sceneFB = m_Renderer->GetSceneFramebuffer();
+        m_TerminalHub->Render(m_Camera, fbSize.first, fbSize.second, sceneProgram, sceneViewId, sceneFB);
     }
 
     // Render UI via UIManager

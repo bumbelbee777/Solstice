@@ -2,7 +2,7 @@
 
 #include "../Solstice.hxx"
 #include "../Core/JSON.hxx"
-#include "../Render/Scene.hxx"
+#include <Render/Scene/Scene.hxx>
 #include "../Core/Material.hxx"
 #include "../Physics/LightSource.hxx"
 #include "../Arzachel/Seed.hxx"

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Skeleton.hxx"
+#include <Skeleton/Skeleton.hxx>
 #include <array>
 #include <vector>
 #include <cstdint>
@@ -9,11 +9,11 @@ namespace Solstice::Arzachel {
 
 // Per-vertex bone influence
 struct SkinWeight {
-    BoneID Id;
+    ::Solstice::Skeleton::BoneID Id;
     float Weight;
 
-    SkinWeight() : Id(BoneID{}), Weight(0.0f) {}
-    SkinWeight(BoneID ID, float WeightParam) : Id(ID), Weight(WeightParam) {}
+    SkinWeight() : Id(::Solstice::Skeleton::BoneID{}), Weight(0.0f) {}
+    SkinWeight(::Solstice::Skeleton::BoneID ID, float WeightParam) : Id(ID), Weight(WeightParam) {}
 };
 
 // Per-vertex collection of bone influences (typically 4 bones max)

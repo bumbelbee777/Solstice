@@ -6,8 +6,8 @@
 #include "../Scripting/Compiler.hxx"
 #include "../Scripting/ScriptBindings.hxx"
 #include "../Entity/Registry.hxx"
-#include "../Render/Scene.hxx"
-#include "../Render/Camera.hxx"
+#include <Render/Scene/Scene.hxx>
+#include <Render/Scene/Camera.hxx>
 #include "../Physics/PhysicsSystem.hxx"
 #include <functional>
 #include <vector>
@@ -55,11 +55,18 @@ public:
         const std::string& ModuleName,
         uint32_t TimeoutMs = 5000);
 
-    // Update deferred executions (call from Update())
+    // Start a coroutine (script function at entryIP in program). Called from script via Coroutine.Start.
+    void StartCoroutine(const Scripting::Program& program, size_t entryIP, const std::vector<Scripting::Value>& args);
+
+    // Update deferred executions and resume due coroutines (call from game Update())
     void Update(float DeltaTime);
 
     // Shutdown and cleanup
     void Shutdown();
+
+    // Access VM for event/callback registration (e.g. from bindings)
+    Scripting::BytecodeVM& GetVM() { return m_ScriptVM; }
+    const Scripting::BytecodeVM& GetVM() const { return m_ScriptVM; }
 
 private:
     Scripting::BytecodeVM m_ScriptVM;
@@ -67,6 +74,11 @@ private:
     mutable Core::Spinlock m_VMLock;
 
     std::vector<DeferredExecution> m_DeferredExecutions;
+
+    // Coroutines (suspended VM state, resumed each frame when due)
+    std::vector<Scripting::CoroutineState> m_Coroutines;
+    double m_GameTime{0.0};
+    uint64_t m_FrameCount{0};
 
     ECS::Registry* m_Registry{nullptr};
     Render::Scene* m_Scene{nullptr};

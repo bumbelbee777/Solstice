@@ -70,6 +70,12 @@ public:
      */
     reactphysics3d::PhysicsWorld* GetPhysicsWorld() const { return m_PhysicsWorld; }
 
+    /**
+     * Directly set position and rotation for a body (bypasses physics integration)
+     * Used for grabbed objects to ensure smooth, frame-rate independent movement
+     */
+    void SetBodyTransform(ECS::EntityId entityId, const Math::Vec3& position, const Math::Quaternion& rotation);
+
 private:
     /**
      * Convert Solstice Vector3 to ReactPhysics3D Vector3
@@ -118,6 +124,9 @@ private:
 
     // Track which shapes we created (for cleanup)
     std::unordered_map<reactphysics3d::RigidBody*, reactphysics3d::CollisionShape*> m_BodyToShape;
+
+    // Track polyhedron meshes for convex shapes (must destroy after shape)
+    std::unordered_map<reactphysics3d::ConvexMeshShape*, reactphysics3d::PolyhedronMesh*> m_ConvexShapeToPolyhedronMesh;
 };
 
 } // namespace Solstice::Physics

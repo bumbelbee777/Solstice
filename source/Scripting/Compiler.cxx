@@ -1,4 +1,5 @@
 #include "Compiler.hxx"
+#include "MemoryAnalysis.hxx"
 #include <vector>
 #include <iostream>
 #include <map>
@@ -14,7 +15,7 @@ namespace Solstice::Scripting {
         ID, STRING, NUMBER,
         LET, FUNCTION, ENTRY, RETURN,
         MODULE, IMPORT, CLASS, NEW,
-        NOEXPORT,
+        NOEXPORT, INHERITS, CONSTRUCTOR, DESTRUCTOR,
         LPAREN, RPAREN, LBRACE, RBRACE, LBRACKET, RBRACKET,
         EQ, PLUS, PLUSPLUS, MINUS, MINUSMINUS, COMMA, SEMICOLON, COLON, DOT,
         // Comparisons
@@ -31,10 +32,16 @@ namespace Solstice::Scripting {
         IF, ELSE, WHILE, FOR, IN, SWITCH, CASE, DEFAULT, BREAK, CONTINUE, MATCH,
         // Arrow functions
         ARROW,
+        // Enums
+        ENUM,
+        // Lambda
+        LAMBDA,
         // Range
         RANGE, // ..
         // String interpolation
         STRING_INTERPOLATION_START, STRING_INTERPOLATION_END,
+        // Memory management
+        DELETE_KW,
         END
     };
 
@@ -55,7 +62,7 @@ namespace Solstice::Scripting {
 
             char c = m_Src[m_Pos];
 
-            if (isalpha(c) || c == '@') {
+            if (isalpha(c) || c == '_' || c == '@') {
                 size_t start = m_Pos;
                 m_Pos++;
                 while (m_Pos < m_Src.size() && (isalnum(m_Src[m_Pos]) || m_Src[m_Pos] == '_' || m_Src[m_Pos] == '.')) m_Pos++;
@@ -67,13 +74,11 @@ namespace Solstice::Scripting {
                 if (text == "while") return {WHILE, text};
                 if (text == "for") return {FOR, text};
                 if (text == "in") return {IN, text};
-                if (text == "switch") return {SWITCH, text};
-                if (text == "case") return {CASE, text};
-                if (text == "default") return {DEFAULT, text};
                 if (text == "break") return {BREAK, text};
                 if (text == "continue") return {CONTINUE, text};
                 if (text == "match") return {MATCH, text};
-                if (text == "@function") return {FUNCTION, text};
+                if (text == "function") return {FUNCTION, text};
+                if (text == "@function") return {FUNCTION, text}; // backward compatibility
                 if (text == "@Entry") return {ENTRY, text};
                 if (text == "@noexport") return {NOEXPORT, text};
                 if (text == "return") return {RETURN, text};
@@ -81,8 +86,14 @@ namespace Solstice::Scripting {
                 if (text == "import") return {IMPORT, text};
                 if (text == "class") return {CLASS, text};
                 if (text == "new") return {NEW, text};
+                if (text == "inherits") return {INHERITS, text};
+                if (text == "constructor") return {CONSTRUCTOR, text};
+                if (text == "destructor") return {DESTRUCTOR, text};
                 if (text == "true") return {NUMBER, text, 1}; // Boolean true as number 1
                 if (text == "false") return {NUMBER, text, 0}; // Boolean false as number 0
+                if (text == "enum") return {ENUM, text};
+                if (text == "lambda") return {LAMBDA, text};
+                if (text == "delete") return {DELETE_KW, text};
 
                 return {ID, text};
             }
@@ -323,6 +334,8 @@ namespace Solstice::Scripting {
                     ParseEntry();
                 } else if (m_Current.Type == CLASS) {
                     ParseClass();
+                } else if (m_Current.Type == ENUM) {
+                    ParseEnum();
                 } else {
                     Advance();
                 }
@@ -333,6 +346,15 @@ namespace Solstice::Scripting {
                 if (m_ExportedFunctions.count(name)) {
                     m_Program.Exports[name] = addr;
                 }
+            }
+            
+            // Store class metadata in program
+            for (const auto& [className, classInfo] : m_Classes) {
+                Program::ClassMetadata metadata;
+                metadata.BaseClass = classInfo.BaseClass;
+                metadata.ConstructorAddress = classInfo.ConstructorAddress;
+                metadata.DestructorAddress = classInfo.DestructorAddress;
+                m_Program.ClassInfo[className] = metadata;
             }
 
             return m_Program;
@@ -350,6 +372,15 @@ namespace Solstice::Scripting {
         std::map<std::string, uint8_t> m_Locals; // Map name to Register Index
         std::map<std::string, size_t> m_Functions;
         std::set<std::string> m_ExportedFunctions; // Functions that should be exported
+        
+        // Class metadata
+        struct ClassInfo {
+            std::string BaseClass;
+            size_t ConstructorAddress = 0;
+            size_t DestructorAddress = 0;
+        };
+        std::map<std::string, ClassInfo> m_Classes;
+        
         uint8_t m_NextReg = 0;
         uint8_t m_NextLocalReg = 10;
 
@@ -387,6 +418,39 @@ namespace Solstice::Scripting {
             Consume(SEMICOLON, "Expected ;");
         }
 
+        void ParseEnum() {
+            Consume(ENUM, "Expected enum");
+            std::string enumName = m_Current.Text;
+            Consume(ID, "Expected enum name");
+            Consume(LBRACE, "Expected {");
+            Program::EnumMetadata meta;
+            int64_t nextDiscriminant = 0;
+            bool first = true;
+            while (m_Current.Type != RBRACE && m_Current.Type != END) {
+                if (m_Current.Type == COMMA && !first) {
+                    Advance(); // skip comma
+                }
+                first = false;
+                if (m_Current.Type != ID) break;
+                std::string variantName = m_Current.Text;
+                Advance();
+                if (m_Current.Type == EQ) {
+                    Advance();
+                    if (m_Current.Type == NUMBER) {
+                        nextDiscriminant = m_Current.IntValue;
+                        if (m_Current.Text.find('.') != std::string::npos)
+                            nextDiscriminant = (int64_t)m_Current.FloatValue;
+                        Advance();
+                    }
+                }
+                meta.variantToDiscriminant[variantName] = nextDiscriminant;
+                nextDiscriminant++;
+            }
+            Consume(RBRACE, "Expected }");
+            if (m_Current.Type == SEMICOLON) Advance();
+            m_Program.EnumInfo[enumName] = meta;
+        }
+
         void ParseImport() {
             Consume(IMPORT, "Expected import");
             std::string importName = m_Current.Text;
@@ -401,26 +465,75 @@ namespace Solstice::Scripting {
             std::string className = m_Current.Text;
             Consume(ID, "Expected class name");
 
-            std::string baseClass = "";
-            if (m_Current.Type == COLON) {
+            ClassInfo classInfo;
+            if (m_Current.Type == INHERITS) {
                 Advance();
-                baseClass = m_Current.Text;
+                classInfo.BaseClass = m_Current.Text;
                 Consume(ID, "Expected base class name");
             }
 
             Consume(LBRACE, "Expected {");
-            // Simplified: classes are just namespaces for now
-            // Future: actual object instantiation
+            
             while (m_Current.Type != RBRACE && m_Current.Type != END) {
                 if (m_Current.Type == LET) {
                     ParseGlobal(); // Should probably prefix with className
                 } else if (m_Current.Type == FUNCTION) {
                     ParseFunction(); // Should probably prefix with className
+                } else if (m_Current.Type == CONSTRUCTOR) {
+                    // Parse constructor
+                    Advance(); // Consume CONSTRUCTOR
+                    std::string constructorName = className + "::constructor";
+                    m_Functions[constructorName] = m_Program.Instructions.size();
+                    classInfo.ConstructorAddress = m_Program.Instructions.size();
+                    
+                    Consume(LPAREN, "Expected (");
+                    
+                    m_Locals.clear();
+                    m_NextLocalReg = 10;
+                    
+                    while (m_Current.Type != RPAREN) {
+                        std::string argName = m_Current.Text;
+                        Consume(ID, "Expected arg name");
+                        m_Locals[argName] = m_NextLocalReg;
+                        m_Program.AddReg(OpCode::MOV_REG, m_NextLocalReg);
+                        m_NextLocalReg++;
+                        
+                        if (m_Current.Type == COMMA) Advance();
+                    }
+                    Consume(RPAREN, "Expected )");
+                    Consume(LBRACE, "Expected {");
+                    
+                    while (m_Current.Type != RBRACE) {
+                        ParseStatement();
+                    }
+                    Consume(RBRACE, "Expected }");
+                    
+                    m_Program.Add(OpCode::RET);
+                } else if (m_Current.Type == DESTRUCTOR) {
+                    // Parse destructor
+                    Advance(); // Consume DESTRUCTOR
+                    std::string destructorName = className + "::destructor";
+                    m_Functions[destructorName] = m_Program.Instructions.size();
+                    classInfo.DestructorAddress = m_Program.Instructions.size();
+                    
+                    Consume(LBRACE, "Expected {");
+                    
+                    m_Locals.clear();
+                    m_NextLocalReg = 10;
+                    
+                    while (m_Current.Type != RBRACE) {
+                        ParseStatement();
+                    }
+                    Consume(RBRACE, "Expected }");
+                    
+                    m_Program.Add(OpCode::RET);
                 } else {
                     Advance();
                 }
             }
             Consume(RBRACE, "Expected }");
+            
+            m_Classes[className] = classInfo;
         }
 
         void ParseGlobal() {
@@ -430,7 +543,8 @@ namespace Solstice::Scripting {
 
             if (m_Current.Type == COLON) {
                 Advance();
-                Consume(ID, "Expected type"); // Skip type
+                // Optional type hint (including Ptr<T> generics)
+                ParseTypeHint();
             }
 
             Consume(EQ, "Expected =");
@@ -447,7 +561,7 @@ namespace Solstice::Scripting {
         }
 
         void ParseFunction(bool shouldExport = true) {
-            Consume(FUNCTION, "Expected @function");
+            Consume(FUNCTION, "Expected function");
             std::string name = m_Current.Text;
             Consume(ID, "Expected function name");
 
@@ -460,24 +574,39 @@ namespace Solstice::Scripting {
 
             // Args
             m_Locals.clear();
-            // Preserve globals in m_Locals? No, check globals if not in locals.
-            // But we need to allocate registers for args.
-            // We'll use high registers or just continue allocating?
-            // We'll use high registers or just continue allocating?
-            // For simplicity, let's reuse registers R10+ for locals.
+            // For simplicity, reuse registers R10+ for locals.
             m_NextLocalReg = 10;
+            size_t arity = 0;
 
             while (m_Current.Type != RPAREN) {
                 std::string argName = m_Current.Text;
                 Consume(ID, "Expected arg name");
+
+                // Optional type hint for parameter, including Ptr<T>
+                if (m_Current.Type == COLON) {
+                    Advance();
+                    ParseTypeHint();
+                }
                 m_Locals[argName] = m_NextLocalReg;
                 // Pop arg from stack to register
                 m_Program.AddReg(OpCode::MOV_REG, m_NextLocalReg);
                 m_NextLocalReg++;
+                arity++;
 
                 if (m_Current.Type == COMMA) Advance();
             }
             Consume(RPAREN, "Expected )");
+
+            m_Program.FunctionArity[m_Functions[name]] = arity;
+            
+            // Optional return type
+            std::string returnType = "";
+            if (m_Current.Type == ARROW) {
+                Advance();
+                returnType = m_Current.Text;
+                Consume(ID, "Expected return type after ->");
+            }
+            
             Consume(LBRACE, "Expected {");
 
             while (m_Current.Type != RBRACE) {
@@ -511,14 +640,20 @@ namespace Solstice::Scripting {
                 ParseExpression();
                 Consume(SEMICOLON, "Expected ;");
                 m_Program.Add(OpCode::RET);
+            } else if (m_Current.Type == DELETE_KW) {
+                // delete expr;
+                Advance();
+                ParseExpression();
+                Consume(SEMICOLON, "Expected ;");
+                m_Program.Add(OpCode::DELETE_VALUE);
             } else if (m_Current.Type == IF) {
                 ParseIf();
             } else if (m_Current.Type == WHILE) {
                 ParseWhile();
             } else if (m_Current.Type == FOR) {
                 ParseFor();
-            } else if (m_Current.Type == SWITCH) {
-                ParseSwitch();
+            } else if (m_Current.Type == MATCH) {
+                ParseMatch();
             } else if (m_Current.Type == BREAK) {
                 Advance();
                 Consume(SEMICOLON, "Expected ;");
@@ -851,99 +986,195 @@ namespace Solstice::Scripting {
             m_LoopStarts.pop_back();
         }
 
-        void ParseSwitch() {
-            Consume(SWITCH, "Expected switch");
-            Consume(LPAREN, "Expected (");
-            ParseExpression(); // Switch value
-            Consume(RPAREN, "Expected )");
+        void ParseMatch() {
+            Consume(MATCH, "Expected match");
+            ParseExpression(); // match value on stack
             Consume(LBRACE, "Expected {");
 
-            size_t switchEnd = 0; // Will be set later
-            std::vector<size_t> caseJumps;
+            size_t matchEnd = 0; // will patch after all arms
+            size_t breakTargetStart = m_BreakTargets.size();
 
             while (m_Current.Type != RBRACE && m_Current.Type != END) {
-                if (m_Current.Type == CASE) {
+                // Pattern: literal (NUMBER, STRING), ID (binding), or _ (wildcard)
+                if (m_Current.Type == NUMBER) {
+                    // Literal number: DUP, push literal, EQ, JMP_IF body, POP, JMP next
+                    m_Program.Add(OpCode::DUP);
+                    if (m_Current.Text.find('.') != std::string::npos) {
+                        m_Program.Add(OpCode::PUSH_CONST, m_Current.FloatValue);
+                    } else {
+                        m_Program.Add(OpCode::PUSH_CONST, m_Current.IntValue);
+                    }
                     Advance();
-                    ParseExpression(); // Case value
-                    Consume(COLON, "Expected :");
-
-                    // Compare switch value with case value
-                    m_Program.Add(OpCode::DUP); // Duplicate switch value
                     m_Program.Add(OpCode::EQ);
                     m_Program.Add(OpCode::JMP_IF, 0);
-                    caseJumps.push_back(m_Program.Instructions.size() - 1);
-
-                    // Jump over this case if not matched
+                    size_t jmpToBodyIdx = m_Program.Instructions.size() - 1;
+                    m_Program.Add(OpCode::POP); // pop comparison result (0)
                     m_Program.Add(OpCode::JMP, 0);
-                    size_t skipCaseIdx = m_Program.Instructions.size() - 1;
+                    size_t jmpToNextIdx = m_Program.Instructions.size() - 1;
 
-                    // Case body
-                    size_t caseStart = m_Program.Instructions.size();
-                    for (size_t i = 0; i < caseJumps.size() - 1; ++i) {
-                        m_Program.Instructions[caseJumps[i]].Operand = (int64_t)caseStart;
-                    }
+                    Consume(ARROW, "Expected =>");
+                    size_t bodyStart = m_Program.Instructions.size();
+                    m_Program.Instructions[jmpToBodyIdx].Operand = (int64_t)bodyStart;
 
-                    size_t breakTargetStart = m_BreakTargets.size();
-                    while (m_Current.Type != CASE && m_Current.Type != DEFAULT &&
-                           m_Current.Type != RBRACE && m_Current.Type != END) {
-                        ParseStatement();
-                    }
-
-                    // Fix break targets for this case
-                    if (m_Current.Type == CASE || m_Current.Type == DEFAULT || m_Current.Type == RBRACE) {
-                        size_t nextCaseStart = m_Program.Instructions.size();
-                        for (size_t i = breakTargetStart; i < m_BreakTargets.size(); ++i) {
-                            m_Program.Instructions[m_BreakTargets[i]].Operand = (int64_t)nextCaseStart;
-                        }
-                        m_BreakTargets.erase(m_BreakTargets.begin() + breakTargetStart, m_BreakTargets.end());
-                    }
-
-                    m_Program.Instructions[skipCaseIdx].Operand = (int64_t)m_Program.Instructions.size();
-                } else if (m_Current.Type == DEFAULT) {
+                    ParseMatchArmBody();
+                    m_Program.Add(OpCode::JMP, 0);
+                    m_BreakTargets.push_back(m_Program.Instructions.size() - 1);
+                    size_t nextArm = m_Program.Instructions.size();
+                    m_Program.Instructions[jmpToNextIdx].Operand = (int64_t)nextArm;
+                } else if (m_Current.Type == STRING) {
+                    m_Program.Add(OpCode::DUP);
+                    m_Program.Add(OpCode::PUSH_CONST, m_Current.Text);
                     Advance();
-                    Consume(COLON, "Expected :");
+                    m_Program.Add(OpCode::EQ);
+                    m_Program.Add(OpCode::JMP_IF, 0);
+                    size_t jmpToBodyIdx = m_Program.Instructions.size() - 1;
+                    m_Program.Add(OpCode::POP);
+                    m_Program.Add(OpCode::JMP, 0);
+                    size_t jmpToNextIdx = m_Program.Instructions.size() - 1;
 
-                    size_t defaultStart = m_Program.Instructions.size();
-                    // Fix remaining case jumps to default
-                    for (size_t i = 0; i < caseJumps.size(); ++i) {
-                        auto& operand = m_Program.Instructions[caseJumps[i]].Operand;
-                        if (std::holds_alternative<int64_t>(operand) && std::get<int64_t>(operand) == 0) {
-                            operand = (int64_t)defaultStart;
+                    Consume(ARROW, "Expected =>");
+                    size_t bodyStart = m_Program.Instructions.size();
+                    m_Program.Instructions[jmpToBodyIdx].Operand = (int64_t)bodyStart;
+
+                    ParseMatchArmBody();
+                    m_Program.Add(OpCode::JMP, 0);
+                    m_BreakTargets.push_back(m_Program.Instructions.size() - 1);
+                    size_t nextArm = m_Program.Instructions.size();
+                    m_Program.Instructions[jmpToNextIdx].Operand = (int64_t)nextArm;
+                } else if (m_Current.Type == ID) {
+                    std::string id = m_Current.Text;
+                    Advance();
+                    if (id == "_") {
+                        // Wildcard: pop value, run body
+                        m_Program.Add(OpCode::POP);
+                        Consume(ARROW, "Expected =>");
+                        ParseMatchArmBody();
+                        m_Program.Add(OpCode::JMP, 0);
+                        m_BreakTargets.push_back(m_Program.Instructions.size() - 1);
+                    } else if (m_Current.Type == DOT) {
+                        // Enum variant pattern: EnumName.Variant
+                        Advance(); // consume DOT
+                        std::string variantName = m_Current.Text;
+                        Consume(ID, "Expected variant name");
+                        if (!m_Program.EnumInfo.count(id)) {
+                            throw std::runtime_error("Unknown enum: " + id);
                         }
-                    }
+                        const auto& meta = m_Program.EnumInfo.at(id);
+                        int64_t disc = 0;
+                        if (meta.variantToDiscriminant.count(variantName))
+                            disc = meta.variantToDiscriminant.at(variantName);
+                        EnumVal ev;
+                        ev.enumName = id;
+                        ev.variant = variantName;
+                        ev.discriminant = disc;
+                        m_Program.Add(OpCode::DUP);
+                        m_Program.Add(OpCode::PUSH_CONST, ev);
+                        m_Program.Add(OpCode::EQ);
+                        m_Program.Add(OpCode::JMP_IF, 0);
+                        size_t jmpToBodyIdx = m_Program.Instructions.size() - 1;
+                        m_Program.Add(OpCode::POP);
+                        m_Program.Add(OpCode::JMP, 0);
+                        size_t jmpToNextIdx = m_Program.Instructions.size() - 1;
 
-                    size_t breakTargetStart = m_BreakTargets.size();
-                    while (m_Current.Type != RBRACE && m_Current.Type != END) {
-                        ParseStatement();
-                    }
+                        Consume(ARROW, "Expected =>");
+                        size_t bodyStart = m_Program.Instructions.size();
+                        m_Program.Instructions[jmpToBodyIdx].Operand = (int64_t)bodyStart;
 
-                    // Fix break targets
-                    switchEnd = m_Program.Instructions.size();
-                    for (size_t i = breakTargetStart; i < m_BreakTargets.size(); ++i) {
-                        m_Program.Instructions[m_BreakTargets[i]].Operand = (int64_t)switchEnd;
+                        ParseMatchArmBody();
+                        m_Program.Add(OpCode::JMP, 0);
+                        m_BreakTargets.push_back(m_Program.Instructions.size() - 1);
+                        size_t nextArm = m_Program.Instructions.size();
+                        m_Program.Instructions[jmpToNextIdx].Operand = (int64_t)nextArm;
+                    } else {
+                        // Binding: store top in local, run body
+                        uint8_t reg = m_NextLocalReg++;
+                        m_Locals[id] = reg;
+                        m_Program.AddReg(OpCode::MOV_REG, reg);
+                        Consume(ARROW, "Expected =>");
+                        ParseMatchArmBody();
+                        m_Program.Add(OpCode::JMP, 0);
+                        m_BreakTargets.push_back(m_Program.Instructions.size() - 1);
                     }
-                    m_BreakTargets.erase(m_BreakTargets.begin() + breakTargetStart, m_BreakTargets.end());
                 } else {
                     Advance();
                 }
+                if (m_Current.Type == COMMA) Advance();
             }
 
             Consume(RBRACE, "Expected }");
+            matchEnd = m_Program.Instructions.size();
+            m_Program.Add(OpCode::POP); // pop the match value
 
-            // Pop switch value
-            m_Program.Add(OpCode::POP);
-
-            if (switchEnd == 0) {
-                switchEnd = m_Program.Instructions.size();
-            }
-
-            // Fix any remaining break targets
-            for (size_t i = 0; i < m_BreakTargets.size(); ++i) {
+            for (size_t i = breakTargetStart; i < m_BreakTargets.size(); ++i) {
                 auto& operand = m_Program.Instructions[m_BreakTargets[i]].Operand;
                 if (std::holds_alternative<int64_t>(operand) && std::get<int64_t>(operand) == 0) {
-                    operand = (int64_t)switchEnd;
+                    operand = (int64_t)matchEnd;
                 }
             }
+            m_BreakTargets.erase(m_BreakTargets.begin() + breakTargetStart, m_BreakTargets.end());
+        }
+
+        void ParseMatchArmBody() {
+            if (m_Current.Type == LBRACE) {
+                Advance();
+                while (m_Current.Type != RBRACE && m_Current.Type != END) {
+                    ParseStatement();
+                }
+                Consume(RBRACE, "Expected }");
+            } else {
+                ParseExpression();
+                if (m_Current.Type == SEMICOLON) Advance();
+                m_Program.Add(OpCode::POP);
+            }
+        }
+
+        void ParseLambdaExpression() {
+            Consume(LAMBDA, "Expected lambda");
+            Consume(LPAREN, "Expected (");
+            std::vector<std::string> params;
+            if (m_Current.Type == ID) {
+                params.push_back(m_Current.Text);
+                Advance();
+                while (m_Current.Type == COMMA) {
+                    Advance();
+                    params.push_back(m_Current.Text);
+                    Consume(ID, "Expected parameter name");
+                }
+            }
+            Consume(RPAREN, "Expected )");
+            Consume(ARROW, "Expected =>");
+
+            std::map<std::string, uint8_t> savedLocals = m_Locals;
+            uint8_t savedNextLocal = m_NextLocalReg;
+            m_Locals.clear();
+            m_NextLocalReg = 10;
+
+            size_t startIP = m_Program.Instructions.size();
+            for (const auto& p : params) {
+                m_Locals[p] = m_NextLocalReg;
+                m_Program.AddReg(OpCode::MOV_REG, m_NextLocalReg);
+                m_NextLocalReg++;
+            }
+
+            if (m_Current.Type == LBRACE) {
+                Advance();
+                while (m_Current.Type != RBRACE && m_Current.Type != END) {
+                    ParseStatement();
+                }
+                Consume(RBRACE, "Expected }");
+            } else {
+                ParseExpression();
+                if (m_Current.Type == SEMICOLON) Advance();
+            }
+            m_Program.Add(OpCode::RET);
+
+            m_Locals = savedLocals;
+            m_NextLocalReg = savedNextLocal;
+
+            ScriptFunc sf;
+            sf.entryIP = startIP;
+            sf.capture = nullptr;
+            m_Program.Add(OpCode::PUSH_CONST, sf);
         }
 
         void ParseExpression() {
@@ -1056,7 +1287,18 @@ namespace Solstice::Scripting {
 
         void ParseTerm() {
             // Handle unary operators
-            if (m_Current.Type == NOT_LOGIC) {
+            if (m_Current.Type == AND_BIT) {
+                // Unary &: function reference
+                Advance();
+                if (m_Current.Type != ID) throw std::runtime_error("Expected function name after &");
+                std::string name = m_Current.Text;
+                Advance();
+                if (!m_Functions.count(name)) throw std::runtime_error("Unknown function: " + name);
+                ScriptFunc sf;
+                sf.entryIP = m_Functions[name];
+                sf.capture = nullptr;
+                m_Program.Add(OpCode::PUSH_CONST, sf);
+            } else if (m_Current.Type == NOT_LOGIC) {
                 Advance();
                 ParseTerm();
                 // Logical NOT: !a = (a == 0) ? 1 : 0
@@ -1152,6 +1394,8 @@ namespace Solstice::Scripting {
                     // Not a dictionary literal, treat as block (for statements)
                     throw std::runtime_error("Unexpected { in expression context");
                 }
+            } else if (m_Current.Type == LAMBDA) {
+                ParseLambdaExpression();
             } else if (m_Current.Type == NEW) {
                 Advance();
                 std::string className = m_Current.Text;
@@ -1168,8 +1412,37 @@ namespace Solstice::Scripting {
                     }
                 }
                 Consume(RPAREN, "Expected )");
+                
+                // Create object
+                // Stack before: arg1, arg2, ..., argCount
                 m_Program.Add(OpCode::PUSH_CONST, (int64_t)argCount);
                 m_Program.Add(OpCode::NEW_OBJ, className);
+                // Stack after NEW_OBJ: object, arg1, arg2, ... (args pushed back by NEW_OBJ)
+                
+                // Call constructors in inheritance order (base first, then derived)
+                std::vector<std::string> constructorChain;
+                std::string currentClass = className;
+                while (!currentClass.empty() && m_Classes.find(currentClass) != m_Classes.end()) {
+                    if (m_Classes[currentClass].ConstructorAddress != 0) {
+                        constructorChain.insert(constructorChain.begin(), currentClass); // Insert at beginning for base-first order
+                    }
+                    currentClass = m_Classes[currentClass].BaseClass;
+                }
+                
+                // Call constructors in order (base first)
+                for (const auto& cls : constructorChain) {
+                    std::string constructorName = cls + "::constructor";
+                    if (m_Functions.find(constructorName) != m_Functions.end()) {
+                        // Duplicate object for each constructor call
+                        m_Program.Add(OpCode::DUP);
+                        // Push argCount
+                        m_Program.Add(OpCode::PUSH_CONST, (int64_t)argCount);
+                        // Call constructor
+                        m_Program.Add(OpCode::CALL, (int64_t)m_Functions[constructorName]);
+                        // Constructor pops object and args, but we need object back
+                        // For now, this is simplified - full implementation would need better stack management
+                    }
+                }
             } else if (m_Current.Type == ID) {
                 std::string name = m_Current.Text;
                 Advance();
@@ -1187,7 +1460,7 @@ namespace Solstice::Scripting {
                         if (m_Current.Type == ID) {
                             Advance(); // ID (function name)
                             if (m_Current.Type == LPAREN) {
-                                // This is Module.Function() - qualified function call
+                                // Qualified call: Module.Function() or built-ins like Ptr.New(...)
                                 Advance(); // LPAREN
 
                                 // Args
@@ -1203,16 +1476,58 @@ namespace Solstice::Scripting {
                                 }
                                 Consume(RPAREN, "Expected )");
 
-                                // Qualified calls are always treated as module calls (native or module function)
-                                std::string qualifiedName = name + "." + funcName;
-                                m_Program.Add(OpCode::PUSH_CONST, (int64_t)argCount);
-                                m_Program.Add(OpCode::CALL, qualifiedName);
+                                if (name == "Ptr") {
+                                    // Pointer built-ins lowered directly to opcodes
+                                    if (funcName == "New") {
+                                        if (argCount != 1) {
+                                            throw std::runtime_error("Ptr.New expects exactly 1 argument");
+                                        }
+                                        m_Program.Add(OpCode::PTR_NEW);
+                                    } else if (funcName == "IsValid") {
+                                        if (argCount != 1) {
+                                            throw std::runtime_error("Ptr.IsValid expects exactly 1 argument");
+                                        }
+                                        m_Program.Add(OpCode::PTR_IS_VALID);
+                                    } else if (funcName == "Get") {
+                                        if (argCount != 1) {
+                                            throw std::runtime_error("Ptr.Get expects exactly 1 argument");
+                                        }
+                                        m_Program.Add(OpCode::PTR_GET);
+                                    } else if (funcName == "Reset") {
+                                        if (argCount != 1) {
+                                            throw std::runtime_error("Ptr.Reset expects exactly 1 argument");
+                                        }
+                                        m_Program.Add(OpCode::PTR_RESET);
+                                    } else {
+                                        // Fallback to regular qualified call
+                                        std::string qualifiedName = name + "." + funcName;
+                                        m_Program.Add(OpCode::PUSH_CONST, (int64_t)argCount);
+                                        m_Program.Add(OpCode::CALL, qualifiedName);
+                                    }
+                                } else {
+                                    // Qualified calls are treated as module calls (native or module function)
+                                    std::string qualifiedName = name + "." + funcName;
+                                    m_Program.Add(OpCode::PUSH_CONST, (int64_t)argCount);
+                                    m_Program.Add(OpCode::CALL, qualifiedName);
+                                }
                                 // Skip chaining since we've handled this as a function call
                             } else {
-                                // Not LPAREN, so this is attribute access: Module.attr
-                                // We've already consumed DOT and ID, so emit GET_ATTR
-                                LoadVariable(name);
-                                m_Program.Add(OpCode::GET_ATTR, funcName);
+                                // Not LPAREN: enum variant (EnumName.Variant) or attribute access
+                                if (m_Program.EnumInfo.count(name)) {
+                                    const auto& meta = m_Program.EnumInfo.at(name);
+                                    int64_t disc = 0;
+                                    if (meta.variantToDiscriminant.count(funcName))
+                                        disc = meta.variantToDiscriminant.at(funcName);
+                                    EnumVal ev;
+                                    ev.enumName = name;
+                                    ev.variant = funcName;
+                                    ev.discriminant = disc;
+                                    m_Program.Add(OpCode::PUSH_CONST, ev);
+                                } else {
+                                    // Attribute access
+                                    LoadVariable(name);
+                                    m_Program.Add(OpCode::GET_ATTR, funcName);
+                                }
                                 // Continue with any remaining chaining
                                 while (m_Current.Type == DOT || m_Current.Type == LBRACKET) {
                                     if (m_Current.Type == DOT) {
@@ -1268,6 +1583,11 @@ namespace Solstice::Scripting {
 
                     if (m_Functions.count(name)) {
                         m_Program.Add(OpCode::CALL, (int64_t)m_Functions[name]);
+                    } else if (m_Globals.count(name) || m_Locals.count(name)) {
+                        // First-class call: variable holds function value
+                        m_Program.Add(OpCode::PUSH_CONST, (int64_t)argCount);
+                        LoadVariable(name);
+                        m_Program.Add(OpCode::CALL_VALUE);
                     } else {
                         // Native: Push arg count
                         m_Program.Add(OpCode::PUSH_CONST, (int64_t)argCount);
@@ -1328,7 +1648,7 @@ namespace Solstice::Scripting {
 
             if (m_Current.Type == COLON) {
                 Advance();
-                Consume(ID, "Expected type");
+                ParseTypeHint();
             }
 
             Consume(EQ, "Expected =");
@@ -1341,11 +1661,53 @@ namespace Solstice::Scripting {
 
             if (m_Current.Type == SEMICOLON) Advance();
         }
+
+        // Parse and discard a type hint, including simple Ptr<T> generic forms.
+        void ParseTypeHint() {
+            if (m_Current.Type != ID) {
+                throw std::runtime_error("Expected type name");
+            }
+
+            std::string typeName = m_Current.Text;
+            Advance();
+
+            // Special-case Ptr<T> so we consume the entire generic.
+            if (typeName == "Ptr" && m_Current.Type == LT) {
+                Advance(); // '<'
+
+                // Consume inner type name (e.g., Player, Math.Vec3)
+                if (m_Current.Type == ID) {
+                    Advance();
+                }
+
+                if (m_Current.Type != GT) {
+                    throw std::runtime_error("Expected > to close Ptr<T> type");
+                }
+                Advance(); // '>'
+            }
+        }
     };
 
     Program Compiler::Compile(const std::string& source) {
         Parser parser(source);
-        return parser.Parse();
+        Program prog = parser.Parse();
+
+        // Run optimizer first so the analyzer sees the final instruction stream.
+        prog = Compiler::OptimizeProgram(prog);
+
+        // Run memory analysis for Ptr<T>-related issues.
+        std::vector<MemoryIssue> issues = MemoryAnalyzer::AnalyzeProgram(prog);
+        if (!issues.empty()) {
+            const MemoryIssue& issue = issues.front();
+            std::string kindStr = (issue.kind == MemoryIssue::Kind::UseAfterFree)
+                                  ? "Use-after-free"
+                                  : "Double-free";
+            std::string msg = "Memory analysis error (" + kindStr +
+                              ") at instruction " + std::to_string(issue.instructionIndex);
+            throw std::runtime_error(msg);
+        }
+
+        return prog;
     }
 
     std::unordered_map<std::string, Program> Compiler::BatchCompile(const std::filesystem::path& directory) {
@@ -1427,21 +1789,18 @@ namespace Solstice::Scripting {
         return programs;
     }
 
-    Program Compiler::OptimizeProgram(const Program& program) {
-        Program optimized = program;
+    namespace {
 
-        // Constant folding pass
-        for (size_t i = 0; i < optimized.Instructions.size() - 1; ++i) {
-            auto& inst = optimized.Instructions[i];
-            auto& nextInst = optimized.Instructions[i + 1];
+        void RunConstantFolding(Program& program) {
+            for (size_t i = 0; i + 2 < program.Instructions.size(); ++i) {
+                auto& inst = program.Instructions[i];
+                auto& nextInst = program.Instructions[i + 1];
 
-            // Fold constant arithmetic: PUSH_CONST a, PUSH_CONST b, ADD -> PUSH_CONST (a+b)
-            if (inst.Op == OpCode::PUSH_CONST && nextInst.Op == OpCode::PUSH_CONST) {
-                if (i + 2 < optimized.Instructions.size()) {
-                    auto& opInst = optimized.Instructions[i + 2];
+                // Fold constant arithmetic: PUSH_CONST a, PUSH_CONST b, ADD/SUB/MUL/DIV
+                if (inst.Op == OpCode::PUSH_CONST && nextInst.Op == OpCode::PUSH_CONST) {
+                    auto& opInst = program.Instructions[i + 2];
                     if (opInst.Op == OpCode::ADD || opInst.Op == OpCode::SUB ||
                         opInst.Op == OpCode::MUL || opInst.Op == OpCode::DIV) {
-                        // Check if both are numbers
                         if (std::holds_alternative<int64_t>(inst.Operand) &&
                             std::holds_alternative<int64_t>(nextInst.Operand)) {
                             int64_t a = std::get<int64_t>(inst.Operand);
@@ -1453,39 +1812,68 @@ namespace Solstice::Scripting {
                                 case OpCode::SUB: result = a - b; break;
                                 case OpCode::MUL: result = a * b; break;
                                 case OpCode::DIV:
-                                    if (b != 0) result = a / b;
-                                    else continue; // Skip optimization if division by zero
+                                    if (b != 0) {
+                                        result = a / b;
+                                    } else {
+                                        continue; // Skip if division by zero
+                                    }
                                     break;
                                 default: continue;
                             }
 
-                            // Replace with single PUSH_CONST
                             inst.Operand = result;
-                            optimized.Instructions.erase(optimized.Instructions.begin() + i + 1,
-                                                         optimized.Instructions.begin() + i + 3);
-                            i--; // Re-check this position
-                            continue;
+                            program.Instructions.erase(program.Instructions.begin() + i + 1,
+                                                       program.Instructions.begin() + i + 3);
+                            if (i > 0) {
+                                --i;
+                            }
                         }
                     }
                 }
             }
         }
 
-        // Dead code elimination (remove unreachable code after HALT)
-        for (size_t i = 0; i < optimized.Instructions.size(); ++i) {
-            if (optimized.Instructions[i].Op == OpCode::HALT) {
-                // Remove all instructions after HALT
-                optimized.Instructions.erase(optimized.Instructions.begin() + i + 1,
-                                             optimized.Instructions.end());
-                break;
+        void RunDeadCodeElimination(Program& program) {
+            for (size_t i = 0; i < program.Instructions.size(); ++i) {
+                if (program.Instructions[i].Op == OpCode::HALT) {
+                    program.Instructions.erase(program.Instructions.begin() + i + 1,
+                                               program.Instructions.end());
+                    break;
+                }
             }
         }
 
-        // Remove NOP instructions
-        optimized.Instructions.erase(
-            std::remove_if(optimized.Instructions.begin(), optimized.Instructions.end(),
-                [](const Instruction& inst) { return inst.Op == OpCode::NOP; }),
-            optimized.Instructions.end());
+        void RunPeepholePass(Program& program) {
+            // Remove PUSH_CONST x; POP sequences where the value is unused.
+            for (size_t i = 0; i + 1 < program.Instructions.size(); ++i) {
+                const auto& a = program.Instructions[i];
+                const auto& b = program.Instructions[i + 1];
+                if (a.Op == OpCode::PUSH_CONST && b.Op == OpCode::POP) {
+                    program.Instructions.erase(program.Instructions.begin() + i,
+                                               program.Instructions.begin() + i + 2);
+                    if (i > 0) {
+                        --i;
+                    }
+                }
+            }
+        }
+
+        void RunNopRemoval(Program& program) {
+            program.Instructions.erase(
+                std::remove_if(program.Instructions.begin(), program.Instructions.end(),
+                               [](const Instruction& inst) { return inst.Op == OpCode::NOP; }),
+                program.Instructions.end());
+        }
+
+    } // namespace
+
+    Program Compiler::OptimizeProgram(const Program& program) {
+        Program optimized = program;
+
+        RunConstantFolding(optimized);
+        RunDeadCodeElimination(optimized);
+        RunPeepholePass(optimized);
+        RunNopRemoval(optimized);
 
         return optimized;
     }

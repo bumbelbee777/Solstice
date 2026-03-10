@@ -2,7 +2,7 @@
 
 #include "../Solstice.hxx"
 #include "../Entity/Registry.hxx"
-#include "../Render/Camera.hxx"
+#include <Render/Scene/Camera.hxx>
 #include "../Math/Vector.hxx"
 #include <string>
 #include <vector>

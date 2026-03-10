@@ -9,6 +9,8 @@
 #include "ShapeHelpers.hxx"
 #include "../Core/SIMD.hxx"
 #include "../Core/Debug.hxx"
+#include "../Core/ScopeTimer.hxx"
+#include "../Core/Profiler.hxx"
 #include <algorithm>
 #include <cmath>
 #include <string>
@@ -54,6 +56,7 @@ void PhysicsSystem::UpdateAsync(float dt) {
 }
 
 void PhysicsSystem::IntegrateVelocity(float dt) {
+    PROFILE_SCOPE("Physics.IntegrateVelocity");
     if (!m_Registry) return;
 
     // Pre-collect fluid simulations to avoid repeated iteration
@@ -65,8 +68,10 @@ void PhysicsSystem::IntegrateVelocity(float dt) {
 
     // Combined single-pass integration: velocity + fluid interactions
     // This reduces multiple ForEach iterations into one
+    uint32_t activeBodies = 0;
     m_Registry->ForEach<RigidBody>([&](ECS::EntityId entityId, RigidBody& rb) {
         if (rb.IsStatic || rb.IsAsleep) return; // Skip sleeping/static bodies
+        activeBodies++;
 
         // Accumulate forces
         for (const auto& f : rb.PendingForces) rb.Force += f;
@@ -190,9 +195,11 @@ void PhysicsSystem::IntegrateVelocity(float dt) {
         rb.Force = Math::Vec3{0.0f, 0.0f, 0.0f};
         rb.Torque = Math::Vec3{0.0f, 0.0f, 0.0f};
     });
+    Core::Profiler::Instance().SetCounter("Physics.ActiveBodies", activeBodies);
 }
 
 void PhysicsSystem::IntegratePosition(float dt) {
+    PROFILE_SCOPE("Physics.IntegratePosition");
     if (!m_Registry) return;
 
     auto integratePos = [](RigidBody& rb, float deltaTime) {
@@ -222,27 +229,46 @@ void PhysicsSystem::IntegratePosition(float dt) {
 }
 
 void PhysicsSystem::Update(float dt) {
+    PROFILE_SCOPE("Physics.Update");
     if (!m_Running || !m_Registry) return;
+    if (dt <= 0.0f) return;
+    float stepDt = dt;
+    if (m_MaxStepDt > 0.0f && stepDt > m_MaxStepDt) {
+        stepDt = m_MaxStepDt;
+        Core::Profiler::Instance().IncrementCounter("Physics.StepClamped");
+    }
 
     // ReactPhysics3D Integration:
     // 1. Sync RigidBody components -> ReactPhysics3D bodies
-    m_Bridge.SyncToReactPhysics3D();
+    {
+        PROFILE_SCOPE("Physics.SyncTo");
+        m_Bridge.SyncToReactPhysics3D();
+    }
 
     // 2. Apply custom forces (fluid interactions, etc.) before physics step
     //    Note: These forces are applied to RigidBody components, which will be synced next frame
-    IntegrateVelocity(dt);
+    IntegrateVelocity(stepDt);
 
     // 3. Update Fluid Simulations
-    UpdateFluidSimulations(dt);
+    UpdateFluidSimulations(stepDt);
 
     // 4. Update ReactPhysics3D physics world (handles collision detection and dynamics)
-    m_Bridge.Update(dt);
+    {
+        PROFILE_SCOPE("Physics.BridgeUpdate");
+        m_Bridge.Update(stepDt);
+    }
 
     // 5. Sync ReactPhysics3D bodies -> RigidBody components
-    m_Bridge.SyncFromReactPhysics3D();
+    {
+        PROFILE_SCOPE("Physics.SyncFrom");
+        m_Bridge.SyncFromReactPhysics3D();
+    }
 
     // 6. Update sleep state (for backward compatibility with existing code)
-    UpdateSleepState();
+    {
+        PROFILE_SCOPE("Physics.SleepState");
+        UpdateSleepState();
+    }
 
     // Note: Custom collision resolution (ResolveCollisions) is now handled by ReactPhysics3D
     // The old code is kept for reference but is no longer called in the main update loop
@@ -312,6 +338,7 @@ void PhysicsSystem::UpdateSleepState() {
 }
 
 void PhysicsSystem::UpdateFluidSimulations(float dt) {
+    PROFILE_SCOPE("Physics.Fluids");
     for (FluidSimulation* fluidSim : m_FluidSimulations) {
         if (fluidSim) {
             fluidSim->Step(dt);
@@ -507,6 +534,75 @@ void PhysicsSystem::ResolveContact(RigidBody& A, RigidBody& B, const Math::Vec3&
     for (int i = 0; i < solver.GetPositionIterations(); ++i) {
         solver.SolvePosition();
     }
+}
+
+// Check if a body would collide when moved from prevPos to targetPos
+bool PhysicsSystem::CheckSweptCollision(RigidBody* Body, const Math::Vec3& PrevPos, const Math::Vec3& TargetPos,
+                                        Math::Vec3& OutCollisionPoint, Math::Vec3& OutCollisionNormal) {
+    if (!Body || Body->IsStatic) {
+        return false;
+    }
+
+    Math::Vec3 motion = TargetPos - PrevPos;
+    float motionLength = motion.Magnitude();
+    if (motionLength < 0.001f) {
+        return false; // No movement
+    }
+
+    // Use CCD swept sphere cast for collision detection
+    // Create a temporary body at previous position
+    RigidBody tempBody = *Body;
+    tempBody.Position = PrevPos;
+
+    // Check against all other bodies in the registry
+    PhysicsSystem& instance = PhysicsSystem::Instance();
+    if (!instance.m_Registry) {
+        return false;
+    }
+
+    float minTOI = 2.0f; // Time of impact (1.0 = end of motion, >1.0 = no collision)
+    RigidBody* hitBody = nullptr;
+
+    instance.m_Registry->ForEach<RigidBody>([&](ECS::EntityId id, RigidBody& other) {
+        if (&other == Body || other.IsStatic) {
+            return; // Skip self and static bodies (we check against static separately)
+        }
+
+        // Perform swept sphere cast
+        float toi = CCD::SweptSphereCast(tempBody, motion, other);
+        if (toi < minTOI && toi >= 0.0f && toi <= 1.0f) {
+            minTOI = toi;
+            hitBody = &other;
+        }
+    });
+
+    // Check against ground plane (y=0)
+    if (Body->Type == ColliderType::Sphere) {
+        float bottomY = PrevPos.y - Body->Radius;
+        float nextBottomY = TargetPos.y - Body->Radius;
+        if (bottomY >= 0.0f && nextBottomY < 0.0f) {
+            float toi = -bottomY / (motion.y);
+            if (toi >= 0.0f && toi <= 1.0f && toi < minTOI) {
+                minTOI = toi;
+                hitBody = nullptr; // Ground collision
+                OutCollisionPoint = PrevPos + motion * toi;
+                OutCollisionPoint.y = Body->Radius + 0.001f; // Slightly above ground
+                OutCollisionNormal = Math::Vec3(0.0f, 1.0f, 0.0f);
+                return true;
+            }
+        }
+    }
+
+    if (minTOI < 1.0f && hitBody) {
+        // Calculate collision point and normal
+        OutCollisionPoint = PrevPos + motion * minTOI;
+        // Calculate normal (from hit body to this body)
+        Math::Vec3 toBody = (Body->Position - hitBody->Position).Normalized();
+        OutCollisionNormal = toBody;
+        return true;
+    }
+
+    return false;
 }
 
 } // namespace Solstice::Physics

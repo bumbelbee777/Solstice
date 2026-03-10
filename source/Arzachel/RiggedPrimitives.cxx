@@ -1,9 +1,13 @@
 #include "RiggedPrimitives.hxx"
 #include "Polyhedra.hxx"
+#include <Skeleton/Skeleton.hxx>
 #include <Math/Matrix.hxx>
 #include <cmath>
 
 namespace Solstice::Arzachel {
+
+using namespace ::Solstice::Skeleton;
+using SkeletonTree = ::Solstice::Skeleton::Skeleton;
 
 Generator<RiggedMesh> RigidRoot(const Generator<MeshData>& Mesh, const Seed& SeedParam) {
     return Generator<RiggedMesh>(std::function<RiggedMesh(const Seed&)>([Mesh](const Seed& SeedParamInner) {
@@ -14,7 +18,7 @@ Generator<RiggedMesh> RigidRoot(const Generator<MeshData>& Mesh, const Seed& See
         Bone RootBone(RootID, "Root", BoneID{}, Math::Matrix4::Identity(), Math::Matrix4::Identity());
 
         std::vector<Bone> BonesVec = {RootBone};
-        Skeleton SkeletonResult(BonesVec, RootID);
+        SkeletonTree SkeletonResult(BonesVec, RootID);
 
         // Assign all vertices to root bone with weight 1.0
         SkinWeights WeightsResult(MeshDataResult.GetVertexCount());
@@ -48,7 +52,7 @@ Generator<RiggedMesh> Chain(const Generator<MeshData>& Mesh, int BoneCount, cons
             BonesVec.emplace_back(BoneIDObj, "Bone" + std::to_string(I), ParentID, LocalTransform, Math::Matrix4::Identity());
         }
 
-        Skeleton SkeletonResult(BonesVec, RootID);
+        SkeletonTree SkeletonResult(BonesVec, RootID);
 
         // Assign vertices to nearest bone (simplified - evenly distribute)
         SkinWeights WeightsResult(MeshDataResult.GetVertexCount());
@@ -83,7 +87,7 @@ Generator<RiggedMesh> HumanoidRig(const Seed& SeedParam) {
             Bone(RootID, "Root", BoneID{}, Math::Matrix4::Identity(), Math::Matrix4::Identity()),
             Bone(SpineID, "Spine", RootID, Math::Matrix4::Translation(Math::Vec3(0, 0.5f, 0)), Math::Matrix4::Identity())
         };
-        Skeleton Skel(Bones, RootID); SkinWeights Weights(FullMesh.GetVertexCount());
+        SkeletonTree Skel(Bones, RootID); SkinWeights Weights(FullMesh.GetVertexCount());
         RiggedMesh RM(FullMesh, Skel, Weights); AutoWeight(RM); return RM;
     });
 }

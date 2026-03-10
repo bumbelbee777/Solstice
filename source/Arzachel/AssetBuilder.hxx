@@ -3,7 +3,7 @@
 #include "../Solstice.hxx"
 #include "MeshData.hxx"
 #include "Generator.hxx"
-#include <Render/Mesh.hxx>
+#include <Render/Assets/Mesh.hxx>
 #include <memory>
 #include <vector>
 

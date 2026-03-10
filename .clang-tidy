@@ -1,0 +1,69 @@
+---
+Checks: >
+  readability-*,
+  performance-*,
+  modernize-*,
+  -readability-uppercase-literal-suffix,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-function-cognitive-complexity,
+  -modernize-use-trailing-return-type,
+  -modernize-avoid-c-arrays,
+  -modernize-use-auto,
+  -modernize-use-using,
+  -performance-avoid-endl,
+  -performance-for-range-copy,
+  -performance-unnecessary-copy-initialization
+
+CheckOptions:
+  # Naming conventions - PascalCase for most identifiers
+  readability-identifier-naming.NamespaceCase: CamelCase
+  readability-identifier-naming.ClassCase: CamelCase
+  readability-identifier-naming.StructCase: CamelCase
+  readability-identifier-naming.UnionCase: CamelCase
+  readability-identifier-naming.FunctionCase: CamelCase
+  readability-identifier-naming.ParameterCase: CamelCase
+  readability-identifier-naming.VariableCase: CamelCase
+  readability-identifier-naming.MemberCase: CamelCase
+  readability-identifier-naming.MemberPrefix: m_
+  readability-identifier-naming.PrivateMemberCase: CamelCase
+  readability-identifier-naming.PrivateMemberPrefix: m_
+  readability-identifier-naming.ProtectedMemberCase: CamelCase
+  readability-identifier-naming.ProtectedMemberPrefix: m_
+  readability-identifier-naming.PublicMemberCase: camelCase
+  readability-identifier-naming.PublicMemberPrefix: ""
+  readability-identifier-naming.ConstantCase: UPPER_CASE
+  readability-identifier-naming.ConstantMemberCase: UPPER_CASE
+  readability-identifier-naming.ConstantMemberPrefix: ""
+  readability-identifier-naming.StaticConstantCase: UPPER_CASE
+  readability-identifier-naming.StaticConstantPrefix: ""
+  readability-identifier-naming.EnumCase: CamelCase
+  readability-identifier-naming.EnumConstantCase: UPPER_CASE
+  readability-identifier-naming.TypedefCase: CamelCase
+  readability-identifier-naming.TypeAliasCase: CamelCase
+  readability-identifier-naming.TemplateParameterCase: CamelCase
+  readability-identifier-naming.GlobalConstantCase: UPPER_CASE
+  readability-identifier-naming.GlobalConstantPrefix: ""
+  readability-identifier-naming.GlobalFunctionCase: CamelCase
+  readability-identifier-naming.GlobalVariableCase: CamelCase
+  readability-identifier-naming.StaticVariableCase: CamelCase
+  readability-identifier-naming.StaticVariablePrefix: ""
+  readability-identifier-naming.UnionMemberCase: CamelCase
+  readability-identifier-naming.UnionMemberPrefix: ""
+  readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
+  readability-identifier-naming.MacroDefinitionPrefix: ""
+
+  # Include sorting
+  readability-include-order.IncludeBlocks: Regroup
+  readability-include-order.SortIncludes: true
+  readability-include-order.StrictMode: true
+
+WarningsAsErrors: ''
+
+# Exclude fundamental math types from naming checks (they use traditional lowercase members)
+# Note: We can't easily exclude specific files, so we'll disable naming checks for struct members
+# in these fundamental types by not enforcing MemberCase for public struct members
+HeaderFilterRegex: '.*'
+
+User: ''
+

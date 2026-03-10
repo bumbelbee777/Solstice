@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Entity/Registry.hxx>
-#include <Render/Scene.hxx>
+#include <Render/Scene/Scene.hxx>
 #include <Physics/RigidBody.hxx>
 
 namespace Solstice::Render {

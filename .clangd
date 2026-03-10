@@ -59,13 +59,22 @@ Diagnostics:
       - modernize-use-using
       - performance-*
     CheckOptions:
+      # Naming conventions - PascalCase for classes, functions, parameters, members
       readability-identifier-naming.NamespaceCase: CamelCase
       readability-identifier-naming.ClassCase: CamelCase
+      readability-identifier-naming.StructCase: CamelCase
+      readability-identifier-naming.UnionCase: CamelCase
       readability-identifier-naming.FunctionCase: CamelCase
-      readability-identifier-naming.VariableCase: camelCase
       readability-identifier-naming.ParameterCase: CamelCase
+      readability-identifier-naming.VariableCase: CamelCase
       readability-identifier-naming.MemberCase: CamelCase
       readability-identifier-naming.MemberPrefix: m_
+      readability-identifier-naming.PrivateMemberCase: CamelCase
+      readability-identifier-naming.PrivateMemberPrefix: m_
+      readability-identifier-naming.ProtectedMemberCase: CamelCase
+      readability-identifier-naming.ProtectedMemberPrefix: m_
+      readability-identifier-naming.PublicMemberCase: CamelCase
+      readability-identifier-naming.PublicMemberPrefix: ""
       readability-identifier-naming.ConstantCase: UPPER_CASE
       readability-identifier-naming.ConstantMemberCase: UPPER_CASE
       readability-identifier-naming.ConstantMemberPrefix: ""
@@ -82,18 +91,14 @@ Diagnostics:
       readability-identifier-naming.GlobalVariableCase: CamelCase
       readability-identifier-naming.StaticVariableCase: CamelCase
       readability-identifier-naming.StaticVariablePrefix: ""
+      readability-identifier-naming.UnionMemberCase: CamelCase
+      readability-identifier-naming.UnionMemberPrefix: ""
       readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
       readability-identifier-naming.MacroDefinitionPrefix: ""
-      readability-identifier-naming.StructCase: CamelCase
-      readability-identifier-naming.UnionCase: CamelCase
-      readability-identifier-naming.UnionMemberCase: camelCase
-      readability-identifier-naming.UnionMemberPrefix: ""
-      readability-identifier-naming.PrivateMemberCase: CamelCase
-      readability-identifier-naming.PrivateMemberPrefix: m_
-      readability-identifier-naming.ProtectedMemberCase: CamelCase
-      readability-identifier-naming.ProtectedMemberPrefix: m_
-      readability-identifier-naming.PublicMemberCase: CamelCase
-      readability-identifier-naming.PublicMemberPrefix: ""
+      # Include sorting
+      readability-include-order.IncludeBlocks: Regroup
+      readability-include-order.SortIncludes: true
+      readability-include-order.StrictMode: true
 Index:
   Background: Build
 

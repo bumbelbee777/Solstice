@@ -2,14 +2,14 @@
 
 #include <Game/GameBase.hxx>
 #include <Render/SoftwareRenderer.hxx>
-#include <Render/VolumetricLighting.hxx>
-#include <Render/Scene.hxx>
-#include <Render/Camera.hxx>
+#include <Render/Lighting/VolumetricLighting.hxx>
+#include <Render/Scene/Scene.hxx>
+#include <Render/Scene/Camera.hxx>
 #include <Core/Audio.hxx>
 #include <Core/Material.hxx>
 #include <Core/Debug.hxx>
 #include <Core/SIMD.hxx>
-#include <Render/Mesh.hxx>
+#include <Render/Assets/Mesh.hxx>
 #include <Math/Vector.hxx>
 #include <Math/Quaternion.hxx>
 #include <UI/UISystem.hxx>
@@ -291,23 +291,169 @@ struct DiscoBall {
     std::array<Physics::LightSource, NUM_REFLECTED_LIGHTS> ReflectedLights;
     int ActiveReflections = 0;
 
+    // Per-face data for colored glowing faces
+    struct FaceData {
+        uint32_t MaterialID;
+        Math::Vec3 Center;      // Face center position (in local space)
+        Math::Vec3 Normal;      // Face normal
+    };
+    std::vector<FaceData> FaceMaterials;
+    std::vector<Physics::LightSource> FaceLights;
+
     void Initialize(Render::Scene& Scene, Core::MaterialLibrary& MatLib, Render::MeshLibrary& MeshLib, uint32_t IcosphereMeshID) {
-        // Create disco ball material (highly reflective and emissive)
+        // Get the icosphere mesh and split it into per-face submeshes
+        Render::Mesh* Mesh = MeshLib.GetMesh(IcosphereMeshID);
+        if (!Mesh) {
+            SIMPLE_LOG("ERROR: DiscoBall::Initialize - Mesh not found! ID=" + std::to_string(IcosphereMeshID));
+            return;
+        }
+
+        size_t TriangleCount = Mesh->GetTriangleCount();
+
+        // Clear existing submeshes and create one per triangle
+        Mesh->SubMeshes.clear();
+        FaceMaterials.clear();
+        FaceMaterials.reserve(TriangleCount);
+
+        // Process each triangle to create a submesh with its own material
+        for (size_t TriIdx = 0; TriIdx < TriangleCount; TriIdx++) {
+            // Get triangle vertices
+            uint32_t IndexBase = static_cast<uint32_t>(TriIdx * 3);
+            if (IndexBase + 2 >= Mesh->Indices.size()) continue;
+
+            uint32_t I0 = Mesh->Indices[IndexBase + 0];
+            uint32_t I1 = Mesh->Indices[IndexBase + 1];
+            uint32_t I2 = Mesh->Indices[IndexBase + 2];
+
+            if (I0 >= Mesh->Vertices.size() || I1 >= Mesh->Vertices.size() || I2 >= Mesh->Vertices.size()) continue;
+
+            const auto& V0 = Mesh->Vertices[I0];
+            const auto& V1 = Mesh->Vertices[I1];
+            const auto& V2 = Mesh->Vertices[I2];
+
+            Math::Vec3 Pos0 = V0.GetPosition(Math::Vec3(), Math::Vec3());
+            Math::Vec3 Pos1 = V1.GetPosition(Math::Vec3(), Math::Vec3());
+            Math::Vec3 Pos2 = V2.GetPosition(Math::Vec3(), Math::Vec3());
+
+            // Calculate face center and normal
+            Math::Vec3 FaceCenter = (Pos0 + Pos1 + Pos2) / 3.0f;
+            Math::Vec3 Edge1 = Pos1 - Pos0;
+            Math::Vec3 Edge2 = Pos2 - Pos0;
+            Math::Vec3 FaceNormal = Edge1.Cross(Edge2).Normalized();
+
+            // Get color for this face (cycle through disco colors)
+            Math::Vec3 FaceColor = DiscoColors::GetColorByIndex(static_cast<int>(TriIdx));
+
+            // Sanity check: ensure color is valid
+            if (FaceColor.x < 0.0f || FaceColor.y < 0.0f || FaceColor.z < 0.0f ||
+                std::isnan(FaceColor.x) || std::isnan(FaceColor.y) || std::isnan(FaceColor.z)) {
+                FaceColor = Math::Vec3(1.0f, 0.0f, 1.0f); // Fallback to magenta
+            }
+
+            // Create material for this face - realistic mirror-like disco ball facet
+            Core::Material FaceMat;
+            // Very low roughness for mirror-like reflection (0.02 = almost perfect mirror)
+            // Slightly tinted albedo for colored reflections
+            FaceMat.SetAlbedoColor(FaceColor * 0.4f, 0.02f);
+            FaceMat.Metallic = 255; // Full metallic for mirror effect
+            FaceMat.SpecularPower = 255; // Maximum specular power for sharp reflections
+            // Strong emission - use color intensity for brightness (emission strength is clamped 0-1)
+            // Scale color to get bright emission while keeping hue
+            Math::Vec3 BrightEmission = FaceColor * 3.0f; // Make emission 3x brighter
+            BrightEmission.x = std::min(1.0f, BrightEmission.x);
+            BrightEmission.y = std::min(1.0f, BrightEmission.y);
+            BrightEmission.z = std::min(1.0f, BrightEmission.z);
+            FaceMat.SetEmission(BrightEmission, 1.0f); // Max emission strength
+            FaceMat.Flags = Core::MaterialFlag_CastsShadows | Core::MaterialFlag_ReceivesShadows | Core::MaterialFlag_Reflective;
+            FaceMat.ShadingModel = static_cast<uint8_t>(Core::ShadingModel::PhysicallyBased);
+            uint32_t FaceMatID = MatLib.AddMaterial(FaceMat);
+
+            // Add submesh for this triangle
+            uint32_t IndexStart = static_cast<uint32_t>(TriIdx * 3);
+            Mesh->AddSubMesh(FaceMatID, IndexStart, 3);
+
+            // Store face data
+            FaceData Face;
+            Face.MaterialID = FaceMatID;
+            Face.Center = FaceCenter;
+            Face.Normal = FaceNormal;
+            FaceMaterials.push_back(Face);
+        }
+
+        // Mark mesh as static so submeshes work correctly
+        // IMPORTANT: Must be set BEFORE buffers are created
+        Mesh->IsStatic = true;
+
+        // Initialize buffer handles to invalid so they get created on first render
+        Mesh->VertexBufferHandle.Handle = 0xFFFF;
+        Mesh->IndexBufferHandle.Handle = 0xFFFF;
+
+        // Create a default material for the object (won't be used since we have per-face materials)
         Core::Material BallMat;
-        BallMat.SetAlbedoColor({0.9f, 0.9f, 0.95f}, 0.1f); // Very low roughness
-        BallMat.Metallic = 255; // Full metallic
-        BallMat.SetEmission({1.0f, 1.0f, 1.0f}, 3.0f); // Bright white emission for light rays (will be updated from UI)
+        BallMat.SetAlbedoColor({0.95f, 0.95f, 1.0f}, 0.02f); // Mirror-like, slightly blue-tinted
+        BallMat.Metallic = 255;
+        BallMat.SpecularPower = 255;
+        BallMat.SetEmission({1.0f, 1.0f, 1.0f}, 1.0f); // Bright white emission
+        BallMat.Flags = Core::MaterialFlag_CastsShadows | Core::MaterialFlag_ReceivesShadows | Core::MaterialFlag_Reflective;
+        BallMat.ShadingModel = static_cast<uint8_t>(Core::ShadingModel::PhysicallyBased);
         MaterialID = MatLib.AddMaterial(BallMat);
 
         // Add to scene at top-center using icosphere mesh
         ObjectID = Scene.AddObject(IcosphereMeshID, {0, 8, 0}, Math::Quaternion(), {1.5f, 1.5f, 1.5f});
         Scene.SetMaterial(ObjectID, MaterialID);
+
+        // Pre-allocate face lights
+        FaceLights.resize(FaceMaterials.size());
     }
 
-    void Update(float Dt, const Math::Vec3& BallPos, const std::vector<Physics::LightSource>& SpotLights) {
+    void Update(float Dt, const Math::Vec3& BallPos, const std::vector<Physics::LightSource>& SpotLights,
+                Core::MaterialLibrary& MatLib, float EmissionIntensity, float LightIntensity) {
         RotationAngle += Dt * 0.5f;
 
-        // Generate reflected lights from spotlights hitting the ball
+        // Update each face's material emission and create point lights
+        for (size_t I = 0; I < FaceMaterials.size(); I++) {
+            FaceData& Face = FaceMaterials[I];
+
+            // Sanity check: face material ID should be valid
+            if (Face.MaterialID == 0) continue;
+
+            // Get the color for this face
+            Math::Vec3 FaceColor = DiscoColors::GetColorByIndex(static_cast<int>(I));
+
+            // Sanity check: color should be valid
+            if (std::isnan(FaceColor.x) || std::isnan(FaceColor.y) || std::isnan(FaceColor.z)) {
+                FaceColor = Math::Vec3(1.0f, 0.0f, 1.0f); // Fallback to magenta
+            }
+
+            // Update material emission - scale color for brightness
+            auto* Mat = MatLib.GetMaterial(Face.MaterialID);
+            if (!Mat) continue;
+            // Scale emission color by intensity to get bright emission
+            Math::Vec3 BrightEmission = FaceColor * std::max(1.0f, EmissionIntensity * 0.5f);
+            BrightEmission.x = std::min(1.0f, BrightEmission.x);
+            BrightEmission.y = std::min(1.0f, BrightEmission.y);
+            BrightEmission.z = std::min(1.0f, BrightEmission.z);
+            Mat->SetEmission(BrightEmission, 1.0f); // Max emission strength
+
+            // Calculate world-space face center (accounting for ball scale 1.5f)
+            Math::Vec3 WorldFaceCenter = BallPos + Face.Center * 1.5f;
+
+            // Create point light from this face, emitting in all directions
+            FaceLights[I].Type = Physics::LightSource::LightType::Point;
+            FaceLights[I].Position = WorldFaceCenter;
+            FaceLights[I].Color = FaceColor;
+            FaceLights[I].Intensity = LightIntensity;
+            FaceLights[I].Range = 20.0f; // Wide range for volumetric lighting
+            FaceLights[I].Attenuation = 0.1f; // Lower attenuation for stronger light
+
+            // Sanity check: light should have valid values (silent for performance)
+            if (std::isnan(WorldFaceCenter.x) || std::isnan(WorldFaceCenter.y) || std::isnan(WorldFaceCenter.z) ||
+                LightIntensity <= 0.0f || std::isnan(LightIntensity)) {
+                FaceLights[I].Intensity = 0.0f; // Disable invalid light
+            }
+        }
+
+        // Generate reflected lights from spotlights hitting the ball (keep for compatibility)
         ActiveReflections = 0;
         float FacetAngle = RotationAngle;
 
@@ -354,7 +500,11 @@ public:
     Render::MeshLibrary m_MeshLibrary;
 
     std::vector<Physics::LightSource> m_Lights;
+    std::vector<Physics::LightSource> m_SpotLightVector;
     float m_Time = 0.0f;
+    Physics::LightSource m_AmbientLight;
+    bool m_OcclusionDirty = true;
+    size_t m_FaceLightSampleCount = 8;
 
     // === SCENE OBJECTS ===
     DiscoBall m_DiscoBall;
@@ -418,7 +568,7 @@ public:
     }
 
     void CreateIcosphereMesh() {
-        auto Mesh = Solstice::Arzachel::MeshFactory::CreateIcosphere(1.0f, 2);
+        auto Mesh = Solstice::Arzachel::MeshFactory::CreateIcosphere(1.0f, 3);
         m_IcosphereMeshID = m_MeshLibrary.AddMesh(std::move(Mesh));
     }
 
@@ -529,13 +679,22 @@ public:
 
         // Create materials
         {
+            // Dark, reflective floor to show godrays
             Core::Material FloorMat;
-            FloorMat.SetAlbedoColor({0.1f, 0.1f, 0.15f}, 0.2f);
-            FloorMat.Metallic = static_cast<uint8_t>(0.9f * 255.0f);
+            FloorMat.SetAlbedoColor({0.05f, 0.05f, 0.08f}, 0.3f); // Darker for better contrast
+            FloorMat.Metallic = static_cast<uint8_t>(0.7f * 255.0f); // Slightly less metallic
+            FloorMat.SpecularPower = 128;
+            FloorMat.Flags = Core::MaterialFlag_CastsShadows | Core::MaterialFlag_ReceivesShadows | Core::MaterialFlag_Reflective;
+            FloorMat.ShadingModel = static_cast<uint8_t>(Core::ShadingModel::PhysicallyBased);
             m_FloorMatID = m_MaterialLibrary.AddMaterial(FloorMat);
 
+            // Dark, slightly reflective walls to show godray reflections
             Core::Material WallMat;
-            WallMat.SetAlbedoColor({0.05f, 0.05f, 0.1f}, 0.6f);
+            WallMat.SetAlbedoColor({0.03f, 0.03f, 0.06f}, 0.4f); // Very dark, slightly reflective
+            WallMat.Metallic = static_cast<uint8_t>(0.3f * 255.0f); // Some metallic for reflections
+            WallMat.SpecularPower = 96;
+            WallMat.Flags = Core::MaterialFlag_CastsShadows | Core::MaterialFlag_ReceivesShadows | Core::MaterialFlag_Reflective;
+            WallMat.ShadingModel = static_cast<uint8_t>(Core::ShadingModel::PhysicallyBased);
             m_WallMatID = m_MaterialLibrary.AddMaterial(WallMat);
         }
 
@@ -559,19 +718,22 @@ public:
 
         // Update all transforms to ensure proper bounds calculation for culling
         m_Scene.UpdateTransforms();
+        m_OcclusionDirty = true;
 
         // Create spotlights
         CreateSpotLights();
 
         // Ambient light (dark club atmosphere)
-        Physics::LightSource Ambient;
-        Ambient.Type = Physics::LightSource::LightType::Directional;
-        Ambient.Position = Math::Vec3(0.5f, -1.0f, 0.5f).Normalized();
-        Ambient.Color = DiscoColors::DeepBlue();
-        Ambient.Intensity = 0.3f;
-        m_Lights.push_back(Ambient);
+        m_AmbientLight.Type = Physics::LightSource::LightType::Directional;
+        m_AmbientLight.Position = Math::Vec3(0.5f, -1.0f, 0.5f).Normalized();
+        m_AmbientLight.Color = DiscoColors::DeepBlue();
+        m_AmbientLight.Intensity = 0.3f;
 
-        // Add spotlights to main light list
+        // Initialize light lists
+        m_Lights.clear();
+        m_Lights.reserve(24);
+        m_SpotLightVector.reserve(m_SpotLights.size());
+        m_Lights.push_back(m_AmbientLight);
         for (int I = 0; I < 4; I++) {
             m_Lights.push_back(m_SpotLights[I]);
         }
@@ -605,11 +767,6 @@ public:
             float Pulse = std::sin(Time * 3.0f + I * 1.57f) * 0.5f + 0.5f;
             m_SpotLights[I].Color = DiscoColors::GetColorByIndex(I) * (0.5f + Pulse * 0.5f);
             m_SpotLights[I].Intensity = m_SpotlightIntensity * (0.8f + Pulse * 0.4f); // Use UI-controlled base intensity
-
-            // Update in main lights array
-            if (I + 1 < static_cast<int>(m_Lights.size())) {
-                m_Lights[I + 1] = m_SpotLights[I];
-            }
         }
     }
 
@@ -711,21 +868,53 @@ public:
         // Update disco ball material emission from UI
         auto* DiscoBallMat = m_MaterialLibrary.GetMaterial(m_DiscoBall.MaterialID);
         if (DiscoBallMat) {
-            DiscoBallMat->SetEmission({1.0f, 1.0f, 1.0f}, m_DiscoBallEmission);
+            // Scale emission color by intensity for brightness
+            float EmissionScale = std::max(1.0f, m_DiscoBallEmission * 0.3f);
+            Math::Vec3 BrightEmission(std::min(1.0f, 1.0f * EmissionScale),
+                                     std::min(1.0f, 1.0f * EmissionScale),
+                                     std::min(1.0f, 1.0f * EmissionScale));
+            DiscoBallMat->SetEmission(BrightEmission, 1.0f); // Max emission strength
         }
 
-        // Update disco ball
+        // Update disco ball (this updates per-face materials and generates face lights)
+        m_SpotLightVector.assign(m_SpotLights.begin(), m_SpotLights.end());
         m_DiscoBall.Update(DeltaTime, Math::Vec3(0, 8, 0),
-                          std::vector<Physics::LightSource>(m_SpotLights.begin(), m_SpotLights.end()));
+                          m_SpotLightVector,
+                          m_MaterialLibrary, m_DiscoBallEmission, m_DiscoBallLightIntensity);
 
-        // Add disco ball reflected lights to main lights
-        size_t BaseReflectedIdx = 5; // After ambient + 4 spots
-        for (int I = 0; I < m_DiscoBall.ActiveReflections; I++) {
-            if (BaseReflectedIdx + I < m_Lights.size()) {
-                m_Lights[BaseReflectedIdx + I] = m_DiscoBall.ReflectedLights[I];
-            } else if (m_Lights.size() < 32) {
-                m_Lights.push_back(m_DiscoBall.ReflectedLights[I]);
+        // Rebuild light list (ambient + spotlights + disco ball lights)
+        m_Lights.clear();
+        m_Lights.push_back(m_AmbientLight);
+        for (const auto& Spot : m_SpotLights) {
+            m_Lights.push_back(Spot);
+        }
+
+        // Central disco ball light for soft area illumination
+        Physics::LightSource DiscoBallLight;
+        DiscoBallLight.Type = Physics::LightSource::LightType::Point;
+        DiscoBallLight.Position = Math::Vec3(0, 8, 0);
+        DiscoBallLight.Color = Math::Vec3(1.0f, 1.0f, 1.0f);
+        DiscoBallLight.Intensity = m_DiscoBallLightIntensity;
+        DiscoBallLight.Range = 30.0f;
+        DiscoBallLight.Attenuation = 0.08f;
+        m_Lights.push_back(DiscoBallLight);
+
+        // Sample a subset of face lights for performance
+        const size_t FaceCount = m_DiscoBall.FaceLights.size();
+        if (FaceCount > 0) {
+            const size_t SampleCount = std::min(m_FaceLightSampleCount, FaceCount);
+            const size_t Step = std::max<size_t>(1, FaceCount / SampleCount);
+            for (size_t I = 0; I < SampleCount; I++) {
+                const size_t Index = (I * Step) % FaceCount;
+                m_Lights.push_back(m_DiscoBall.FaceLights[Index]);
             }
+        }
+
+        // Add a limited number of reflected lights
+        const int MaxReflections = 6;
+        const int Reflections = std::min(MaxReflections, m_DiscoBall.ActiveReflections);
+        for (int I = 0; I < Reflections; I++) {
+            m_Lights.push_back(m_DiscoBall.ReflectedLights[I]);
         }
 
         // Update confetti
@@ -736,41 +925,26 @@ public:
 
         // Update volumetric lighting
         if (m_Volumetrics) {
-            m_Volumetrics->BuildOcclusionGrid(m_Scene);
+            if (m_OcclusionDirty) {
+                m_Volumetrics->BuildOcclusionGrid(m_Scene);
+                m_OcclusionDirty = false;
+            }
             auto Size = m_Window->GetFramebufferSize();
             float Aspect = static_cast<float>(Size.first) / static_cast<float>(Size.second);
             Math::Matrix4 View = m_Camera.GetViewMatrix();
             Math::Matrix4 Proj = Math::Matrix4::Perspective(m_CameraFOV * 0.0174533f, Aspect, 0.1f, 100.0f);
             Math::Matrix4 ViewProj = Proj * View;
 
-            // Add disco ball as a light source for volumetric lighting
-            std::vector<Physics::LightSource> VolumetricLights = m_Lights;
-            Physics::LightSource DiscoBallLight;
-            DiscoBallLight.Type = Physics::LightSource::LightType::Point;
-            DiscoBallLight.Position = Math::Vec3(0, 8, 0); // Disco ball position
-            DiscoBallLight.Color = Math::Vec3(1.0f, 1.0f, 1.0f); // White light
-            DiscoBallLight.Intensity = m_DiscoBallLightIntensity;
-            DiscoBallLight.Range = 30.0f; // Wide range
-            DiscoBallLight.Attenuation = 0.1f; // Lower attenuation for stronger light
-            VolumetricLights.push_back(DiscoBallLight);
-
             // Update volumetric settings from UI
             m_Volumetrics->SetDensity(m_VolumetricDensity);
             m_Volumetrics->SetExposure(m_VolumetricExposure);
 
-            m_Volumetrics->TraceVolumetricRays(VolumetricLights, m_Camera.Position, ViewProj);
+            m_Volumetrics->TraceVolumetricRays(m_Lights, m_Camera.Position, ViewProj);
         }
 
         // Update camera FOV
         m_Camera.Zoom = m_CameraFOV;
 
-        // Update spotlight intensities
-        for (int I = 0; I < 4; I++) {
-            m_SpotLights[I].Intensity = m_SpotlightIntensity;
-            if (I + 1 < static_cast<int>(m_Lights.size())) {
-                m_Lights[I + 1].Intensity = m_SpotlightIntensity;
-            }
-        }
     }
 
     void RenderUI() {
@@ -928,6 +1102,13 @@ public:
                 godRaySettings.Decay = m_GodRayDecay;
                 godRaySettings.Exposure = m_GodRayExposure;
                 postProc->SetGodRaySettings(godRaySettings);
+
+                Render::PostProcessing::BloomSettings bloomSettings;
+                bloomSettings.Enabled = true;
+                bloomSettings.Threshold = 0.8f;
+                bloomSettings.Intensity = 0.7f;
+                bloomSettings.Radius = 4.0f;
+                postProc->SetBloomSettings(bloomSettings);
             }
         }
 

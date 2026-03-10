@@ -1,8 +1,8 @@
 #include "ScriptBindings.hxx"
 #include "BytecodeVM.hxx"
 #include "../UI/Widgets.hxx"
-#include "../Render/Scene.hxx"
-#include "../Render/Camera.hxx"
+#include <Render/Scene/Scene.hxx>
+#include <Render/Scene/Camera.hxx>
 #include "../Entity/Registry.hxx"
 #include "../Entity/Transform.hxx"
 #include "../Entity/Name.hxx"
@@ -10,17 +10,24 @@
 #include "../Physics/PhysicsSystem.hxx"
 #include "../Physics/RigidBody.hxx"
 #include "../Physics/ReactPhysics3DBridge.hxx"
+#include <reactphysics3d/collision/RaycastInfo.h>
+#include <reactphysics3d/collision/OverlapCallback.h>
+#include <reactphysics3d/mathematics/Ray.h>
+#include <reactphysics3d/collision/shapes/AABB.h>
 #include "../Arzachel/AnimationClip.hxx"
 #include "../Arzachel/Generator.hxx"
 #include "../UI/MotionGraphics.hxx"
 #include "../Core/Audio.hxx"
 #include "../Core/Profiler.hxx"
+#include "../Core/Relic/Relic.hxx"
 #include <imgui.h>
 
 #include <iostream>
 #include <string>
 #include <sstream>
 #include <cmath>
+#include <algorithm>
+#include <cctype>
 
 namespace Solstice::Scripting {
 
@@ -48,7 +55,7 @@ namespace Solstice::Scripting {
         return "";
     }
 
-    void RegisterScriptBindings(
+    SOLSTICE_API void RegisterScriptBindings(
         BytecodeVM& vm,
         ECS::Registry* registry,
         Render::Scene* scene,
@@ -97,6 +104,106 @@ namespace Solstice::Scripting {
                 std::cout << " ";
             }
             std::cout << "\n";
+            return (int64_t)0;
+        });
+
+        // ========== String Operations ==========
+        vm.RegisterNative("String.ToUpper", [](const std::vector<Value>& args) -> Value {
+            if (args.size() > 0) {
+                std::string str = GetString(args[0]);
+                std::transform(str.begin(), str.end(), str.begin(), ::toupper);
+                return str;
+            }
+            return std::string("");
+        });
+
+        vm.RegisterNative("String.ToLower", [](const std::vector<Value>& args) -> Value {
+            if (args.size() > 0) {
+                std::string str = GetString(args[0]);
+                std::transform(str.begin(), str.end(), str.begin(), ::tolower);
+                return str;
+            }
+            return std::string("");
+        });
+
+        vm.RegisterNative("String.Find", [](const std::vector<Value>& args) -> Value {
+            if (args.size() >= 2) {
+                std::string str = GetString(args[0]);
+                std::string substring = GetString(args[1]);
+                size_t pos = str.find(substring);
+                return (int64_t)(pos != std::string::npos ? (int64_t)pos : -1);
+            }
+            return (int64_t)-1;
+        });
+
+        vm.RegisterNative("String.Replace", [](const std::vector<Value>& args) -> Value {
+            if (args.size() >= 3) {
+                std::string str = GetString(args[0]);
+                std::string oldStr = GetString(args[1]);
+                std::string newStr = GetString(args[2]);
+                size_t pos = 0;
+                while ((pos = str.find(oldStr, pos)) != std::string::npos) {
+                    str.replace(pos, oldStr.length(), newStr);
+                    pos += newStr.length();
+                }
+                return str;
+            }
+            return std::string("");
+        });
+
+        vm.RegisterNative("String.Split", [](const std::vector<Value>& args) -> Value {
+            if (args.size() >= 2) {
+                std::string str = GetString(args[0]);
+                std::string delimiter = GetString(args[1]);
+                auto result = std::make_shared<Array>();
+                
+                if (delimiter.empty()) {
+                    // Split by characters
+                    for (char c : str) {
+                        result->Push(std::string(1, c));
+                    }
+                } else {
+                    size_t start = 0;
+                    size_t end = str.find(delimiter);
+                    while (end != std::string::npos) {
+                        result->Push(str.substr(start, end - start));
+                        start = end + delimiter.length();
+                        end = str.find(delimiter, start);
+                    }
+                    result->Push(str.substr(start));
+                }
+                return result;
+            }
+            return std::make_shared<Array>();
+        });
+
+        vm.RegisterNative("String.Trim", [](const std::vector<Value>& args) -> Value {
+            if (args.size() > 0) {
+                std::string str = GetString(args[0]);
+                // Trim leading whitespace
+                str.erase(0, str.find_first_not_of(" \t\n\r\f\v"));
+                // Trim trailing whitespace
+                str.erase(str.find_last_not_of(" \t\n\r\f\v") + 1);
+                return str;
+            }
+            return std::string("");
+        });
+
+        vm.RegisterNative("String.StartsWith", [](const std::vector<Value>& args) -> Value {
+            if (args.size() >= 2) {
+                std::string str = GetString(args[0]);
+                std::string prefix = GetString(args[1]);
+                return (int64_t)(str.length() >= prefix.length() && str.substr(0, prefix.length()) == prefix ? 1 : 0);
+            }
+            return (int64_t)0;
+        });
+
+        vm.RegisterNative("String.EndsWith", [](const std::vector<Value>& args) -> Value {
+            if (args.size() >= 2) {
+                std::string str = GetString(args[0]);
+                std::string suffix = GetString(args[1]);
+                return (int64_t)(str.length() >= suffix.length() && str.substr(str.length() - suffix.length()) == suffix ? 1 : 0);
+            }
             return (int64_t)0;
         });
 
@@ -563,22 +670,141 @@ namespace Solstice::Scripting {
         // ========== System Registration ==========
         vm.RegisterNative("System.Register", [&vm](const std::vector<Value>& args) -> Value {
             // System.Register(name, functionName, componentName1, componentName2, ...)
-            // Note: This is a simplified version - full implementation would need function address lookup
-            // For now, we'll store the system info but execution would need compiler support
+            // Resolve function address from function name
             if (args.size() >= 2) {
                 std::string name = GetString(args[0]);
                 std::string funcName = GetString(args[1]);
                 BytecodeVM::SystemInfo info;
                 info.Name = name;
-                // Function address would need to be resolved from function name
-                // For now, we'll use 0 as placeholder
-                info.FunctionAddress = 0;
+                
+                // Try to resolve function address from exports
+                size_t functionAddress = 0;
+                if (vm.GetProgram().Exports.find(funcName) != vm.GetProgram().Exports.end()) {
+                    functionAddress = vm.GetProgram().Exports.at(funcName);
+                } else {
+                    // Try module.function format
+                    size_t dotPos = funcName.find('.');
+                    if (dotPos != std::string::npos) {
+                        std::string modName = funcName.substr(0, dotPos);
+                        std::string modFuncName = funcName.substr(dotPos + 1);
+                        if (vm.HasModule(modName)) {
+                            const auto& mod = vm.GetModule(modName);
+                            if (mod.Exports.find(modFuncName) != mod.Exports.end()) {
+                                functionAddress = mod.Exports.at(modFuncName);
+                            }
+                        }
+                    }
+                }
+                
+                info.FunctionAddress = functionAddress;
                 for (size_t i = 2; i < args.size(); ++i) {
                     info.ComponentNames.push_back(GetString(args[i]));
                 }
                 vm.RegisterSystem(info);
             }
             return (int64_t)0;
+        });
+        
+        // ========== Time Functions ==========
+        vm.RegisterNative("Time.GetDeltaTime", [](const std::vector<Value>& args) -> Value {
+            // Get delta time from Profiler
+            auto stats = Core::Profiler::Instance().GetLastFrameStats();
+            return (double)stats.FrameTime;
+        });
+        
+        vm.RegisterNative("Time.GetGameTime", [](const std::vector<Value>& args) -> Value {
+            // Game time would need to be passed from GameBase
+            // For now, use frame time as approximation
+            auto stats = Core::Profiler::Instance().GetLastFrameStats();
+            return (double)stats.FrameTime;
+        });
+        
+        vm.RegisterNative("Time.GetFPS", [](const std::vector<Value>& args) -> Value {
+            auto stats = Core::Profiler::Instance().GetLastFrameStats();
+            return (double)stats.FPS;
+        });
+
+        // ========== RELIC Assets (prefetch, is loaded, unload) ==========
+        vm.RegisterNative("Assets.Prefetch", [](const std::vector<Value>& args) -> Value {
+            auto* svc = Core::Relic::GetAssetService();
+            if (svc && args.size() > 0) {
+                uint32_t clusterId = static_cast<uint32_t>(GetInt(args[0]));
+                svc->PrefetchCluster(clusterId);
+            }
+            return (int64_t)0;
+        });
+        vm.RegisterNative("Assets.IsLoaded", [](const std::vector<Value>& args) -> Value {
+            auto* svc = Core::Relic::GetAssetService();
+            if (svc && args.size() > 0) {
+                uint64_t hash = static_cast<uint64_t>(GetInt(args[0]));
+                return (int64_t)(svc->IsLoaded(hash) ? 1 : 0);
+            }
+            return (int64_t)0;
+        });
+        vm.RegisterNative("Assets.Unload", [](const std::vector<Value>& args) -> Value {
+            auto* svc = Core::Relic::GetAssetService();
+            if (svc && args.size() > 0) {
+                uint32_t clusterId = static_cast<uint32_t>(GetInt(args[0]));
+                svc->UnloadCluster(clusterId);
+            }
+            return (int64_t)0;
+        });
+
+        // ========== Events / Callbacks ==========
+        vm.RegisterNative("Events.On", [&vm](const std::vector<Value>& args) -> Value {
+            if (args.size() < 2 || !std::holds_alternative<std::string>(args[0]) || !std::holds_alternative<ScriptFunc>(args[1]))
+                return (int64_t)0;
+            vm.RegisterEventHandler(std::get<std::string>(args[0]), std::get<ScriptFunc>(args[1]));
+            return (int64_t)0;
+        });
+        vm.RegisterNative("Events.Emit", [&vm](const std::vector<Value>& args) -> Value {
+            if (args.size() < 1 || !std::holds_alternative<std::string>(args[0]))
+                return (int64_t)0;
+            std::string name = std::get<std::string>(args[0]);
+            std::vector<Value> payload(args.begin() + 1, args.end());
+            vm.EmitEvent(name, payload);
+            return (int64_t)0;
+        });
+
+        // ========== Input Functions ==========
+        // Note: Input bindings require InputManager to be passed to RegisterScriptBindings
+        // For now, these are placeholders that return 0
+        // To enable: Add InputManager* parameter to RegisterScriptBindings and implement
+        vm.RegisterNative("Input.IsKeyPressed", [](const std::vector<Value>& args) -> Value {
+            // Would need InputManager* parameter
+            // if (inputManager && args.size() > 0) {
+            //     return (int64_t)(inputManager->IsKeyPressed(GetInt(args[0])) ? 1 : 0);
+            // }
+            return (int64_t)0;
+        });
+        
+        vm.RegisterNative("Input.IsKeyJustPressed", [](const std::vector<Value>& args) -> Value {
+            // Would need InputManager* parameter
+            return (int64_t)0;
+        });
+        
+        vm.RegisterNative("Input.IsKeyJustReleased", [](const std::vector<Value>& args) -> Value {
+            // Would need InputManager* parameter
+            return (int64_t)0;
+        });
+        
+        vm.RegisterNative("Input.IsMouseButtonPressed", [](const std::vector<Value>& args) -> Value {
+            // Would need InputManager* parameter
+            return (int64_t)0;
+        });
+        
+        vm.RegisterNative("Input.GetMousePosition", [](const std::vector<Value>& args) -> Value {
+            // Would need InputManager* parameter
+            // if (inputManager) {
+            //     auto [x, y] = inputManager->GetMousePosition();
+            //     return Vec2(x, y);
+            // }
+            return Vec2();
+        });
+        
+        vm.RegisterNative("Input.GetMouseDelta", [](const std::vector<Value>& args) -> Value {
+            // Would need InputManager* parameter
+            return Vec2();
         });
 
         // ========== UI Functions ==========
@@ -1559,24 +1785,269 @@ namespace Solstice::Scripting {
                 }
                 return Vec3();
             });
-            vm.RegisterNative("Physics.Raycast", [physicsSystem](const std::vector<Value>& args) -> Value {
-                // Placeholder - would need proper raycast implementation
-                return (int64_t)0;
+            vm.RegisterNative("Physics.Raycast", [physicsSystem, registry](const std::vector<Value>& args) -> Value {
+                auto noHit = std::make_shared<Dictionary>();
+                noHit->Set("hit", (int64_t)0);
+                
+                if (!physicsSystem || !registry) return noHit;
+                if (args.size() < 6) return noHit; // Need origin (3), direction (3), maxDistance (1)
+                
+                // Get origin Vec3
+                Vec3 origin;
+                if (std::holds_alternative<Vec3>(args[0])) {
+                    origin = std::get<Vec3>(args[0]);
+                } else {
+                    origin = Vec3(GetFloat(args[0]), GetFloat(args[1]), GetFloat(args[2]));
+                }
+                
+                // Get direction Vec3
+                Vec3 direction;
+                int dirArgStart = std::holds_alternative<Vec3>(args[0]) ? 1 : 3;
+                if (dirArgStart < args.size() && std::holds_alternative<Vec3>(args[dirArgStart])) {
+                    direction = std::get<Vec3>(args[dirArgStart]);
+                } else if (dirArgStart + 2 < args.size()) {
+                    direction = Vec3(GetFloat(args[dirArgStart]), GetFloat(args[dirArgStart + 1]), GetFloat(args[dirArgStart + 2]));
+                } else {
+                    return noHit;
+                }
+                
+                float maxDistance = dirArgStart + (std::holds_alternative<Vec3>(args[dirArgStart]) ? 1 : 3) < args.size() 
+                    ? GetFloat(args[dirArgStart + (std::holds_alternative<Vec3>(args[dirArgStart]) ? 1 : 3)]) : 1000.0f;
+                
+                // Normalize direction
+                direction = direction.Normalized();
+                Vec3 endPoint = origin + direction * maxDistance;
+                
+                // Use ReactPhysics3D bridge
+                auto& bridge = physicsSystem->GetBridge();
+                auto* world = bridge.GetPhysicsWorld();
+                if (!world) {
+                    return noHit;
+                }
+                
+                // Create ray
+                reactphysics3d::Vector3 rp3dStart(origin.x, origin.y, origin.z);
+                reactphysics3d::Vector3 rp3dEnd(endPoint.x, endPoint.y, endPoint.z);
+                reactphysics3d::Ray ray(rp3dStart, rp3dEnd);
+                
+                // Raycast callback to get first hit
+                struct RaycastCallback : public reactphysics3d::RaycastCallback {
+                    reactphysics3d::Vector3 worldPoint;
+                    reactphysics3d::Vector3 worldNormal;
+                    reactphysics3d::decimal hitFraction;
+                    int triangleIndex;
+                    reactphysics3d::CollisionBody* body;
+                    reactphysics3d::Collider* collider;
+                    bool hasHit = false;
+                    reactphysics3d::decimal notifyRaycastHit(const reactphysics3d::RaycastInfo& info) override {
+                        if (!hasHit) {
+                            // Manually copy fields since RaycastInfo has deleted copy assignment
+                            worldPoint = info.worldPoint;
+                            worldNormal = info.worldNormal;
+                            hitFraction = info.hitFraction;
+                            triangleIndex = info.triangleIndex;
+                            body = info.body;
+                            collider = info.collider;
+                            hasHit = true;
+                        }
+                        return reactphysics3d::decimal(0.0); // Stop after first hit
+                    }
+                } callback;
+                
+                world->raycast(ray, &callback);
+                
+                if (callback.hasHit) {
+                    // Return hit information as Dictionary
+                    auto hitData = std::make_shared<Dictionary>();
+                    // Find entity ID from body
+                    ECS::EntityId hitEntity = 0;
+                    // Note: Would need reverse mapping from ReactPhysics3D body to entity
+                    // For now, return hit position and normal
+                    hitData->Set("hit", (int64_t)1);
+                    hitData->Set("position", Vec3(
+                        callback.worldPoint.x,
+                        callback.worldPoint.y,
+                        callback.worldPoint.z
+                    ));
+                    hitData->Set("normal", Vec3(
+                        callback.worldNormal.x,
+                        callback.worldNormal.y,
+                        callback.worldNormal.z
+                    ));
+                    hitData->Set("distance", (double)(callback.hitFraction * maxDistance));
+                    hitData->Set("entityId", (int64_t)hitEntity);
+                    return hitData;
+                }
+                
+                // No hit - return the noHit we created earlier
+                return noHit;
             });
-            vm.RegisterNative("Physics.OverlapSphere", [physicsSystem](const std::vector<Value>& args) -> Value {
-                // Placeholder
-                return std::make_shared<Array>();
+            
+            vm.RegisterNative("Physics.OverlapSphere", [physicsSystem, registry](const std::vector<Value>& args) -> Value {
+                if (!physicsSystem || !registry) return std::make_shared<Array>();
+                if (args.size() < 4) return std::make_shared<Array>(); // Need center (3), radius (1)
+                
+                Vec3 center;
+                if (std::holds_alternative<Vec3>(args[0])) {
+                    center = std::get<Vec3>(args[0]);
+                } else {
+                    center = Vec3(GetFloat(args[0]), GetFloat(args[1]), GetFloat(args[2]));
+                }
+                
+                float radius = std::holds_alternative<Vec3>(args[0]) ? GetFloat(args[1]) : GetFloat(args[3]);
+                
+                auto result = std::make_shared<Array>();
+                
+                // Use ReactPhysics3D bridge
+                auto& bridge = physicsSystem->GetBridge();
+                auto* world = bridge.GetPhysicsWorld();
+                if (!world) return result;
+                
+                // Create a test body with sphere shape for overlap testing
+                // Note: ReactPhysics3D requires a body for overlap tests
+                // For now, we'll use testOverlap on all bodies and check sphere distance
+                // This is a simplified implementation
+                struct SphereOverlapCallback : public reactphysics3d::OverlapCallback {
+                    std::vector<reactphysics3d::CollisionBody*> overlappingBodies;
+                    reactphysics3d::Vector3 sphereCenter;
+                    reactphysics3d::decimal sphereRadius;
+                    
+                    SphereOverlapCallback(const reactphysics3d::Vector3& center, reactphysics3d::decimal radius)
+                        : sphereCenter(center), sphereRadius(radius) {}
+                    
+                    void onOverlap(reactphysics3d::OverlapCallback::CallbackData& callbackData) override {
+                        // Check each overlapping pair
+                        reactphysics3d::uint32 numPairs = callbackData.getNbOverlappingPairs();
+                        for (reactphysics3d::uint32 i = 0; i < numPairs; ++i) {
+                            auto pair = callbackData.getOverlappingPair(i);
+                            // Get bodies from pair and check distance to sphere center
+                            // Simplified: add all overlapping bodies
+                            if (pair.getBody1()) {
+                                auto pos = pair.getBody1()->getTransform().getPosition();
+                                reactphysics3d::decimal dist = (pos - sphereCenter).length();
+                                if (dist <= sphereRadius) {
+                                    overlappingBodies.push_back(pair.getBody1());
+                                }
+                            }
+                            if (pair.getBody2()) {
+                                auto pos = pair.getBody2()->getTransform().getPosition();
+                                reactphysics3d::decimal dist = (pos - sphereCenter).length();
+                                if (dist <= sphereRadius) {
+                                    overlappingBodies.push_back(pair.getBody2());
+                                }
+                            }
+                        }
+                    }
+                } callback(reactphysics3d::Vector3(center.x, center.y, center.z), reactphysics3d::decimal(radius));
+                
+                // Test overlap with all bodies in world
+                world->testOverlap(callback);
+                
+                // Convert bodies to entity IDs (would need reverse mapping from bridge)
+                // For now, return count
+                for (size_t i = 0; i < callback.overlappingBodies.size(); ++i) {
+                    result->Push((int64_t)0); // Placeholder entity ID
+                }
+                
+                return result;
             });
-            vm.RegisterNative("Physics.OverlapBox", [physicsSystem](const std::vector<Value>& args) -> Value {
-                // Placeholder
-                return std::make_shared<Array>();
+            
+            vm.RegisterNative("Physics.OverlapBox", [physicsSystem, registry](const std::vector<Value>& args) -> Value {
+                if (!physicsSystem || !registry) return std::make_shared<Array>();
+                if (args.size() < 6) return std::make_shared<Array>(); // Need center (3), size (3)
+                
+                Vec3 center;
+                int centerArgEnd = std::holds_alternative<Vec3>(args[0]) ? 1 : 3;
+                if (std::holds_alternative<Vec3>(args[0])) {
+                    center = std::get<Vec3>(args[0]);
+                } else {
+                    center = Vec3(GetFloat(args[0]), GetFloat(args[1]), GetFloat(args[2]));
+                }
+                
+                Vec3 size;
+                if (centerArgEnd < args.size() && std::holds_alternative<Vec3>(args[centerArgEnd])) {
+                    size = std::get<Vec3>(args[centerArgEnd]);
+                } else if (centerArgEnd + 2 < args.size()) {
+                    size = Vec3(GetFloat(args[centerArgEnd]), GetFloat(args[centerArgEnd + 1]), GetFloat(args[centerArgEnd + 2]));
+                } else {
+                    return std::make_shared<Array>();
+                }
+                
+                auto result = std::make_shared<Array>();
+                
+                auto& bridge = physicsSystem->GetBridge();
+                auto* world = bridge.GetPhysicsWorld();
+                if (!world) return result;
+                
+                // Create AABB for box overlap test
+                reactphysics3d::Vector3 boxMin(center.x - size.x * 0.5f, center.y - size.y * 0.5f, center.z - size.z * 0.5f);
+                reactphysics3d::Vector3 boxMax(center.x + size.x * 0.5f, center.y + size.y * 0.5f, center.z + size.z * 0.5f);
+                
+                struct BoxOverlapCallback : public reactphysics3d::OverlapCallback {
+                    std::vector<reactphysics3d::CollisionBody*> overlappingBodies;
+                    reactphysics3d::AABB testAABB;
+                    
+                    BoxOverlapCallback(const reactphysics3d::Vector3& min, const reactphysics3d::Vector3& max)
+                        : testAABB(min, max) {}
+                    
+                    void onOverlap(reactphysics3d::OverlapCallback::CallbackData& callbackData) override {
+                        reactphysics3d::uint32 numPairs = callbackData.getNbOverlappingPairs();
+                        for (reactphysics3d::uint32 i = 0; i < numPairs; ++i) {
+                            auto pair = callbackData.getOverlappingPair(i);
+                            // Check if body AABB overlaps with test AABB
+                            if (pair.getBody1()) {
+                                auto bodyAABB = pair.getBody1()->getAABB();
+                                if (testAABB.testCollision(bodyAABB)) {
+                                    // Avoid duplicates
+                                    bool found = false;
+                                    for (auto* b : overlappingBodies) {
+                                        if (b == pair.getBody1()) {
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                    if (!found) {
+                                        overlappingBodies.push_back(pair.getBody1());
+                                    }
+                                }
+                            }
+                            if (pair.getBody2()) {
+                                auto bodyAABB = pair.getBody2()->getAABB();
+                                if (testAABB.testCollision(bodyAABB)) {
+                                    // Avoid duplicates
+                                    bool found = false;
+                                    for (auto* b : overlappingBodies) {
+                                        if (b == pair.getBody2()) {
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                    if (!found) {
+                                        overlappingBodies.push_back(pair.getBody2());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } callback(boxMin, boxMax);
+                
+                world->testOverlap(callback);
+                
+                for (size_t i = 0; i < callback.overlappingBodies.size(); ++i) {
+                    result->Push((int64_t)0); // Placeholder entity ID
+                }
+                
+                return result;
             });
+            
             vm.RegisterNative("Physics.CreateJoint", [physicsSystem](const std::vector<Value>& args) -> Value {
-                // Placeholder
+                // Joint system not yet implemented in ReactPhysics3D bridge
+                // Return 0 as placeholder - joints would need additional implementation
                 return (int64_t)0;
             });
+            
             vm.RegisterNative("Physics.RemoveJoint", [physicsSystem](const std::vector<Value>& args) -> Value {
-                // Placeholder
+                // Joint system not yet implemented
                 return (int64_t)0;
             });
             // Note: Physics::SetGravity and GetGravity don't exist in PhysicsSystem

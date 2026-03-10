@@ -18,9 +18,9 @@ public:
     // Architecture detection
     static std::unique_ptr<IBackend> CreateForCurrentArchitecture();
 
-    // Code generation
+    // Code generation - trampoline that runs the function via VM (Phase 1 JIT)
     using CompiledFunction = std::function<Solstice::Scripting::Value(const std::vector<Solstice::Scripting::Value>&)>;
-    virtual CompiledFunction CompileFunction(const Solstice::Scripting::Program& program, size_t functionStartIP) = 0;
+    virtual CompiledFunction CompileFunction(const Solstice::Scripting::Program& program, size_t functionStartIP, class BytecodeVM* vm) = 0;
 
     // Memory management
     virtual void* AllocateCodeMemory(size_t size) = 0;

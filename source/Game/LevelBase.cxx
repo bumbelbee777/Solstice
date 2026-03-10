@@ -1,6 +1,6 @@
 #include "LevelBase.hxx"
-#include "../Render/Scene.hxx"
-#include "../Render/Mesh.hxx"
+#include <Render/Scene/Scene.hxx>
+#include <Render/Assets/Mesh.hxx>
 #include "../Math/Quaternion.hxx"
 #include "../Math/Vector.hxx"
 

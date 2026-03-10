@@ -9,7 +9,9 @@
 #ifndef SOLSTICE_BUILD_GIT_COMMIT
     #define SOLSTICE_BUILD_GIT_COMMIT "UNKNOWN" // To be set via CMake compiler options
 #endif
-#define SOLSTICE_DEVELOPMENT_BUILD 1
+enum {
+SOLSTICE_DEVELOPMENT_BUILD = 1
+};
 
 #if defined(_WIN32) || defined(_WIN64)
     #ifdef SOLSTICE_EXPORTS

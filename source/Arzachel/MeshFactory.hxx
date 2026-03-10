@@ -1,13 +1,13 @@
 #pragma once
 
 #include "../Solstice.hxx"
-#include <Render/Mesh.hxx>
+#include <Render/Assets/Mesh.hxx>
 #include <memory>
 
 namespace Solstice {
     namespace Arzachel {
         struct MeshData; // Forward declaration
-        
+
         namespace MeshFactory {
             SOLSTICE_API std::unique_ptr<Render::Mesh> CreateCube(float Size);
             SOLSTICE_API std::unique_ptr<Render::Mesh> CreatePlane(float Width, float Height);

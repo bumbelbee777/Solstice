@@ -1,14 +1,15 @@
 #pragma once
 
 #include <UI/ViewportUI.hxx>
-#include <Render/Camera.hxx>
-#include <Render/Skybox.hxx>
-#include <Render/ParticleSystem.hxx>
-#include <Render/ParticlePresets.hxx>
+#include <Render/Scene/Camera.hxx>
+#include <Render/Scene/Skybox.hxx>
+#include <Render/Particle/ParticleSystem.hxx>
+#include <Render/Particle/ParticlePresets.hxx>
 #include <Game/InputManager.hxx>
 #include <Physics/PhysicsSystem.hxx>
 #include <Entity/Registry.hxx>
 #include <Math/Vector.hxx>
+#include <bgfx/bgfx.h>
 #include <memory>
 #include <vector>
 #include <string>
@@ -51,7 +52,11 @@ public:
     void Update(float deltaTime, const Render::Camera& camera, Solstice::Game::InputManager& inputManager);
 
     // Render all terminals
-    void Render(const Render::Camera& camera, int screenWidth, int screenHeight);
+    // sceneProgram, viewId, and sceneFramebuffer are optional - if provided, renders as 3D billboards in world space
+    void Render(const Render::Camera& camera, int screenWidth, int screenHeight,
+                bgfx::ProgramHandle sceneProgram = BGFX_INVALID_HANDLE,
+                bgfx::ViewId viewId = 2,
+                bgfx::FrameBufferHandle sceneFramebuffer = BGFX_INVALID_HANDLE);
 
     // Callbacks for terminal actions
     using ParticleSpawnCallback = std::function<void(Render::ParticlePresetType)>;
@@ -81,10 +86,10 @@ private:
         Math::Vec3 Position;
         std::unique_ptr<UI::ViewportUI::WorldSpaceDialog> Dialog;
         bool IsActive{false};
-        
+
         Terminal(TerminalType type, const Math::Vec3& pos, float width, float height)
             : Type(type), Position(pos), Dialog(std::make_unique<UI::ViewportUI::WorldSpaceDialog>(pos, width, height)), IsActive(false) {}
-        
+
         // Delete default constructor since Dialog can't be default-constructed
         Terminal() = delete;
         Terminal(const Terminal&) = delete;

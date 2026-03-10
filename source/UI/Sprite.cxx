@@ -1,5 +1,6 @@
 #include <UI/Sprite.hxx>
 #include <UI/ViewportUI.hxx>
+#include <Render/Post/PostProcessing.hxx>
 #include <Core/Debug.hxx>
 #include <fstream>
 #include <cmath>
@@ -40,11 +41,37 @@ void Sprite::RenderWorldSpace(const Math::Vec3& WorldPos,
                              const Math::Matrix4& ViewMatrix,
                              const Math::Matrix4& ProjectionMatrix,
                              int ScreenWidth, int ScreenHeight,
-                             ImDrawList* DrawList) {
+                             ImDrawList* DrawList,
+                             bgfx::ProgramHandle SceneProgram,
+                             bgfx::ViewId ViewId) {
     if (!bgfx::isValid(m_Texture)) {
         return;
     }
 
+    // Try to render as 3D billboard if we have a valid program or billboard shader is available
+    bool canRenderWorldSpace = bgfx::isValid(SceneProgram) || ViewportUI::IsBillboardShaderAvailable();
+    
+    if (canRenderWorldSpace) {
+        // Convert pixel size to world size (approximate - you may want to adjust this)
+        float worldWidth = m_Size.x * 0.01f;  // Adjust scale as needed
+        float worldHeight = m_Size.y * 0.01f;
+
+        // Use billboard shader if SceneProgram not provided or invalid
+        bgfx::ProgramHandle programToUse = BGFX_INVALID_HANDLE;
+        if (bgfx::isValid(SceneProgram)) {
+            programToUse = SceneProgram;
+        }
+        
+        // Convert ImVec4 color to Math::Vec4 for color tint
+        Math::Vec4 colorTint(m_Color.x, m_Color.y, m_Color.z, m_Color.w);
+        
+        // Render using billboard helper (will use billboard shader if programToUse is invalid)
+        ViewportUI::RenderBillboardQuad(WorldPos, worldWidth, worldHeight, m_Texture,
+                                       ViewMatrix, ProjectionMatrix, programToUse, ViewId, true, colorTint);
+        return; // World-space rendering attempted, return (don't fall back to screen space)
+    }
+
+    // Fallback to ImGui screen-space rendering
     // Project 3D position to screen space
     Math::Vec2 screenPos = ViewportUI::ProjectToScreen(WorldPos, ViewMatrix, ProjectionMatrix, ScreenWidth, ScreenHeight);
 

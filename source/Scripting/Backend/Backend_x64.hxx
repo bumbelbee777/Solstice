@@ -12,7 +12,7 @@ public:
     Backend_x64();
     ~Backend_x64() override;
 
-    CompiledFunction CompileFunction(const Program& program, size_t functionStartIP) override;
+    CompiledFunction CompileFunction(const Program& program, size_t functionStartIP, BytecodeVM* vm) override;
 
     void* AllocateCodeMemory(size_t size) override;
     void FreeCodeMemory(void* ptr, size_t size) override;

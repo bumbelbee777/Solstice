@@ -213,7 +213,7 @@ By carefully constraining scope and exploiting CPU parallelism, Solstice achieve
 
 #### **Core UI Infrastructure**
 - ✅ **Window management** with SDL3 integration
-- ✅ **UISystem** for UI state management
+- ✅ **UI system** for UI state management
 - ✅ **ImGui integration** for immediate-mode GUI
 - ✅ **UIRenderSettings:** customizable rendering settings system for different UI layers
   - Separate view IDs for HUD and UI rendering
@@ -243,14 +243,14 @@ By carefully constraining scope and exploiting CPU parallelism, Solstice achieve
 - ✅ **Visual effects integration:** animated glow and shadow effects
 
 #### **Image Loading & Sprites**
-- ✅ **ImageLoader:** singleton image loading system with caching
+- ✅ **Image loader:** singleton image loading system with caching
 - ✅ **Multi-format support:** STB and BIMG image loaders
 - ✅ **Memory loading:** load images from memory buffers
 - ✅ **Texture management:** automatic texture caching and cleanup
 - ✅ **Image info queries:** get image dimensions and format without full load
 - ✅ **Sprite system:** Sprite class for 2D and world-space rendering
-- ✅ **SpriteSheet:** grid-based sprite sheet loading and frame management
-- ✅ **TextureAtlas:** texture atlas with named sprite lookup
+- ✅ **Sprite sheet:** grid-based sprite sheet loading and frame management
+- ✅ **Texture atlas:** texture atlas with named sprite lookup
 - ✅ **Frame animation:** sprite frame duration and animation support
 
 #### **Drawing Primitives**
@@ -496,6 +496,7 @@ The **Arzachel** subsystem provides a functional, deterministic procedural gener
 * **Upscaling:** internal 480p/540p → output 720p (FSR-like edge-aware upscale).
 * **Temporal AA (TAA)** + jittered reprojection for stability.
 * **Optional effects:** bloom, tonemap, fog.
+* **Volumetric lighting:** with god rays and light occlusion.
 
 ## **Physics & Collision**
 
@@ -579,31 +580,44 @@ The engine includes several example projects demonstrating its capabilities:
 - **CMake** 3.20 or higher
 - **C++20** compatible compiler (MSVC 2019+, GCC 10+, Clang 12+)
 - **Python 3** (for shader compilation)
-- **Git** with submodule support
+- **Git** (for fetching dependencies via CPM)
 
 ### Building from Source
 
+Dependencies (BGFX, SDL3, ImGui, etc.) are fetched automatically at configure time via [CPM.cmake](https://github.com/cpm-cmake/CPM.cmake). No manual clone of 3rdparty or submodules is required.
+
 ```bash
-# Clone with all submodules
-git clone --recursive https://github.com/bumbelbee777/Solstice.git
+# Clone the repository (no --recursive needed)
+git clone https://github.com/bumbelbee777/Solstice.git
 cd Solstice
 
-# Configure with CMake
+# Configure with CMake (CPM will download dependencies on first run)
 cmake --preset default
 
 # Build
 cmake --build out/build/default
 ```
 
+**Optional:** To cache downloads across builds (e.g. for CI or multiple configs), set `CPM_SOURCE_CACHE` before configuring:
+
+```bash
+# Use a shared cache directory (default is .cpm-cache in the project root)
+cmake -DCPM_SOURCE_CACHE="$HOME/.cache/cpm" --preset default
+```
+
+Or set the environment variable `CPM_SOURCE_CACHE` to a path of your choice.
+
 ## **Dependencies**
 
-- **BGFX:** Cross-platform rendering library
+All dependencies are managed by CPM and fetched at configure time:
+
+- **BGFX** (bx, bimg, bgfx): Cross-platform rendering library
 - **SDL3:** Window and input management
 - **SDL_mixer:** Audio playback
 - **ReactPhysics3D:** Physics simulation
 - **ImGui:** Immediate-mode GUI
 - **tinygltf:** glTF 2.0 asset loading
-- **nlohmann/json:** JSON parsing
+- **nlohmann/json:** (vendored by tinygltf) JSON parsing
 
 ## **License**
 

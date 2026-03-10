@@ -8,6 +8,7 @@
 struct SDL_Window;
 union SDL_Event;
 struct ImFont;
+struct ImGuiContext;
 
 namespace Solstice::UI {
 
@@ -113,6 +114,8 @@ private:
     ImFont* m_FontBold{nullptr};
     ImFont* m_FontItalic{nullptr};
     ImFont* m_FontBoldItalic{nullptr};
+
+    ImGuiContext* m_Context{nullptr};
 };
 
 } // namespace Solstice::UI

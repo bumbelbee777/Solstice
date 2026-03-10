@@ -1,7 +1,7 @@
 #pragma once
 
-#include <Render/Scene.hxx>
-#include <Render/Camera.hxx>
+#include <Render/Scene/Scene.hxx>
+#include <Render/Scene/Camera.hxx>
 #include <Math/Vector.hxx>
 #include <set>
 #include <limits>

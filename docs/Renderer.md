@@ -2,7 +2,11 @@
 
 ## Overview
 
-The Solstice rendering system is a CPU-centric software renderer with BGFX integration for display. It provides a complete rendering pipeline including shadow mapping, post-processing, raytracing, and multi-viewport support. The system is designed for retro-modern visuals targeting PS2 to early PS3-level quality.
+The Solstice rendering system is a CPU-centric software renderer with BGFX integration for display. Shared graphics utilities (easing, keyframes) live in the **MinGfx** module; the renderer does not depend on MinGfx unless such usage is added later. It provides a complete rendering pipeline including shadow mapping, post-processing, raytracing, and multi-viewport support. The system is designed for retro-modern visuals targeting PS2 to early PS3-level quality.
+
+## Asset packaging (RELIC)
+
+Asset containers use the **RELIC** (Resource and Level Index Container) format for streaming and mod/DLC layering. See [RelicFormat.md](RelicFormat.md) for bootstrap layout, container header/manifest/dependency table, compression (LZ4/zstd), and delta assets.
 
 ## Architecture
 

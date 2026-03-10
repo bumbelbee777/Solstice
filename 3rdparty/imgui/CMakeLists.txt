@@ -5,21 +5,29 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Use CPM-fetched imgui source dir when set; otherwise vendored (CMAKE_CURRENT_SOURCE_DIR)
+if(DEFINED imgui_SOURCE_DIR)
+    set(IMGUI_ROOT "${imgui_SOURCE_DIR}")
+else()
+    set(IMGUI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+endif()
+
 # Create ImGui static library
 add_library(imgui STATIC
-    imgui.cpp
-    imgui_demo.cpp
-    imgui_draw.cpp
-    imgui_tables.cpp
-    imgui_widgets.cpp
-    backends/imgui_impl_sdl3.cpp
+    ${IMGUI_ROOT}/imgui.cpp
+    ${IMGUI_ROOT}/imgui_demo.cpp
+    ${IMGUI_ROOT}/imgui_draw.cpp
+    ${IMGUI_ROOT}/imgui_tables.cpp
+    ${IMGUI_ROOT}/imgui_widgets.cpp
+    ${IMGUI_ROOT}/backends/imgui_impl_sdl3.cpp
+    ${IMGUI_ROOT}/backends/imgui_impl_opengl3.cpp
 )
 
 # Set include directories
 target_include_directories(imgui
     PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/backends
+        ${IMGUI_ROOT}
+        ${IMGUI_ROOT}/backends
 )
 
 # Link SDL3 headers (required for SDL3 backend)
@@ -36,20 +44,22 @@ target_link_libraries(imgui PUBLIC SDL3::Headers)
 
 # Organize files in IDE
 source_group("Source Files" FILES
-    imgui.cpp
-    imgui_demo.cpp
-    imgui_draw.cpp
-    imgui_tables.cpp
-    imgui_widgets.cpp
+    ${IMGUI_ROOT}/imgui.cpp
+    ${IMGUI_ROOT}/imgui_demo.cpp
+    ${IMGUI_ROOT}/imgui_draw.cpp
+    ${IMGUI_ROOT}/imgui_tables.cpp
+    ${IMGUI_ROOT}/imgui_widgets.cpp
 )
 source_group("Source Files\\Backends" FILES
-    backends/imgui_impl_sdl3.cpp
+    ${IMGUI_ROOT}/backends/imgui_impl_sdl3.cpp
+    ${IMGUI_ROOT}/backends/imgui_impl_opengl3.cpp
 )
 source_group("Header Files" FILES
-    imgui.h
-    imgui_internal.h
-    imconfig.h
+    ${IMGUI_ROOT}/imgui.h
+    ${IMGUI_ROOT}/imgui_internal.h
+    ${IMGUI_ROOT}/imconfig.h
 )
 source_group("Header Files\\Backends" FILES
-    backends/imgui_impl_sdl3.h
+    ${IMGUI_ROOT}/backends/imgui_impl_sdl3.h
+    ${IMGUI_ROOT}/backends/imgui_impl_opengl3.h
 )

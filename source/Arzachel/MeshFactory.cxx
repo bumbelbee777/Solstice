@@ -1,5 +1,5 @@
 #include "MeshFactory.hxx"
-#include <Render/Mesh.hxx>
+#include <Render/Assets/Mesh.hxx>
 #include "../Solstice.hxx"
 #include "AssetBuilder.hxx"
 #include "MeshData.hxx"

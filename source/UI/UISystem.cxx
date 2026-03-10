@@ -1,5 +1,5 @@
 #include <UI/UISystem.hxx>
-#include <Render/ShaderLoader.hxx>
+#include <Render/Assets/ShaderLoader.hxx>
 #include <Core/Debug.hxx>
 #include <Core/ScopeTimer.hxx>
 
@@ -12,6 +12,9 @@
 #include <vector>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
+#include <limits>
+#include <stdexcept>
 
 namespace {
     // Utility: build an orthographic projection matrix
@@ -39,6 +42,26 @@ namespace {
 
     template<typename T>
     T bxMin(T a, T b) { return a < b ? a : b; }
+
+    ImTextureID EncodeImTextureId(bgfx::TextureHandle handle) {
+        if (!bgfx::isValid(handle)) {
+            return ImTextureID_Invalid;
+        }
+        return static_cast<ImTextureID>(static_cast<uint64_t>(handle.idx) + 1u);
+    }
+
+    bgfx::TextureHandle DecodeImTextureId(ImTextureID id) {
+        bgfx::TextureHandle handle = BGFX_INVALID_HANDLE;
+        if (id == ImTextureID_Invalid) {
+            return handle;
+        }
+        const uint64_t raw = static_cast<uint64_t>(id);
+        if (raw == 0 || raw > (static_cast<uint64_t>(std::numeric_limits<uint16_t>::max()) + 1u)) {
+            return handle;
+        }
+        handle.idx = static_cast<uint16_t>(raw - 1u);
+        return handle;
+    }
 }
 
 namespace Solstice::UI {
@@ -54,14 +77,28 @@ void UISystem::Initialize(SDL_Window* Window) {
         return;
     }
 
+    if (!Window) {
+        throw std::runtime_error("UISystem: Initialize called with null window");
+    }
+    if (bgfx::getRendererType() == bgfx::RendererType::Noop) {
+        throw std::runtime_error("UISystem: BGFX not initialized before UI");
+    }
+
     m_Window = Window;
 
     // Get window dimensions
     SDL_GetWindowSize(m_Window, &m_DisplayWidth, &m_DisplayHeight);
+    if (m_DisplayWidth <= 0 || m_DisplayHeight <= 0) {
+        throw std::runtime_error("UISystem: Invalid window size during initialization");
+    }
 
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    m_Context = ImGui::GetCurrentContext();
+    if (!m_Context) {
+        throw std::runtime_error("UISystem: Failed to create ImGui context");
+    }
     ImGuiIO& io = ImGui::GetIO();
 
     // Set display size immediately (important for ImGui 1.92+)
@@ -79,10 +116,26 @@ void UISystem::Initialize(SDL_Window* Window) {
     SetupAeroStyle();
 
     // Setup SDL3 platform backend
-    ImGui_ImplSDL3_InitForOther(m_Window);
+    if (!ImGui_ImplSDL3_InitForOther(m_Window)) {
+        ImGui::DestroyContext();
+        throw std::runtime_error("UISystem: ImGui SDL3 backend initialization failed");
+    }
 
     // Create BGFX rendering resources
     CreateBGFXResources();
+    if (!bgfx::isValid(m_Program) || !bgfx::isValid(m_TextureUniform)) {
+        ImGui_ImplSDL3_Shutdown();
+        ImGui::DestroyContext();
+        throw std::runtime_error("UISystem: BGFX UI resources failed to initialize");
+    }
+    if (ImGui::GetCurrentContext() != m_Context) {
+        ImGui::SetCurrentContext(m_Context);
+    }
+    if (ImGui::GetCurrentContext() != m_Context) {
+        ImGui_ImplSDL3_Shutdown();
+        ImGui::DestroyContext();
+        throw std::runtime_error("UISystem: ImGui context lost during initialization");
+    }
 
     m_Initialized = true;
     SIMPLE_LOG("UISystem: Initialized successfully");
@@ -348,13 +401,34 @@ void UISystem::Shutdown() {
 
     m_Initialized = false;
     m_Window = nullptr;
+    m_Context = nullptr;
 }
 
 void UISystem::NewFrame() {
     if (!m_Initialized) return;
 
+    if (!m_Context) {
+        throw std::runtime_error("UISystem: ImGui context missing in NewFrame");
+    }
+    if (ImGui::GetCurrentContext() != m_Context) {
+        ImGui::SetCurrentContext(m_Context);
+    }
+
     // Update display size
     SDL_GetWindowSize(m_Window, &m_DisplayWidth, &m_DisplayHeight);
+    ImGuiIO& io = ImGui::GetIO();
+    io.DisplaySize = ImVec2(static_cast<float>(m_DisplayWidth), static_cast<float>(m_DisplayHeight));
+
+    int fbWidth = 0;
+    int fbHeight = 0;
+    SDL_GetWindowSizeInPixels(m_Window, &fbWidth, &fbHeight);
+    if (m_DisplayWidth > 0 && m_DisplayHeight > 0) {
+        io.DisplayFramebufferScale = ImVec2(
+            static_cast<float>(fbWidth) / static_cast<float>(m_DisplayWidth),
+            static_cast<float>(fbHeight) / static_cast<float>(m_DisplayHeight));
+    } else {
+        io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+    }
 
     ImGui_ImplSDL3_NewFrame();
     ImGui::NewFrame();
@@ -364,6 +438,13 @@ void UISystem::Render() {
     PROFILE_SCOPE("UISystem::Render");
     if (!m_Initialized) return;
 
+    if (!m_Context) {
+        throw std::runtime_error("UISystem: ImGui context missing in Render");
+    }
+    if (ImGui::GetCurrentContext() != m_Context) {
+        ImGui::SetCurrentContext(m_Context);
+    }
+
     ImGui::Render();
     RenderDrawData(UIRenderSettings::Default());
 }
@@ -372,6 +453,13 @@ void UISystem::RenderWithSettings(const UIRenderSettings& settings) {
     PROFILE_SCOPE("UISystem::RenderWithSettings");
     if (!m_Initialized) return;
 
+    if (!m_Context) {
+        throw std::runtime_error("UISystem: ImGui context missing in RenderWithSettings");
+    }
+    if (ImGui::GetCurrentContext() != m_Context) {
+        ImGui::SetCurrentContext(m_Context);
+    }
+
     ImGui::Render();
     RenderDrawData(settings);
 }
@@ -379,6 +467,10 @@ void UISystem::RenderWithSettings(const UIRenderSettings& settings) {
 void UISystem::RenderDrawData(const UIRenderSettings& settings) {
     ImDrawData* drawData = ImGui::GetDrawData();
     if (!drawData || !bgfx::isValid(m_Program)) {
+        return;
+    }
+    if (!bgfx::isValid(m_TextureUniform)) {
+        SIMPLE_LOG("UISystem: Texture uniform invalid, skipping UI render");
         return;
     }
 
@@ -404,6 +496,12 @@ void UISystem::RenderDrawData(const UIRenderSettings& settings) {
                         format,
                         0 // No flags - writable
                     );
+                    if (!bgfx::isValid(th)) {
+                        SIMPLE_LOG("UISystem: Failed to create ImGui texture");
+                        texData->SetTexID(ImTextureID_Invalid);
+                        texData->SetStatus(ImTextureStatus_Destroyed);
+                        break;
+                    }
                     bgfx::setName(th, "ImGui Font Atlas");
 
                     // Update with pixel data
@@ -418,7 +516,7 @@ void UISystem::RenderDrawData(const UIRenderSettings& settings) {
                         m_FontTexture = th;
                     }
 
-                    texData->SetTexID(static_cast<ImTextureID>(th.idx));
+                    texData->SetTexID(EncodeImTextureId(th));
                     texData->SetStatus(ImTextureStatus_OK);
                 }
                 break;
@@ -426,8 +524,7 @@ void UISystem::RenderDrawData(const UIRenderSettings& settings) {
             case ImTextureStatus_WantUpdates:
                 {
                     // Handle incremental texture updates
-                    bgfx::TextureHandle th;
-                    th.idx = static_cast<uint16_t>(texData->GetTexID());
+                    bgfx::TextureHandle th = DecodeImTextureId(texData->GetTexID());
 
                     if (bgfx::isValid(th)) {
                         for (const ImTextureRect& rect : texData->Updates) {
@@ -455,9 +552,10 @@ void UISystem::RenderDrawData(const UIRenderSettings& settings) {
                 {
                     ImTextureID texId = texData->GetTexID();
                     if (texId != ImTextureID_Invalid) {
-                        bgfx::TextureHandle th;
-                        th.idx = static_cast<uint16_t>(texId);
-                        bgfx::destroy(th);
+                        bgfx::TextureHandle th = DecodeImTextureId(texId);
+                        if (bgfx::isValid(th)) {
+                            bgfx::destroy(th);
+                        }
                     }
                     texData->SetTexID(ImTextureID_Invalid);
                     texData->SetStatus(ImTextureStatus_Destroyed);
@@ -482,8 +580,27 @@ void UISystem::RenderDrawData(const UIRenderSettings& settings) {
         return;
     }
 
+    static bool s_LoggedFirstFrame = false;
+    if (!s_LoggedFirstFrame) {
+        s_LoggedFirstFrame = true;
+        SIMPLE_LOG("UISystem: DrawData lists=" + std::to_string(drawData->CmdListsCount) +
+                   " vtx=" + std::to_string(drawData->TotalVtxCount) +
+                   " idx=" + std::to_string(drawData->TotalIdxCount));
+        SIMPLE_LOG("UISystem: Font texture idx=" + std::to_string(m_FontTexture.idx));
+        if (drawData->Textures != nullptr && drawData->Textures->Size > 0 && (*drawData->Textures)[0]) {
+            ImTextureID sampleId = (*drawData->Textures)[0]->GetTexID();
+            bgfx::TextureHandle decoded = DecodeImTextureId(sampleId);
+            SIMPLE_LOG("UISystem: Sample texId raw=" + std::to_string(static_cast<uint64_t>(sampleId)) +
+                       " decoded=" + std::to_string(decoded.idx));
+        }
+    }
+
     // Setup orthographic projection matrix
     const bgfx::Caps* caps = bgfx::getCaps();
+    if (!caps) {
+        SIMPLE_LOG("UISystem: BGFX caps unavailable, skipping UI render");
+        return;
+    }
     float ortho[16];
     float L = drawData->DisplayPos.x;
     float R = drawData->DisplayPos.x + drawData->DisplaySize.x;
@@ -500,30 +617,70 @@ void UISystem::RenderDrawData(const UIRenderSettings& settings) {
     bgfx::setViewMode(viewId, bgfx::ViewMode::Sequential);
     bgfx::setViewRect(viewId, 0, 0, static_cast<uint16_t>(fbWidth), static_cast<uint16_t>(fbHeight));
     bgfx::setViewTransform(viewId, nullptr, ortho);
+    bgfx::setViewClear(viewId, BGFX_CLEAR_NONE);
 
     const ImVec2 clipOff = drawData->DisplayPos;
     const ImVec2 clipScale = drawData->FramebufferScale;
 
+    if (drawData->CmdListsCount < 0) {
+        SIMPLE_LOG("UISystem: Invalid draw data (negative CmdListsCount)");
+        return;
+    }
+    if (drawData->CmdListsCount > 1024) {
+        SIMPLE_LOG("UISystem: Excessive draw lists, skipping UI frame");
+        return;
+    }
+
+    const bool useIndex32 = sizeof(ImDrawIdx) == 4;
+    const uint32_t totalVertices = static_cast<uint32_t>(drawData->TotalVtxCount);
+    const uint32_t totalIndices = static_cast<uint32_t>(drawData->TotalIdxCount);
+    if (totalVertices == 0 || totalIndices == 0) {
+        return;
+    }
+    if (totalVertices > 2'000'000 || totalIndices > 3'000'000) {
+        SIMPLE_LOG("UISystem: Draw data too large, skipping UI frame");
+        return;
+    }
+    if (bgfx::getAvailTransientVertexBuffer(totalVertices, m_Layout) < totalVertices ||
+        bgfx::getAvailTransientIndexBuffer(totalIndices, useIndex32) < totalIndices) {
+        static auto lastLogTime = std::chrono::steady_clock::time_point{};
+        auto now = std::chrono::steady_clock::now();
+        if (now - lastLogTime > std::chrono::seconds(1)) {
+            SIMPLE_LOG("UISystem: Not enough transient buffer space (frame skipped)");
+            lastLogTime = now;
+        }
+        return;
+    }
+
     // Render command lists
     for (int n = 0; n < drawData->CmdListsCount; n++) {
         const ImDrawList* cmdList = drawData->CmdLists[n];
+        if (!cmdList) {
+            SIMPLE_LOG("UISystem: Null ImDrawList encountered");
+            continue;
+        }
         uint32_t numVertices = static_cast<uint32_t>(cmdList->VtxBuffer.Size);
         uint32_t numIndices = static_cast<uint32_t>(cmdList->IdxBuffer.Size);
-
-        // Check if we have enough transient buffer space
-        if (bgfx::getAvailTransientVertexBuffer(numVertices, m_Layout) < numVertices ||
-            bgfx::getAvailTransientIndexBuffer(numIndices, sizeof(ImDrawIdx) == 4) < numIndices) {
-            SIMPLE_LOG("UISystem: Not enough transient buffer space");
-            break;
+        if (numVertices == 0 || numIndices == 0) {
+            continue;
+        }
+        if (numVertices > (std::numeric_limits<uint32_t>::max() / sizeof(ImDrawVert)) ||
+            numIndices > (std::numeric_limits<uint32_t>::max() / sizeof(ImDrawIdx))) {
+            SIMPLE_LOG("UISystem: ImGui draw data size overflow, skipping list");
+            continue;
         }
 
         bgfx::TransientVertexBuffer tvb;
         bgfx::TransientIndexBuffer tib;
 
         bgfx::allocTransientVertexBuffer(&tvb, numVertices, m_Layout);
-        bgfx::allocTransientIndexBuffer(&tib, numIndices, sizeof(ImDrawIdx) == 4);
+        bgfx::allocTransientIndexBuffer(&tib, numIndices, useIndex32);
 
         // Copy vertex and index data
+        if (!tvb.data || !tib.data) {
+            SIMPLE_LOG("UISystem: Failed to allocate transient buffers");
+            return;
+        }
         memcpy(tvb.data, cmdList->VtxBuffer.Data, numVertices * sizeof(ImDrawVert));
         memcpy(tib.data, cmdList->IdxBuffer.Data, numIndices * sizeof(ImDrawIdx));
 
@@ -531,9 +688,21 @@ void UISystem::RenderDrawData(const UIRenderSettings& settings) {
         for (int cmdIdx = 0; cmdIdx < cmdList->CmdBuffer.Size; cmdIdx++) {
             const ImDrawCmd* pcmd = &cmdList->CmdBuffer[cmdIdx];
 
+            if (!pcmd) {
+                SIMPLE_LOG("UISystem: Null draw command encountered");
+                continue;
+            }
             if (pcmd->UserCallback) {
                 pcmd->UserCallback(cmdList, pcmd);
             } else if (pcmd->ElemCount > 0) {
+                if (pcmd->VtxOffset > numVertices || pcmd->IdxOffset > numIndices) {
+                    SIMPLE_LOG("UISystem: Draw command offset out of range");
+                    continue;
+                }
+                if (pcmd->IdxOffset + pcmd->ElemCount > numIndices) {
+                    SIMPLE_LOG("UISystem: Draw command index range out of bounds");
+                    continue;
+                }
                 // Project scissor/clipping rectangles
                 ImVec4 clipRect;
                 clipRect.x = (pcmd->ClipRect.x - clipOff.x) * clipScale.x;
@@ -548,6 +717,9 @@ void UISystem::RenderDrawData(const UIRenderSettings& settings) {
                     uint16_t yy = static_cast<uint16_t>(bxMax(clipRect.y, 0.0f));
                     uint16_t ww = static_cast<uint16_t>(bxMin(clipRect.z, 65535.0f) - xx);
                     uint16_t hh = static_cast<uint16_t>(bxMin(clipRect.w, 65535.0f) - yy);
+                    if (ww == 0 || hh == 0) {
+                        continue;
+                    }
 
                     bgfx::setScissor(xx, yy, ww, hh);
 
@@ -572,7 +744,10 @@ void UISystem::RenderDrawData(const UIRenderSettings& settings) {
                     bgfx::TextureHandle th = m_FontTexture;
                     ImTextureID texId = pcmd->GetTexID();
                     if (texId != ImTextureID_Invalid) {
-                        th.idx = static_cast<uint16_t>(texId);
+                        bgfx::TextureHandle decoded = DecodeImTextureId(texId);
+                        if (bgfx::isValid(decoded)) {
+                            th = decoded;
+                        }
                     }
 
                     // Configure texture filtering based on settings
@@ -583,7 +758,11 @@ void UISystem::RenderDrawData(const UIRenderSettings& settings) {
                     bgfx::setTexture(0, m_TextureUniform, th, samplerFlags);
 
                     // Set buffers and submit
-                    bgfx::setVertexBuffer(0, &tvb, pcmd->VtxOffset, numVertices);
+                    uint32_t drawVertices = numVertices - pcmd->VtxOffset;
+                    if (drawVertices == 0) {
+                        continue;
+                    }
+                    bgfx::setVertexBuffer(0, &tvb, pcmd->VtxOffset, drawVertices);
                     bgfx::setIndexBuffer(&tib, pcmd->IdxOffset, pcmd->ElemCount);
                     bgfx::submit(viewId, m_Program);
                 }
@@ -613,7 +792,7 @@ bool UISystem::WantCaptureKeyboard() const {
 }
 
 void* UISystem::GetImGuiContext() const {
-    return ImGui::GetCurrentContext();
+    return m_Context;
 }
 
 } // namespace Solstice::UI

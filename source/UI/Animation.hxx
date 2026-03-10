@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Solstice.hxx"
+#include <MinGfx/EasingFunction.hxx>
 #include <imgui.h>
 #include <vector>
 #include <algorithm>
@@ -14,28 +15,16 @@ struct ShadowParams;
 
 namespace Animation {
 
-enum class EasingType {
-    Linear,
-    EaseIn,
-    EaseOut,
-    EaseInOut,
-    Bounce,
-    Elastic,
-    Back,
-    Circ,
-    Expo,
-    Quad,
-    Cubic,
-    Quart,
-    Quint,
-    Bezier  // Custom bezier curve
-};
+// Easing types and functions from MinGfx (canonical API: MinGfx::EasingType, MinGfx::Ease)
+using EasingType = MinGfx::EasingType;
 
-// Easing function
-SOLSTICE_API float Ease(float T, EasingType Type, float Strength = 1.0f);
+inline float Ease(float T, EasingType Type, float Strength = 1.0f) {
+    return MinGfx::Ease(T, static_cast<MinGfx::EasingType>(Type), Strength);
+}
 
-// Bezier curve easing
-SOLSTICE_API float EaseBezier(float T, float P1X, float P1Y, float P2X, float P2Y);
+inline float EaseBezier(float T, float P1X, float P1Y, float P2X, float P2Y) {
+    return MinGfx::EaseBezier(T, P1X, P1Y, P2X, P2Y);
+}
 
 // Keyframe template
 template<typename T>
@@ -97,7 +86,7 @@ public:
                 float t = (Time - t0) / (t1 - t0);
 
                 // Apply easing
-                float easedT = Ease(t, m_Keyframes[i].Easing);
+                float easedT = MinGfx::Ease(t, static_cast<MinGfx::EasingType>(m_Keyframes[i].Easing));
 
                 // Interpolate
                 return Lerp(m_Keyframes[i].Value, m_Keyframes[i + 1].Value, easedT);

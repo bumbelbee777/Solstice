@@ -1,7 +1,7 @@
 #pragma once
 
 #include "../Solstice.hxx"
-#include "../Render/Mesh.hxx"
+#include <Render/Assets/Mesh.hxx>
 #include "../Math/Vector.hxx"
 #include "Seed.hxx"
 #include "ProceduralTexture.hxx"

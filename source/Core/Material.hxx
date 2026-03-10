@@ -323,16 +323,33 @@ namespace Materials {
         return Mat;
     }
 
-    inline Material CreateGlass(const Math::Vec3& Color, float Roughness = 0.05f, float Transparency = 0.7f) {
+    inline Material CreateGlass(const Math::Vec3& Color, float Roughness = 0.05f, float Transparency = 0.7f, float IOR = 1.5f) {
         Material Mat;
-        Mat.SetAlbedoColor(Color, Roughness);
+        // Glass should have black albedo - it's transparent and color comes from reflections
+        // The Color parameter is kept for potential future tinting of reflections
+        Mat.SetAlbedoColor(Math::Vec3(0.0f, 0.0f, 0.0f), Roughness);
         Mat.Opacity = static_cast<uint8_t>(Transparency * 255.0f);
         Mat.Metallic = 10; // Slight metallic for better reflections
         Mat.SpecularPower = 255;
         Mat.AlphaMode = static_cast<uint8_t>(AlphaMode::Blend);
         Mat.Flags = MaterialFlag_CastsShadows | MaterialFlag_ReceivesShadows | MaterialFlag_Transparent | MaterialFlag_Reflective;
         Mat.ShadingModel = static_cast<uint8_t>(ShadingModel::PhysicallyBased);
+        // Store IOR in MaterialExtras Density field (will be extracted and passed via uniform)
+        if (!Mat.Extras) {
+            Mat.Extras = new MaterialExtras();
+        }
+        Mat.Extras->Density = IOR; // Store IOR in Density field temporarily
         return Mat;
+    }
+
+    // Helper to get IOR from material (default 1.0 for non-glass, stored in Extras->Density for glass)
+    inline float GetIOR(const Material& Mat) {
+        // Glass materials have low opacity and Extras with IOR stored in Density
+        if (Mat.Opacity < 242 && Mat.Extras && Mat.Extras->Density > 1.0f) {
+            return Mat.Extras->Density;
+        }
+        // Default IOR for non-glass materials (air)
+        return 1.0f;
     }
 }
 

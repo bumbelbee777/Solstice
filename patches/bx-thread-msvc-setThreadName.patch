@@ -1,0 +1,72 @@
+--- a/src/thread.cpp
++++ b/src/thread.cpp
+@@ -35,6 +35,35 @@ namespace bx
+ 		return &s_allocator;
+ 	}
+ 
++#if BX_PLATFORM_WINDOWS && BX_COMPILER_MSVC
++	// Helper to set thread name via RaiseException; in separate function to avoid
++	// MSVC C2712 (__try in function that requires object unwinding).
++	static void setThreadNameException(DWORD threadId, LPCSTR name)
++	{
++#	pragma pack(push, 8)
++		struct ThreadName
++		{
++			DWORD  type;
++			LPCSTR name;
++			DWORD  id;
++			DWORD  flags;
++		};
++#	pragma pack(pop)
++		ThreadName tn;
++		tn.type  = 0x1000;
++		tn.name  = name;
++		tn.id    = threadId;
++		tn.flags = 0;
++		__try
++		{
++			RaiseException(0x406d1388, 0, sizeof(tn)/4, reinterpret_cast<ULONG_PTR*>(&tn) );
++		}
++		__except(EXCEPTION_EXECUTE_HANDLER)
++		{
++		}
++	}
++#endif // BX_PLATFORM_WINDOWS && BX_COMPILER_MSVC
++
+ 	struct ThreadInternal
+ 	{
+ #if BX_CRT_NONE
+@@ -248,33 +277,8 @@ void Thread::setThreadName(const StringView& _name)
+ 		else
+ 		{
+ #	if BX_COMPILER_MSVC
+-#		pragma pack(push, 8)
+-			struct ThreadName
+-			{
+-				DWORD  type;
+-				LPCSTR name;
+-				DWORD  id;
+-				DWORD  flags;
+-			};
+-#		pragma pack(pop)
+-			ThreadName tn;
+-			tn.type  = 0x1000;
+-			tn.name  = m_name.getCPtr();
+-			tn.id    = ti->m_threadId;
+-			tn.flags = 0;
+-
+-			__try
+-			{
+-				RaiseException(0x406d1388
+-					, 0
+-					, sizeof(tn)/4
+-					, reinterpret_cast<ULONG_PTR*>(&tn)
+-					);
+-			}
+-			__except(EXCEPTION_EXECUTE_HANDLER)
+-			{
+-			}
++			setThreadNameException(ti->m_threadId, m_name.getCPtr());
+ #	endif // BX_COMPILER_MSVC
+ 		}
+ #endif // BX_PLATFORM_

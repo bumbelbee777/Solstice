@@ -1,8 +1,9 @@
 #pragma once
 
-#include "Keyframe.hxx"
-#include "Skeleton.hxx"
+#include <MinGfx/Keyframe.hxx>
+#include <Skeleton/Skeleton.hxx>
 #include <string>
+#include <utility>
 #include <vector>
 #include <regex>
 
@@ -12,39 +13,39 @@ namespace Solstice::Arzachel {
 // Supports simple wildcards: "LeftArm.*", "Spine[0-9]+", etc.
 class BonePattern {
 public:
-    BonePattern() : PatternStr(".*"), PatternRegex(".*") {}
-    explicit BonePattern(const std::string& Pattern) : PatternStr(Pattern) {
+    BonePattern() : m_PatternStr(".*"), m_PatternRegex(".*") {}
+    explicit BonePattern(std::string  Pattern) : m_PatternStr(std::move(Pattern)) {
         // Convert simple patterns to regex
         // "LeftArm.*" -> "LeftArm.*" (regex)
         // For now, simple string matching - can be enhanced with full regex
-        PatternRegex = std::regex(PatternStr);
+        m_PatternRegex = std::regex(m_PatternStr);
     }
 
-    bool Matches(const std::string& BoneName) const {
-        return std::regex_match(BoneName, PatternRegex);
+    [[nodiscard]] bool Matches(const std::string& BoneName) const {
+        return std::regex_match(BoneName, m_PatternRegex);
     }
 
-    const std::string& GetPattern() const { return PatternStr; }
+    [[nodiscard]] const std::string& GetPattern() const { return m_PatternStr; }
 
 private:
-    std::string PatternStr;
-    std::regex PatternRegex;
+    std::string m_PatternStr;
+    std::regex m_PatternRegex;
 };
 
-// Animation track targeting bones via pattern
+// Animation track targeting bones via pattern (uses MinGfx keyframe tracks)
 struct AnimationTrack {
     BonePattern TargetPattern;
-    KeyframeTrack<Math::Vec3> Translation;
-    KeyframeTrack<Math::Quaternion> Rotation;
-    KeyframeTrack<Math::Vec3> Scale;
+    ::Solstice::MinGfx::KeyframeTrack<Math::Vec3> Translation;
+    ::Solstice::MinGfx::KeyframeTrack<Math::Quaternion> Rotation;
+    ::Solstice::MinGfx::KeyframeTrack<Math::Vec3> Scale;
 
     AnimationTrack() = default;
-    AnimationTrack(const BonePattern& Pattern)
-        : TargetPattern(Pattern) {}
+    AnimationTrack(BonePattern  Pattern)
+        : TargetPattern(std::move(Pattern)) {}
 
     // Resolve pattern to actual bone IDs in skeleton
-    std::vector<BoneID> ResolveBones(const Skeleton& SkeletonParam) const {
-        std::vector<BoneID> MatchedBones;
+    [[nodiscard]] std::vector<::Solstice::Skeleton::BoneID> ResolveBones(const ::Solstice::Skeleton::Skeleton& SkeletonParam) const {
+        std::vector<::Solstice::Skeleton::BoneID> MatchedBones;
         for (const auto& BoneObj : SkeletonParam.GetBones()) {
             if (TargetPattern.Matches(BoneObj.Name)) {
                 MatchedBones.push_back(BoneObj.ID);

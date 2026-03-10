@@ -1,7 +1,7 @@
 #pragma once
 
 #include "MeshData.hxx"
-#include "Skeleton.hxx"
+#include <Skeleton/Skeleton.hxx>
 #include "SkinWeights.hxx"
 
 namespace Solstice::Arzachel {
@@ -10,12 +10,12 @@ namespace Solstice::Arzachel {
 // Combines geometry, skeleton, and skin weights
 struct RiggedMesh {
     MeshData Mesh;
-    Skeleton MSkeleton;
+    ::Solstice::Skeleton::Skeleton MSkeleton;
     SkinWeights MSkinWeights;
 
     RiggedMesh() = default;
 
-    RiggedMesh(const MeshData& MeshParam, const Skeleton& SkeletonParam, const SkinWeights& WeightsParam)
+    RiggedMesh(const MeshData& MeshParam, const ::Solstice::Skeleton::Skeleton& SkeletonParam, const SkinWeights& WeightsParam)
         : Mesh(MeshParam), MSkeleton(SkeletonParam), MSkinWeights(WeightsParam) {
         // Invariant: skin weights must reference bones in skeleton
         // This is validated at construction time in factories

@@ -158,6 +158,8 @@ def compile_shaders(args):
             varying_def = shader_dir / "varying_particle.def.sc"
         elif "_debug" in stem_lower:
             varying_def = shader_dir / "varying_debug.def.sc"
+        elif "_billboard" in stem_lower:
+            varying_def = shader_dir / "varying_billboard.def.sc"
 
         if not varying_def.exists():
             print(f"WARNING: Varying definition not found: {varying_def}")

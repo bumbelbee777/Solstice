@@ -6,9 +6,9 @@
 # ============================================================================
 
 # ============================================================================
-# Default Behavior - Auto-detect text files and normalize line endings
+# Default Behavior - Auto-detect text files, always use LF in repo and working tree
 # ============================================================================
-* text=auto
+* text=auto eol=lf
 
 # ============================================================================
 # Source Code Files - Explicit Text (LF normalized in repo)
@@ -52,6 +52,7 @@ CMakeLists.txt    text
 *.cfg    text
 *.conf   text
 *.toml   text
+*.natvis text eol=lf
 
 # ============================================================================
 # Binary Files - Never normalize, always treat as binary

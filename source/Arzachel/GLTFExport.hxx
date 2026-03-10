@@ -4,7 +4,7 @@
 #include "MeshData.hxx"
 #include "RiggedMesh.hxx"
 #include "AnimationClip.hxx"
-#include "Skeleton.hxx"
+#include <Skeleton/Skeleton.hxx>
 #include "Seed.hxx"
 #include <filesystem>
 
@@ -25,6 +25,6 @@ void ExportMeshToGLTF(const Generator<MeshData>& Mesh, const std::filesystem::pa
 void ExportRiggedToGLTF(const Generator<RiggedMesh>& RiggedMesh, const std::filesystem::path& Path, const Seed& S, const ExportProfile& Profile = ExportProfile{});
 
 // Export animation to glTF
-void ExportAnimationToGLTF(const Generator<AnimationClip>& Clip, const Skeleton& Skeleton, const std::filesystem::path& Path, const Seed& S, const ExportProfile& Profile = ExportProfile{});
+void ExportAnimationToGLTF(const Generator<AnimationClip>& Clip, const ::Solstice::Skeleton::Skeleton& Skeleton, const std::filesystem::path& Path, const Seed& S, const ExportProfile& Profile = ExportProfile{});
 
 } // namespace Solstice::Arzachel

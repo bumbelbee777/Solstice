@@ -6,7 +6,7 @@
 #include "../Arzachel/AssetPresets.hxx"
 #include "../Arzachel/AssetBuilder.hxx"
 #include "../Arzachel/Seed.hxx"
-#include "../Render/Mesh.hxx"
+#include <Render/Assets/Mesh.hxx>
 #include "../Physics/PhysicsSystem.hxx"
 #include <fstream>
 #include <sstream>

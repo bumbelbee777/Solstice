@@ -1,9 +1,9 @@
 #include <UI/Window.hxx>
 #include <UI/UISystem.hxx>
 #include <Render/SoftwareRenderer.hxx>
-#include <Render/Scene.hxx>
-#include <Render/Camera.hxx>
-#include <Render/Mesh.hxx>
+#include <Render/Scene/Scene.hxx>
+#include <Render/Scene/Camera.hxx>
+#include <Render/Assets/Mesh.hxx>
 #include <Core/Material.hxx>
 #include <Arzachel/MeshFactory.hxx>
 #include <Render/PhysicsBridge.hxx>
@@ -24,7 +24,7 @@
 
 #include <iostream>
 #include <Physics/ConvexHullFactory.hxx>
-#include <Render/Mesh.hxx>
+#include <Render/Assets/Mesh.hxx>
 #include <chrono>
 #include <string>
 #include <bgfx/bgfx.h>

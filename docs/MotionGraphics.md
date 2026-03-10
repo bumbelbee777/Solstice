@@ -2,13 +2,13 @@
 
 ## Overview
 
-The Motion Graphics system provides animation, transitions, visual effects, and sprite rendering for UI elements. It supports keyframe-based animations, smooth transitions, visual effects (shadows, blur, glow), and both 2D and world-space sprite rendering.
+The Motion Graphics system provides animation, transitions, visual effects, and sprite rendering for UI elements. It supports keyframe-based animations, smooth transitions, visual effects (shadows, blur, glow), and both 2D and world-space sprite rendering. **Easing types and functions** (EasingType, Ease, EaseBezier) are provided by the **MinGfx** module (`Solstice::MinGfx`); the UI Animation layer consumes them (and exposes type aliases for compatibility).
 
 ## Architecture
 
 The Motion Graphics system consists of:
 
-- **Animation System**: Keyframe-based animation with easing functions
+- **Animation System**: Keyframe-based animation (easing from **MinGfx**; UI-specific tracks for ImVec2, ImVec4, etc.)
 - **Transition System**: State transitions for UI elements
 - **Visual Effects**: Shadows, blur, and glow effects
 - **Sprite System**: 2D and world-space sprite rendering
@@ -108,37 +108,14 @@ float Ease(float t, EasingType type, float strength = 1.0f);
 float EaseBezier(float t, float p1X, float p1Y, float p2X, float p2Y);
 ```
 
-#### Keyframe
+#### Keyframe and AnimationTrack
+
+UI Animation uses its own `Keyframe<T>` and `AnimationTrack<T>` for UI types (ImVec2, ImVec4, ShadowParams, etc.), which call **MinGfx::Ease** for interpolation. For math types (Vec3, Quaternion), the canonical keyframe API is **MinGfx** (`MinGfx/Keyframe.hxx`: `Keyframe<T>`, `KeyframeTrack<T>` with InterpolationMode and optional EasingType).
 
 ```cpp
-template<typename T>
-struct Keyframe {
-    float Time;              // Time in seconds
-    T Value;                 // Keyframe value
-    EasingType Easing;       // Easing type
-    
-    Keyframe(float time, const T& value, EasingType easing = EasingType::Linear);
-};
-```
-
-#### AnimationTrack
-
-```cpp
-template<typename T>
-class AnimationTrack {
-    // Add keyframe
-    void AddKeyframe(const Keyframe<T>& kf);
-    
-    // Evaluate at time
-    T Evaluate(float time) const;
-    
-    // Properties
-    float GetDuration() const;
-    void SetLoop(bool loop);
-    bool GetLoop() const;
-    size_t GetKeyframeCount() const;
-    const Keyframe<T>& GetKeyframe(size_t index) const;
-};
+// UI::Animation: Keyframe<T>, AnimationTrack<T> (UI-specific; use EasingType, Ease from MinGfx)
+template<typename T> struct Keyframe { float Time; T Value; EasingType Easing; };
+template<typename T> class AnimationTrack { AddKeyframe, Evaluate, GetDuration, SetLoop, GetLoop, GetKeyframeCount, GetKeyframe; };
 ```
 
 #### AnimationClip

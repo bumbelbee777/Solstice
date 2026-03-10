@@ -1,6 +1,7 @@
 #include "GLTFImport.hxx"
 #include <Core/AssetLoader.hxx>
-#include <Render/Mesh.hxx>
+#include <Render/Assets/Mesh.hxx>
+#include <Skeleton/Skeleton.hxx>
 #include <fstream>
 #include <sstream>
 #include <cstdint>
@@ -77,9 +78,9 @@ Generator<RiggedMesh> ImportRiggedFromGLTF(const std::filesystem::path& Path, ui
         MeshData MeshDataResult = MeshGen(SeedParam.Derive(0));
 
         // Create simple root bone skeleton
-        BoneID RootID(0);
-        Bone RootBone(RootID, "Root", BoneID{}, Math::Matrix4::Identity(), Math::Matrix4::Identity());
-        Skeleton SkeletonResult({RootBone}, RootID);
+        ::Solstice::Skeleton::BoneID RootID(0);
+        ::Solstice::Skeleton::Bone RootBone(RootID, "Root", ::Solstice::Skeleton::BoneID{}, Math::Matrix4::Identity(), Math::Matrix4::Identity());
+        ::Solstice::Skeleton::Skeleton SkeletonResult({RootBone}, RootID);
 
         // Assign all vertices to root
         SkinWeights WeightsResult(MeshDataResult.GetVertexCount());

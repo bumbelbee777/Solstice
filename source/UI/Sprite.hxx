@@ -48,7 +48,9 @@ public:
                          const Math::Matrix4& ViewMatrix,
                          const Math::Matrix4& ProjectionMatrix,
                          int ScreenWidth, int ScreenHeight,
-                         ImDrawList* DrawList = nullptr);  // 3D world-space
+                         ImDrawList* DrawList = nullptr,
+                         bgfx::ProgramHandle SceneProgram = BGFX_INVALID_HANDLE,
+                         bgfx::ViewId ViewId = 2);  // 3D world-space
 
 private:
     bgfx::TextureHandle m_Texture{BGFX_INVALID_HANDLE};

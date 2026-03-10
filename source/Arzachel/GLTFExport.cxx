@@ -167,7 +167,7 @@ void ExportRiggedToGLTF(const Generator<RiggedMesh>& RiggedMeshGen, const std::f
     // This requires adding skin and joints to the glTF model
 }
 
-void ExportAnimationToGLTF(const Generator<AnimationClip>& ClipGen, const Skeleton& SkeletonParam, const std::filesystem::path& Path, const Seed& SeedParam, const ExportProfile& Profile) {
+void ExportAnimationToGLTF(const Generator<AnimationClip>& ClipGen, const ::Solstice::Skeleton::Skeleton& SkeletonParam, const std::filesystem::path& Path, const Seed& SeedParam, const ExportProfile& Profile) {
     // Realize the generator
     AnimationClip AnimationResult = ClipGen(SeedParam);
 

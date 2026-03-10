@@ -1,0 +1,24 @@
+module PtrExamples;
+
+import Math;
+
+class Player {
+    let name = "";
+    let score = 0;
+}
+
+function SafePointerUsage() {
+    let p: Ptr<Player> = Ptr.New(new Player());
+
+    if (Ptr.IsValid(p)) {
+        let player = Ptr.Get(p);
+        player.score = 42;
+    }
+
+    Ptr.Reset(p);
+}
+
+@Entry {
+    SafePointerUsage();
+}
+

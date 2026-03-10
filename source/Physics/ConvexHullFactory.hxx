@@ -1,7 +1,7 @@
 #pragma once
 
 #include "ConvexHull.hxx"
-#include "../Render/Mesh.hxx"
+#include <Render/Assets/Mesh.hxx>
 #include "../Solstice.hxx"
 #include <memory>
 

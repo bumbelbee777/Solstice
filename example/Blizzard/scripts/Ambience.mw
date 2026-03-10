@@ -1,10 +1,10 @@
 module Ambience;
 
-@function PlayStormMusic() {
+function PlayStormMusic() {
     Audio.PlayMusic("assets/music.wav", -1);
     Audio.SetVolume(0.6);
 }
 
-@function PlayWindHowl() {
+function PlayWindHowl() {
     Audio.PlaySound3D("assets/blizzard.wav", 0.0, 0.0, 0.0, 100.0, true);
 }

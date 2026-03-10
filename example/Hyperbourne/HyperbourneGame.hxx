@@ -1,6 +1,6 @@
 #pragma once
 
-#include <Game/FPSGame.hxx>
+#include <Game/FPS/FPSGame.hxx>
 #include <Game/ScriptManager.hxx>
 #include <Game/ProceduralTextureManager.hxx>
 #include <Game/SceneBuilder.hxx>
@@ -13,8 +13,8 @@
 #include <Arzachel/ProceduralTexture.hxx>
 #include <UI/Window.hxx>
 #include <Render/SoftwareRenderer.hxx>
-#include <Render/Scene.hxx>
-#include <Render/Mesh.hxx>
+#include <Render/Scene/Scene.hxx>
+#include <Render/Assets/Mesh.hxx>
 #include <Core/Material.hxx>
 #include <Core/ResourceHandle.hxx>
 #include <Physics/PhysicsSystem.hxx>

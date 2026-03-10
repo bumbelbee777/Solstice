@@ -1,5 +1,5 @@
 #include "ObjectSpawner.hxx"
-#include <Render/Mesh.hxx>
+#include <Render/Assets/Mesh.hxx>
 #include <Core/Material.hxx>
 #include <Physics/RigidBody.hxx>
 #include <Physics/ConvexHullFactory.hxx>

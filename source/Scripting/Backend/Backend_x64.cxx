@@ -26,10 +26,12 @@ bool Backend_x64::IsSupported() const {
     return m_Supported;
 }
 
-IBackend::CompiledFunction Backend_x64::CompileFunction(const Program& program, size_t functionStartIP) {
-    // Placeholder: Return interpreter function for now
-    // Actual codegen will be implemented incrementally
-    return nullptr;
+IBackend::CompiledFunction Backend_x64::CompileFunction(const Program& program, size_t functionStartIP, BytecodeVM* vm) {
+    if (!vm) return nullptr;
+    // Phase 1: trampoline that runs the function via VM (no native x64 codegen yet)
+    return [vm, functionStartIP](const std::vector<Value>& args) -> Value {
+        return vm->RunFunctionSlice(functionStartIP, args);
+    };
 }
 
 void* Backend_x64::AllocateCodeMemory(size_t size) {
