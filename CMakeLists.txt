@@ -76,7 +76,8 @@ if(NOT TARGET tinygltf)
 endif()
 
 # ReactPhysics3D: library only (patch adds missing #include <chrono> for MSVC)
-CPMAddPackage(NAME reactphysics3d GITHUB_REPOSITORY DanielChappuis/reactphysics3d GIT_TAG v0.9.0
+# Pin to v0.9.0 commit SHA so all platforms get the same source (avoids API mismatch on Linux)
+CPMAddPackage(NAME reactphysics3d GITHUB_REPOSITORY DanielChappuis/reactphysics3d GIT_TAG 4bbbaa7c6e92942734eec696e23a2fad1f1cb8a1
     PATCHES ${CMAKE_SOURCE_DIR}/patches/reactphysics3d-DefaultLogger-chrono.patch
     OPTIONS
         "RP3D_COMPILE_LIBRARY ON"
