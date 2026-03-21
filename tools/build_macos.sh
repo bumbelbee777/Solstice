@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Configure and build Solstice on macOS using CMake presets.
-# Usage: bash tools/build_macos.sh [--release] [--clean]
+# Usage: bash tools/build_macos.sh [--release] [--clean] [--cmake4-compat]
 
 set -euo pipefail
 
@@ -9,6 +9,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 BUILD_MODE="debug"
 CLEAN_BUILD="false"
+FORCE_CMAKE4_COMPAT="false"
 
 usage() {
     cat <<'EOF'
@@ -17,6 +18,9 @@ Usage: bash tools/build_macos.sh [options]
 Options:
   --release   Build with macos-release preset.
   --clean     Remove preset build directory before configuring.
+  --cmake4-compat
+              Force CMake policy compatibility flag used by some
+              older dependency CMake files (for example zstd).
   -h, --help  Show this help message.
 EOF
 }
@@ -34,6 +38,9 @@ parse_args() {
             --clean)
                 CLEAN_BUILD="true"
                 ;;
+            --cmake4-compat)
+                FORCE_CMAKE4_COMPAT="true"
+                ;;
             -h|--help)
                 usage
                 exit 0
@@ -46,6 +53,12 @@ parse_args() {
         esac
         shift
     done
+}
+
+cmake_major_version() {
+    local ver
+    ver="$(cmake --version | awk 'NR==1 {print $3}')"
+    echo "${ver%%.*}"
 }
 
 check_prereqs() {
@@ -110,6 +123,8 @@ main() {
     fi
 
     local build_dir="$PROJECT_ROOT/out/build/$preset"
+    local -a configure_args=()
+    local cmake_major
     log "Project root: $PROJECT_ROOT"
     log "Using preset: $preset"
 
@@ -118,7 +133,15 @@ main() {
         rm -rf "$build_dir"
     fi
 
-    cmake --preset "$preset"
+    cmake_major="$(cmake_major_version)"
+    if [[ "$FORCE_CMAKE4_COMPAT" == "true" || "$cmake_major" -ge 4 ]]; then
+        # CMake 4 removed compatibility defaults some third-party CMake files rely on.
+        # This keeps legacy dependency projects (such as zstd build/cmake) configurable.
+        configure_args+=("-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
+        log "Enabling CMake compatibility flag: CMAKE_POLICY_VERSION_MINIMUM=3.5"
+    fi
+
+    cmake --preset "$preset" "${configure_args[@]}"
     cmake --build --preset "$preset"
     setup_runtime_layout "$build_dir"
     log "Build completed for preset: $preset"

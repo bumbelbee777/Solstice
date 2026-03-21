@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Configure and build Solstice on Linux using CMake presets.
-# Usage: bash tools/build_linux.sh [--release] [--clean] [--refresh-deps]
+# Usage: bash tools/build_linux.sh [--release] [--clean] [--refresh-deps] [--cmake4-compat]
 
 set -euo pipefail
 
@@ -10,6 +10,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BUILD_MODE="debug"
 CLEAN_BUILD="false"
 REFRESH_DEPS="false"
+FORCE_CMAKE4_COMPAT="false"
 
 usage() {
     cat <<'EOF'
@@ -21,6 +22,9 @@ Options:
   --refresh-deps
               Remove cached CPM sources for Linux-sensitive deps
               (reactphysics3d, SDL3) before configuring.
+  --cmake4-compat
+              Force CMake policy compatibility flag used by some
+              older dependency CMake files (for example zstd).
   -h, --help  Show this help message.
 EOF
 }
@@ -41,6 +45,9 @@ parse_args() {
             --refresh-deps)
                 REFRESH_DEPS="true"
                 ;;
+            --cmake4-compat)
+                FORCE_CMAKE4_COMPAT="true"
+                ;;
             -h|--help)
                 usage
                 exit 0
@@ -53,6 +60,12 @@ parse_args() {
         esac
         shift
     done
+}
+
+cmake_major_version() {
+    local ver
+    ver="$(cmake --version | awk 'NR==1 {print $3}')"
+    echo "${ver%%.*}"
 }
 
 check_prereqs() {
@@ -119,6 +132,8 @@ main() {
     local build_dir="$PROJECT_ROOT/out/build/$preset"
     local rp3d_cache="$PROJECT_ROOT/.cpm-cache/reactphysics3d"
     local sdl3_cache="$PROJECT_ROOT/.cpm-cache/sdl3"
+    local -a configure_args=()
+    local cmake_major
     log "Project root: $PROJECT_ROOT"
     log "Using preset: $preset"
 
@@ -132,7 +147,15 @@ main() {
         rm -rf "$rp3d_cache" "$sdl3_cache"
     fi
 
-    cmake --preset "$preset"
+    cmake_major="$(cmake_major_version)"
+    if [[ "$FORCE_CMAKE4_COMPAT" == "true" || "$cmake_major" -ge 4 ]]; then
+        # CMake 4 removed compatibility defaults some third-party CMake files rely on.
+        # This keeps legacy dependency projects (such as zstd build/cmake) configurable.
+        configure_args+=("-DCMAKE_POLICY_VERSION_MINIMUM=3.5")
+        log "Enabling CMake compatibility flag: CMAKE_POLICY_VERSION_MINIMUM=3.5"
+    fi
+
+    cmake --preset "$preset" "${configure_args[@]}"
     cmake --build --preset "$preset"
     setup_runtime_layout "$build_dir"
     log "Build completed for preset: $preset"
