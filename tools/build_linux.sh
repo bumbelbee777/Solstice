@@ -66,6 +66,47 @@ check_prereqs() {
     done
 }
 
+copy_tree_contents() {
+    local src_dir="$1"
+    local dst_dir="$2"
+
+    mkdir -p "$dst_dir"
+
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a "$src_dir"/ "$dst_dir"/
+    else
+        cp -R "$src_dir"/. "$dst_dir"/
+    fi
+}
+
+setup_runtime_layout() {
+    local build_dir="$1"
+    local bin_dir="$build_dir/bin"
+    local assets_src="$PROJECT_ROOT/assets"
+    local shaders_src="$PROJECT_ROOT/source/Shaders/bin"
+    local assets_dst="$bin_dir/assets"
+    local shaders_dst="$bin_dir/shaders"
+
+    # Common runtime directories used by examples/tools.
+    mkdir -p "$bin_dir" "$assets_dst" "$assets_dst/fonts" "$PROJECT_ROOT/cache"
+
+    # Stage project assets (fonts, music, textures, etc.) if present.
+    if [[ -d "$assets_src" ]]; then
+        log "Staging assets from $assets_src to $assets_dst"
+        copy_tree_contents "$assets_src" "$assets_dst"
+    else
+        log "No root assets directory found at $assets_src (skipping asset staging)"
+    fi
+
+    # Stage compiled shaders for runtime loading.
+    if [[ -d "$shaders_src" ]]; then
+        log "Staging shaders from $shaders_src to $shaders_dst"
+        copy_tree_contents "$shaders_src" "$shaders_dst"
+    else
+        log "No compiled shaders found at $shaders_src (skipping shader staging)"
+    fi
+}
+
 main() {
     parse_args "$@"
     check_prereqs
@@ -93,6 +134,7 @@ main() {
 
     cmake --preset "$preset"
     cmake --build --preset "$preset"
+    setup_runtime_layout "$build_dir"
     log "Build completed for preset: $preset"
 }
 

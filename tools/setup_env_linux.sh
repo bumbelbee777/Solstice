@@ -164,7 +164,6 @@ install_with_pacman() {
         libglvnd
         alsa-lib
         libpulse
-        jack2
         libsamplerate
         systemd
         dbus
@@ -175,6 +174,17 @@ install_with_pacman() {
 
     log "Using pacman package manager."
     run_as_root pacman -Sy --needed --noconfirm "${packages[@]}"
+
+    # JACK provider conflict note:
+    # - jack2 and pipewire-jack conflict on Arch.
+    # - Many systems already have pipewire-jack installed.
+    # - SDL can still build without JACK; this backend is optional.
+    # Install one manually only if you specifically need JACK support.
+    if ! pacman -Q jack2 >/dev/null 2>&1 && ! pacman -Q pipewire-jack >/dev/null 2>&1; then
+        log "NOTE: JACK provider not installed (jack2/pipewire-jack)."
+        log "      Optional for SDL; install manually if needed:"
+        log "      sudo pacman -S jack2    # or: sudo pacman -S pipewire-jack"
+    fi
 }
 
 verify_tools() {

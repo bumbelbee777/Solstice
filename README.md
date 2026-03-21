@@ -609,6 +609,7 @@ bash tools/build_macos.sh --release --clean
 ```
 
 The scripts wrap the same CMake preset flow shown below. You can always use manual commands directly if preferred.
+They also perform post-build runtime setup by creating expected directories (for example `cache`, `bin/assets`, `bin/assets/fonts`) and staging `assets/` and compiled shaders when available.
 
 ```bash
 # Clone the repository (no --recursive needed)
