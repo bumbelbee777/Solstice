@@ -10,14 +10,47 @@
 
 #include <fstream>
 #include <vector>
+#include <string>
 #include <algorithm>
 #include <cmath>
 #include <chrono>
 #include <limits>
 #include <stdexcept>
 #include <cstring>
+#include <filesystem>
 
 namespace {
+    std::string FindFirstExistingPath(const std::vector<std::string>& candidates) {
+        std::error_code ec;
+        for (const std::string& candidate : candidates) {
+            if (std::filesystem::exists(candidate, ec) && !ec) {
+                return candidate;
+            }
+            ec.clear();
+        }
+        return {};
+    }
+
+    std::vector<std::string> BuildFontCandidates(const char* fileName) {
+        std::vector<std::string> candidates = {
+            std::string("assets/fonts/") + fileName,
+            std::string("../assets/fonts/") + fileName,
+            std::string("../../assets/fonts/") + fileName
+        };
+
+        char* basePathRaw = SDL_GetBasePath();
+        if (basePathRaw != nullptr) {
+            const std::filesystem::path basePath(basePathRaw);
+            SDL_free(basePathRaw);
+
+            candidates.emplace_back((basePath / "assets" / "fonts" / fileName).string());
+            candidates.emplace_back((basePath / ".." / "assets" / "fonts" / fileName).string());
+            candidates.emplace_back((basePath / ".." / ".." / "assets" / "fonts" / fileName).string());
+        }
+
+        return candidates;
+    }
+
     // Utility: build an orthographic projection matrix
     // Similar to bx::mtxOrtho but without the bx dependency
     void mtxOrtho(float* result, float left, float right, float bottom, float top, float zNear, float zFar, float offset, bool homogeneousNdc) {
@@ -187,10 +220,10 @@ void UISystem::CreateBGFXResources() {
     fontConfig.OversampleV = 3;
     fontConfig.PixelSnapH = false;
 
-    // Try to load Roboto-Medium.ttf from assets/fonts directory
-    // Path relative to executable or absolute path
-    const char* fontPath = "assets/fonts/Roboto-Medium.ttf";
-    m_FontRegular = io.Fonts->AddFontFromFileTTF(fontPath, fontSize, &fontConfig);
+    const std::string fontPath = FindFirstExistingPath(BuildFontCandidates("Roboto-Medium.ttf"));
+    if (!fontPath.empty()) {
+        m_FontRegular = io.Fonts->AddFontFromFileTTF(fontPath.c_str(), fontSize, &fontConfig);
+    }
 
     if (!m_FontRegular) {
         // Fallback to default font if Roboto not found
@@ -199,15 +232,19 @@ void UISystem::CreateBGFXResources() {
     }
 
     // Load bold font (using roboto-bold.ttf if available, otherwise use regular with bold flag)
-    const char* boldFontPath = "assets/fonts/roboto-bold.ttf";
+    const std::string boldFontPath = FindFirstExistingPath(BuildFontCandidates("roboto-bold.ttf"));
     fontConfig.FontLoaderFlags = 0; // Reset flags
-    m_FontBold = io.Fonts->AddFontFromFileTTF(boldFontPath, fontSize, &fontConfig);
+    if (!boldFontPath.empty()) {
+        m_FontBold = io.Fonts->AddFontFromFileTTF(boldFontPath.c_str(), fontSize, &fontConfig);
+    }
 
     if (!m_FontBold) {
         // If bold font file not found, try to use regular font with bold styling
         // Note: This requires FreeType for proper bold rendering
         fontConfig.FontLoaderFlags = 0; // Will need ImGuiFreeTypeLoaderFlags_Bold if FreeType enabled
-        m_FontBold = io.Fonts->AddFontFromFileTTF(fontPath, fontSize, &fontConfig);
+        if (!fontPath.empty()) {
+            m_FontBold = io.Fonts->AddFontFromFileTTF(fontPath.c_str(), fontSize, &fontConfig);
+        }
         if (m_FontBold) {
             SIMPLE_LOG("UISystem: Using regular font for bold (consider enabling FreeType for better quality)");
         } else {
@@ -217,14 +254,20 @@ void UISystem::CreateBGFXResources() {
 
     // Load italic font (using regular font with italic styling)
     fontConfig.FontLoaderFlags = 0; // Will need ImGuiFreeTypeLoaderFlags_Oblique if FreeType enabled
-    m_FontItalic = io.Fonts->AddFontFromFileTTF(fontPath, fontSize, &fontConfig);
+    if (!fontPath.empty()) {
+        m_FontItalic = io.Fonts->AddFontFromFileTTF(fontPath.c_str(), fontSize, &fontConfig);
+    }
     if (!m_FontItalic) {
         m_FontItalic = m_FontRegular; // Fallback to regular
     }
 
     // Load bold-italic font
     fontConfig.FontLoaderFlags = 0; // Will need both Bold and Oblique flags if FreeType enabled
-    m_FontBoldItalic = io.Fonts->AddFontFromFileTTF(boldFontPath ? boldFontPath : fontPath, fontSize, &fontConfig);
+    if (!boldFontPath.empty()) {
+        m_FontBoldItalic = io.Fonts->AddFontFromFileTTF(boldFontPath.c_str(), fontSize, &fontConfig);
+    } else if (!fontPath.empty()) {
+        m_FontBoldItalic = io.Fonts->AddFontFromFileTTF(fontPath.c_str(), fontSize, &fontConfig);
+    }
     if (!m_FontBoldItalic) {
         m_FontBoldItalic = m_FontRegular; // Fallback to regular
     }
