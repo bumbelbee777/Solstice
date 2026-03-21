@@ -101,13 +101,13 @@ bool TestMatrixOps() {
             // Identity * Scale = Scale
             Matrix4 Result = Identity * Scale;
             
-            if (!AlmostEqual(Result[0][0], 2.0f) || !AlmostEqual(Result[3][3], 1.0f)) {
+            if (!AlmostEqual(Result.M[0][0], 2.0f) || !AlmostEqual(Result.M[3][3], 1.0f)) {
                 AllCorrect.store(false, std::memory_order_relaxed); 
                 return;
             }
 
             // Manual check of a few elements
-            if (!AlmostEqual(Result[1][1], 2.0f) || !AlmostEqual(Result[2][2], 2.0f)) {
+            if (!AlmostEqual(Result.M[1][1], 2.0f) || !AlmostEqual(Result.M[2][2], 2.0f)) {
                 AllCorrect.store(false, std::memory_order_relaxed);
             }
         }
@@ -137,11 +137,12 @@ bool TestQuaternionOps() {
     auto Worker = [&]() {
         Vec3 Up(0, 1, 0);
         // Rotate 90 degrees around X
-        Quaternion Q = Quaternion::AngleAxis(90.0f * 3.14159f / 180.0f, Vec3(1, 0, 0));
+        Quaternion Q = Quaternion::FromEuler(90.0f * 3.14159f / 180.0f, 0.0f, 0.0f);
+        Matrix4 R = Q.ToMatrix();
         
         for (int i = 0; i < Iterations; ++i) {
             // Rotate the Up vector. Should become (0, 0, 1) roughly
-            Vec3 Rotated = Q.Rotate(Up);
+            Vec3 Rotated = R.TransformVector(Up);
             
             if (std::abs(Rotated.y) > 0.01f || std::abs(Rotated.z - 1.0f) > 0.01f) {
                 // Allow some epsilon for float math

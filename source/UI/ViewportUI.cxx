@@ -7,6 +7,7 @@
 #include <Render/Assets/ShaderLoader.hxx>
 #include <bgfx/bgfx.h>
 #include <cmath>
+#include <cstring>
 
 namespace Solstice::UI::ViewportUI {
 

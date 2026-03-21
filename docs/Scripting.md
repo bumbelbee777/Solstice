@@ -4,6 +4,25 @@
 
 The Solstice scripting system provides a bytecode-based virtual machine for game logic scripting. It supports a stack-based execution model with 16 registers, native function bindings, module system, and hot reloading for live code updates. The system is designed for performance and flexibility.
 
+### Developer automation scripts (Linux/macOS)
+
+For local environment setup and build automation, use the shell scripts in `tools/`:
+On Linux, the setup script supports `apt-get`, `dnf`, and `pacman` (Arch Linux).
+
+```bash
+# Linux
+bash tools/setup_env_linux.sh
+bash tools/build_linux.sh
+```
+
+```bash
+# macOS
+bash tools/setup_env_macos.sh
+bash tools/build_macos.sh
+```
+
+Manual fallback remains available in the repository `README.md` under the Building section.
+
 ## Architecture
 
 The scripting system consists of:

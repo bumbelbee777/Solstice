@@ -107,25 +107,25 @@ private:
     // Helper function for interpolation (specialized for different types)
     // Use SFINAE to exclude types that have custom overloads
     template<typename U>
-    auto Lerp(const U& A, const U& B, float T) const -> typename std::enable_if<
+    auto Lerp(const U& A, const U& B, float Alpha) const -> typename std::enable_if<
         !std::is_same<U, ImVec2>::value &&
         !std::is_same<U, ImVec4>::value &&
         !std::is_same<U, ShadowParams>::value, U>::type {
-        return A + (B - A) * T;
+        return A + (B - A) * Alpha;
     }
 
     // Specialization for ImVec2
-    ImVec2 Lerp(const ImVec2& A, const ImVec2& B, float T) const {
-        return ImVec2(A.x + (B.x - A.x) * T, A.y + (B.y - A.y) * T);
+    ImVec2 Lerp(const ImVec2& A, const ImVec2& B, float Alpha) const {
+        return ImVec2(A.x + (B.x - A.x) * Alpha, A.y + (B.y - A.y) * Alpha);
     }
 
     // Specialization for ImVec4
-    ImVec4 Lerp(const ImVec4& A, const ImVec4& B, float T) const {
-        return ImVec4(A.x + (B.x - A.x) * T, A.y + (B.y - A.y) * T, A.z + (B.z - A.z) * T, A.w + (B.w - A.w) * T);
+    ImVec4 Lerp(const ImVec4& A, const ImVec4& B, float Alpha) const {
+        return ImVec4(A.x + (B.x - A.x) * Alpha, A.y + (B.y - A.y) * Alpha, A.z + (B.z - A.z) * Alpha, A.w + (B.w - A.w) * Alpha);
     }
 
     // Specialization for ShadowParams (forward declared, implementation in .cxx)
-    ShadowParams Lerp(const ShadowParams& A, const ShadowParams& B, float T) const;
+    ShadowParams Lerp(const ShadowParams& A, const ShadowParams& B, float Alpha) const;
 
     std::vector<Keyframe<T>> m_Keyframes;
     float m_Duration{0.0f};

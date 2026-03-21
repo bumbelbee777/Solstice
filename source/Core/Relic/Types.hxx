@@ -8,7 +8,7 @@
 namespace Solstice::Core::Relic {
 
 // RELIC container magic and format version
-constexpr uint32_t RELIC_MAGIC = 0x43494C4552u; // "RELI" in little-endian
+constexpr uint32_t RELIC_MAGIC = 0x494C4552u; // "RELI" in little-endian
 constexpr uint16_t RELIC_FORMAT_VERSION = 1;
 
 // Bootstrap (game.data.relic) magic

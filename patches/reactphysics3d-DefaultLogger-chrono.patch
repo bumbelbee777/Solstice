@@ -8,3 +8,14 @@
  
  /// ReactPhysics3D namespace
  namespace reactphysics3d {
+
+--- a/include/reactphysics3d/configuration.h
++++ b/include/reactphysics3d/configuration.h
+@@ -29,6 +29,7 @@
+ // Libraries
+ #include <limits>
+ #include <cfloat>
++#include <cstdint>
+ #include <utility>
+ #include <sstream>
+ #include <string>

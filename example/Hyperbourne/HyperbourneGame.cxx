@@ -102,7 +102,7 @@ void HyperbourneGame::Initialize() {
 
     // Create scene and libraries
     m_MeshLibrary = std::make_unique<MeshLibrary>();
-    m_MaterialLibrary = std::make_unique<MaterialLibrary>();
+    m_MaterialLibrary = std::make_unique<Core::MaterialLibrary>();
     m_Scene.SetMeshLibrary(m_MeshLibrary.get());
     m_Scene.SetMaterialLibrary(m_MaterialLibrary.get());
 

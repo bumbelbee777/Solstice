@@ -15,6 +15,7 @@
 #include <chrono>
 #include <limits>
 #include <stdexcept>
+#include <cstring>
 
 namespace {
     // Utility: build an orthographic projection matrix

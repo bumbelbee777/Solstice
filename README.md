@@ -586,6 +586,30 @@ The engine includes several example projects demonstrating its capabilities:
 
 Dependencies (BGFX, SDL3, ImGui, etc.) are fetched automatically at configure time via [CPM.cmake](https://github.com/cpm-cmake/CPM.cmake). No manual clone of 3rdparty or submodules is required.
 
+#### Linux/macOS quickstart scripts
+
+Use the helper scripts to install prerequisites and run a preset-based build:
+
+On Linux, `tools/setup_env_linux.sh` supports `apt-get`, `dnf`, and `pacman` (Arch Linux).
+
+```bash
+# Linux
+bash tools/setup_env_linux.sh
+bash tools/build_linux.sh
+# or release build:
+bash tools/build_linux.sh --release
+```
+
+```bash
+# macOS
+bash tools/setup_env_macos.sh
+bash tools/build_macos.sh
+# or clean release build:
+bash tools/build_macos.sh --release --clean
+```
+
+The scripts wrap the same CMake preset flow shown below. You can always use manual commands directly if preferred.
+
 ```bash
 # Clone the repository (no --recursive needed)
 git clone https://github.com/bumbelbee777/Solstice.git

@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <stdexcept>
+#include <cstring>
 
 #ifdef SOLSTICE_SIMD_SSE
 #include <immintrin.h>
