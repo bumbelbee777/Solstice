@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
 project(Solstice VERSION 0.1.0 LANGUAGES CXX)
 
+# CMake 4 dropped compatibility defaults for projects declaring very old policy versions.
+# Some transitive dependencies (for example zstd's build/cmake project) still rely on that.
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0" AND NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM)
+    set(CMAKE_POLICY_VERSION_MINIMUM "3.5" CACHE STRING "Minimum policy version for legacy subprojects")
+endif()
+
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

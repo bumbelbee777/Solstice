@@ -13,7 +13,8 @@
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "installDir": "${sourceDir}/out/install/${presetName}",
             "cacheVariables": {
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "CMAKE_POLICY_VERSION_MINIMUM": "3.5"
             }
         },
         {
@@ -148,7 +149,8 @@
             "installDir": "${sourceDir}/out/install/default",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "CMAKE_POLICY_VERSION_MINIMUM": "3.5"
             }
         }
     ],
