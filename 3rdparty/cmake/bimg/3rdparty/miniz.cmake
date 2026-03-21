@@ -19,5 +19,14 @@ if(NOT MINIZ_LIBRARIES)
 		 MINIZ_SOURCES #
 		 ${BIMG_DIR}/3rdparty/tinyexr/deps/miniz/miniz.* #
 	)
-	set(MINIZ_INCLUDE_DIR ${BIMG_DIR}/3rdparty/tinyexr/deps/miniz)
+	# image_decode.cpp may include either <miniz.c> or <miniz/miniz.c>
+	# depending on bimg/tinyexr snapshot. Point include dir to deps root so
+	# <miniz/miniz.c> resolves, and also collect legacy flat-layout sources.
+	file(GLOB_RECURSE #
+		 MINIZ_SOURCES_LEGACY #
+		 ${BIMG_DIR}/3rdparty/tinyexr/deps/miniz.* #
+	)
+	list(APPEND MINIZ_SOURCES ${MINIZ_SOURCES_LEGACY})
+	list(REMOVE_DUPLICATES MINIZ_SOURCES)
+	set(MINIZ_INCLUDE_DIR ${BIMG_DIR}/3rdparty/tinyexr/deps)
 endif()

@@ -38,10 +38,9 @@ namespace {
             std::string("../../assets/fonts/") + fileName
         };
 
-        char* basePathRaw = SDL_GetBasePath();
+        const char* basePathRaw = SDL_GetBasePath();
         if (basePathRaw != nullptr) {
             const std::filesystem::path basePath(basePathRaw);
-            SDL_free(basePathRaw);
 
             candidates.emplace_back((basePath / "assets" / "fonts" / fileName).string());
             candidates.emplace_back((basePath / ".." / "assets" / "fonts" / fileName).string());
