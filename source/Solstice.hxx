@@ -19,6 +19,12 @@ SOLSTICE_DEVELOPMENT_BUILD = 1
     #else
         #define SOLSTICE_API __declspec(dllimport)
     #endif
+#elif defined(__GNUC__) || defined(__clang__)
+    #ifdef SOLSTICE_EXPORTS
+        #define SOLSTICE_API __attribute__((visibility("default")))
+    #else
+        #define SOLSTICE_API
+    #endif
 #else
     #define SOLSTICE_API
 #endif

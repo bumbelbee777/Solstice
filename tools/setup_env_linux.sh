@@ -54,6 +54,7 @@ install_with_apt() {
         git
         cmake
         ninja-build
+        ccache
         python3
         python3-pip
         build-essential
@@ -98,6 +99,7 @@ install_with_dnf() {
         git
         cmake
         ninja-build
+        ccache
         python3
         python3-pip
         gcc
@@ -141,6 +143,7 @@ install_with_pacman() {
         git
         cmake
         ninja
+        ccache
         python
         base-devel
         clang
@@ -207,6 +210,12 @@ verify_tools() {
         missing=1
     fi
 
+    if tool_exists ccache; then
+        log "OK: ccache found (speeds up repeat C/C++ builds)."
+    else
+        log "NOTE: ccache not found; repeat builds will be slower. Install the ccache package."
+    fi
+
     if [[ "$missing" -ne 0 ]]; then
         log "ERROR: environment setup incomplete."
         exit 1
@@ -238,6 +247,7 @@ main() {
 
     verify_tools
     log "Environment setup complete."
+    log "Tip: bash tools/build_linux.sh uses ~/.cache/solstice/cpm and ~/.cache/solstice/ccache by default (override with CPM_SOURCE_CACHE / CCACHE_DIR)."
     log "Next step: bash tools/build_linux.sh"
 }
 

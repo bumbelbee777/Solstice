@@ -42,6 +42,7 @@ install_brew_packages() {
         git
         cmake
         ninja
+        ccache
         python
         llvm
     )
@@ -72,6 +73,12 @@ verify_tools() {
         missing=1
     fi
 
+    if tool_exists ccache; then
+        log "OK: ccache found (speeds up repeat C/C++ builds)."
+    else
+        log "NOTE: ccache not found; repeat builds will be slower."
+    fi
+
     if [[ "$missing" -ne 0 ]]; then
         log "ERROR: environment setup incomplete."
         exit 1
@@ -85,6 +92,7 @@ main() {
     install_brew_packages
     verify_tools
     log "Environment setup complete."
+    log "Tip: bash tools/build_macos.sh uses ~/.cache/solstice/cpm and ~/.cache/solstice/ccache by default (override with CPM_SOURCE_CACHE / CCACHE_DIR)."
     log "Next step: bash tools/build_macos.sh"
 }
 

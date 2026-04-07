@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # Configure and build Solstice on macOS using CMake presets.
-# Usage: bash tools/build_macos.sh [--release] [--clean] [--cmake4-compat]
+# Usage: bash tools/build_macos.sh [--release] [--clean] [--refresh-deps] [--cmake4-compat]
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=solstice_unix_build_env.sh
+source "$SCRIPT_DIR/solstice_unix_build_env.sh"
 
 BUILD_MODE="debug"
 CLEAN_BUILD="false"
+REFRESH_DEPS="false"
 FORCE_CMAKE4_COMPAT="false"
 
 usage() {
@@ -18,6 +21,9 @@ Usage: bash tools/build_macos.sh [options]
 Options:
   --release   Build with macos-release preset.
   --clean     Remove preset build directory before configuring.
+  --refresh-deps
+              Remove cached CPM sources for reactphysics3d and SDL3
+              before configuring.
   --cmake4-compat
               Force CMake policy compatibility flag used by some
               older dependency CMake files (for example zstd).
@@ -37,6 +43,9 @@ parse_args() {
                 ;;
             --clean)
                 CLEAN_BUILD="true"
+                ;;
+            --refresh-deps)
+                REFRESH_DEPS="true"
                 ;;
             --cmake4-compat)
                 FORCE_CMAKE4_COMPAT="true"
@@ -117,20 +126,34 @@ main() {
     parse_args "$@"
     check_prereqs
 
+    solstice_export_build_caches
+    solstice_set_default_parallelism
+
     local preset="macos-debug"
     if [[ "$BUILD_MODE" == "release" ]]; then
         preset="macos-release"
     fi
 
     local build_dir="$PROJECT_ROOT/out/build/$preset"
+    local rp3d_cache="${CPM_SOURCE_CACHE}/reactphysics3d"
+    local sdl3_cache="${CPM_SOURCE_CACHE}/sdl3"
     local -a configure_args=()
     local cmake_major
     log "Project root: $PROJECT_ROOT"
     log "Using preset: $preset"
+    solstice_log_build_caches log
+    if [[ -n "${CMAKE_BUILD_PARALLEL_LEVEL:-}" ]]; then
+        log "CMAKE_BUILD_PARALLEL_LEVEL=$CMAKE_BUILD_PARALLEL_LEVEL"
+    fi
 
     if [[ "$CLEAN_BUILD" == "true" ]]; then
         log "Cleaning build directory: $build_dir"
         rm -rf "$build_dir"
+    fi
+
+    if [[ "$REFRESH_DEPS" == "true" ]]; then
+        log "Refreshing CPM dependency cache for reactphysics3d and SDL3 under $CPM_SOURCE_CACHE"
+        rm -rf "$rp3d_cache" "$sdl3_cache"
     fi
 
     cmake_major="$(cmake_major_version)"

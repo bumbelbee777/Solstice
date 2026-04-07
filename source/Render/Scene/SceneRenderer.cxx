@@ -159,9 +159,7 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
     }
     // Phase 8: Extended far plane to 2000.0f for distant landmark visibility
     float aspectRatio = static_cast<float>(m_Width) / static_cast<float>(m_Height);
-    Math::Matrix4 Proj = Math::Matrix4::Perspective(camera.GetZoom() * 0.0174533f,
-                                                    aspectRatio,
-                                                    0.1f, 2000.0f);
+    Math::Matrix4 Proj = camera.GetProjectionMatrix(aspectRatio, 0.1f, 2000.0f);
 
     m_PostProcessing->SetCameraMatrices(View, Proj, camPos);
 
@@ -170,8 +168,9 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
     Math::Matrix4 ProjT = Proj.Transposed();
     bgfx::setViewTransform(PostProcessing::VIEW_SCENE, &ViewT.M[0][0], &ProjT.M[0][0]);
 
-    // Render skybox first (before scene objects)
-    if (m_Skybox && m_Skybox->IsInitialized() && bgfx::isValid(m_SkyboxProgram) && bgfx::isValid(m_Skybox->GetCubemap())) {
+    // Render skybox first (before scene objects). Orthographic projection does not match infinite skybox; skip.
+    if (!camera.UseOrthographic && m_Skybox && m_Skybox->IsInitialized() && bgfx::isValid(m_SkyboxProgram)
+        && bgfx::isValid(m_Skybox->GetCubemap())) {
         bgfx::setViewFrameBuffer(PostProcessing::VIEW_SCENE, m_PostProcessing->GetSceneFramebuffer());
         m_Skybox->Render(camera, m_SkyboxProgram, m_Width, m_Height, PostProcessing::VIEW_SCENE);
         // Restore view setup for scene objects

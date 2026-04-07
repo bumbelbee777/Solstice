@@ -287,6 +287,15 @@ public:
     // Culling and Visibility
     void FrustumCull(const Camera& Cam, std::vector<SceneObjectID>& VisibleObjects, float AspectRatio = 16.0f / 9.0f) {
         VisibleObjects.clear();
+        // Orthographic thermal-plume camera can trip plane extraction assumptions; keep all camera-visible objects.
+        if (Cam.UseOrthographic) {
+            for (size_t i = 0; i < m_Count; ++i) {
+                if (m_MeshInstances.VisibilityFlags[i] & Visible_Camera) {
+                    VisibleObjects.push_back(static_cast<SceneObjectID>(i));
+                }
+            }
+            return;
+        }
 
         // Get frustum from camera with extended far plane for vast terrain (Phase 7)
         // Far plane extended to 2000.0f to see distant landmarks

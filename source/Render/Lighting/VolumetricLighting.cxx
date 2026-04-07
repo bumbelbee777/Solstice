@@ -250,8 +250,10 @@ VolumetricLighting::~VolumetricLighting() {
 
 void VolumetricLighting::Initialize(uint32_t Width, uint32_t Height,
                                     const Math::Vec3& WorldMin, const Math::Vec3& WorldMax) {
-    m_Width = Width / 4;    // 1/4 resolution for visible godrays (balanced performance)
-    m_Height = Height / 4;
+    // Avoid zero-sized internal buffers (e.g. tiny framebuffer before WM resize on some WMs);
+    // zero width breaks indexing and stochastic mask generation.
+    m_Width = std::max(1u, Width / 4);    // 1/4 resolution for visible godrays (balanced performance)
+    m_Height = std::max(1u, Height / 4);
 
     // Initialize occlusion grid (simplified - single level)
     m_OcclusionGrid.Initialize(WorldMin, WorldMax, 32, 32, 32);
@@ -347,10 +349,11 @@ void VolumetricLighting::GenerateBlueNoise() {
 }
 
 void VolumetricLighting::GenerateStochasticMask(uint32_t Width, uint32_t Height, int Frame) {
-    size_t TotalPixels = Width * Height;
-    size_t TargetPixels = static_cast<size_t>(TotalPixels * m_StochasticRatio);
+    size_t TotalPixels = static_cast<size_t>(Width) * static_cast<size_t>(Height);
 
-    // Reset mask
+    // Must match pixel loop extent; otherwise operator[] on vector<bool> is out of bounds
+    // (GCC libstdc++ checks this; MSVC release often does not).
+    m_StochasticMask.resize(TotalPixels);
     std::fill(m_StochasticMask.begin(), m_StochasticMask.end(), false);
 
     // Use blue noise + frame offset for temporal distribution

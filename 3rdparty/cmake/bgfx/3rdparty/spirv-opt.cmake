@@ -105,3 +105,12 @@ target_include_directories(
 			${SPIRV_TOOLS}/source #
 			${SPIRV_HEADERS}/include #
 )
+
+# GCC/Clang + C++20: SPIRV-Tools may trigger std::is_pod etc. deprecation notes.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+	target_compile_options(
+		spirv-opt
+		PRIVATE #
+			$<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated> #
+	)
+endif()

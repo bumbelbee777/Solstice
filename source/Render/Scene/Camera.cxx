@@ -34,6 +34,15 @@ Camera::Camera(float PosX, float PosY, float PosZ, float UpX, float UpY, float U
     UpdateCameraVectors();
 }
 
+Math::Matrix4 Camera::GetProjectionMatrix(float aspectRatio, float nearPlane, float farPlane) const {
+    if (UseOrthographic) {
+        const float halfH = std::max(OrthoHalfExtentY, 1e-4f);
+        const float halfW = halfH * std::max(aspectRatio, 1e-4f);
+        return Math::Matrix4::Orthographic(-halfW, halfW, -halfH, halfH, nearPlane, farPlane);
+    }
+    return Math::Matrix4::Perspective(Zoom * 0.0174533f, aspectRatio, nearPlane, farPlane);
+}
+
 // Returns the view matrix calculated using Euler Angles and the LookAt Matrix
 Math::Matrix4 Camera::GetViewMatrix() const {
     Math::Vec3 eye = Position;
@@ -115,7 +124,8 @@ Frustum Camera::GetFrustumVR(bool leftEye, float aspect) const {
 Frustum Camera::GetFrustum(float Aspect, float FOV, float Near, float Far) const {
     Frustum frustum;
     Math::Matrix4 view = GetViewMatrix();
-    Math::Matrix4 proj = Math::Matrix4::Perspective(Math::Vec3(FOV * (3.14159f / 180.0f), 0, 0).x, Aspect, Near, Far);
+    Math::Matrix4 proj = UseOrthographic ? GetProjectionMatrix(Aspect, Near, Far)
+                                         : Math::Matrix4::Perspective(Math::Vec3(FOV * (3.14159f / 180.0f), 0, 0).x, Aspect, Near, Far);
     Math::Matrix4 viewProj = proj * view; // Note: Check matrix multiplication order in Math lib (Row vs Column major)
 
     // Assuming Row-Major memory layout but Column-Vector multiplication (OpenGL style)

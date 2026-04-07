@@ -8,11 +8,13 @@
 #include "ContactClustering.hxx"
 #include "ShapeHelpers.hxx"
 #include "../Core/SIMD.hxx"
+#include "../Math/SIMDVec3.hxx"
 #include "../Core/Debug.hxx"
 #include "../Core/ScopeTimer.hxx"
 #include "../Core/Profiler.hxx"
 #include <algorithm>
 #include <cmath>
+#include <future>
 #include <string>
 
 namespace Solstice::Physics {
@@ -80,6 +82,33 @@ void PhysicsSystem::IntegrateVelocity(float dt) {
         // Accumulate torques
         for (const auto& t : rb.PendingTorques) rb.Torque += t;
         rb.PendingTorques.clear();
+
+        // Legacy Fluid component (buoyancy / damping) — apply before acceleration
+        if (m_Registry->Has<Fluid>(entityId)) {
+            const Fluid& fluid = m_Registry->Get<Fluid>(entityId);
+            float displacement = 1.0f;
+            float buoyancyForce = fluid.Density * 9.81f * displacement;
+            rb.Force.y += buoyancyForce;
+            rb.Force.x -= rb.Velocity.x * fluid.Viscosity;
+            rb.Force.y -= rb.Velocity.y * fluid.Viscosity;
+            rb.Force.z -= rb.Velocity.z * fluid.Viscosity;
+        }
+
+        // FluidSimulation: drag and buoyancy relative to sampled fluid velocity
+        for (FluidSimulation* fluidSim : activeFluidSims) {
+            const Math::Vec3 fluidVel = fluidSim->SampleVelocity(rb.Position);
+            const Math::Vec3 relativeVel = Solstice::Math::SubSIMD(rb.Velocity, fluidVel);
+            const float dragCoeff = fluidSim->GetFluidDragCoefficient();
+            const float relativeSpeed = Solstice::Math::MagnitudeSIMD(relativeVel);
+            if (relativeSpeed > 1e-6f) {
+                const Math::Vec3 dragForce = relativeVel * (-dragCoeff * relativeSpeed);
+                rb.Force += dragForce;
+            }
+            float submergedVolume = 1.0f;
+            const float fluidDensity = fluidSim->GetReferenceDensity();
+            const Math::Vec3 buoyancyForce(0, fluidDensity * 9.81f * submergedVolume, 0);
+            rb.Force += buoyancyForce;
+        }
 
         // Linear Integration (Force -> Acceleration -> Velocity)
         Math::Vec3 acceleration = rb.Acceleration;
@@ -159,38 +188,6 @@ void PhysicsSystem::IntegrateVelocity(float dt) {
             }
         }
 
-        // Fluid interactions - check for Fluid component
-        if (m_Registry->Has<Fluid>(entityId)) {
-            const Fluid& fluid = m_Registry->Get<Fluid>(entityId);
-            float displacement = 1.0f;
-            float buoyancyForce = fluid.Density * 9.81f * displacement;
-            rb.Force.y += buoyancyForce;
-            rb.Force.x -= rb.Velocity.x * fluid.Viscosity;
-            rb.Force.y -= rb.Velocity.y * fluid.Viscosity;
-            rb.Force.z -= rb.Velocity.z * fluid.Viscosity;
-        }
-
-        // FluidSimulation interaction - sample fluid velocity and apply forces
-        for (FluidSimulation* fluidSim : activeFluidSims) {
-            // Sample fluid velocity at body position
-            Math::Vec3 fluidVel = fluidSim->SampleVelocity(rb.Position);
-            Math::Vec3 relativeVel = rb.Velocity - fluidVel;
-
-            // Apply drag based on relative velocity
-            float dragCoeff = 0.5f; // Can be made configurable
-            float relativeSpeed = relativeVel.Magnitude();
-            if (relativeSpeed > 1e-6f) {
-                Math::Vec3 dragForce = relativeVel * (-dragCoeff * relativeSpeed);
-                rb.Force += dragForce;
-            }
-
-            // Apply buoyancy (simplified - assumes body is partially submerged)
-            float submergedVolume = 1.0f; // Placeholder - can be computed based on shape
-            float fluidDensity = 1000.0f; // Can be made configurable per FluidSimulation
-            Math::Vec3 buoyancyForce(0, fluidDensity * 9.81f * submergedVolume, 0);
-            rb.Force += buoyancyForce;
-        }
-
         // Reset forces
         rb.Force = Math::Vec3{0.0f, 0.0f, 0.0f};
         rb.Torque = Math::Vec3{0.0f, 0.0f, 0.0f};
@@ -229,7 +226,6 @@ void PhysicsSystem::IntegratePosition(float dt) {
 }
 
 void PhysicsSystem::Update(float dt) {
-    PROFILE_SCOPE("Physics.Update");
     if (!m_Running || !m_Registry) return;
     if (dt <= 0.0f) return;
     float stepDt = dt;
@@ -238,33 +234,58 @@ void PhysicsSystem::Update(float dt) {
         Core::Profiler::Instance().IncrementCounter("Physics.StepClamped");
     }
 
+    // Start grid fluids as soon as stepDt is known (before Physics.Update scope / SyncTo) so the
+    // solver runs in parallel with registry->RP3D sync and any main-thread setup in PROFILE_SCOPE.
+    std::future<void> fluidFuture;
+    bool fluidAsyncPending = false;
+    bool fluidsSteppedSynchronously = false;
+    for (FluidSimulation* fp : m_FluidSimulations) {
+        if (!fp) {
+            continue;
+        }
+        try {
+            fluidFuture = Core::JobSystem::Instance().SubmitAsync([this, stepDt]() {
+                UpdateFluidSimulations(stepDt);
+            });
+            fluidAsyncPending = true;
+        } catch (...) {
+            UpdateFluidSimulations(stepDt);
+            fluidsSteppedSynchronously = true;
+        }
+        break;
+    }
+
+    PROFILE_SCOPE("Physics.Update");
+
     // ReactPhysics3D Integration:
-    // 1. Sync RigidBody components -> ReactPhysics3D bodies
+    // 1. Sync RigidBody components -> ReactPhysics3D bodies (overlaps with fluid job above)
     {
         PROFILE_SCOPE("Physics.SyncTo");
         m_Bridge.SyncToReactPhysics3D();
     }
 
-    // 2. Apply custom forces (fluid interactions, etc.) before physics step
-    //    Note: These forces are applied to RigidBody components, which will be synced next frame
+    if (fluidAsyncPending) {
+        fluidFuture.wait();
+    } else if (!fluidsSteppedSynchronously) {
+        UpdateFluidSimulations(stepDt);
+    }
+
+    // 2. Integrate velocity (fluid drag/buoyancy sample the fluid fields stepped above)
     IntegrateVelocity(stepDt);
 
-    // 3. Update Fluid Simulations
-    UpdateFluidSimulations(stepDt);
-
-    // 4. Update ReactPhysics3D physics world (handles collision detection and dynamics)
+    // 3. Update ReactPhysics3D physics world (handles collision detection and dynamics)
     {
         PROFILE_SCOPE("Physics.BridgeUpdate");
         m_Bridge.Update(stepDt);
     }
 
-    // 5. Sync ReactPhysics3D bodies -> RigidBody components
+    // 4. Sync ReactPhysics3D bodies -> RigidBody components
     {
         PROFILE_SCOPE("Physics.SyncFrom");
         m_Bridge.SyncFromReactPhysics3D();
     }
 
-    // 6. Update sleep state (for backward compatibility with existing code)
+    // 5. Update sleep state (for backward compatibility with existing code)
     {
         PROFILE_SCOPE("Physics.SleepState");
         UpdateSleepState();
@@ -339,11 +360,30 @@ void PhysicsSystem::UpdateSleepState() {
 
 void PhysicsSystem::UpdateFluidSimulations(float dt) {
     PROFILE_SCOPE("Physics.Fluids");
+    std::vector<FluidSimulation*> active;
+    active.reserve(m_FluidSimulations.size());
     for (FluidSimulation* fluidSim : m_FluidSimulations) {
         if (fluidSim) {
-            fluidSim->Step(dt);
+            active.push_back(fluidSim);
         }
     }
+    if (active.empty()) {
+        return;
+    }
+    if (active.size() == 1) {
+        active[0]->Step(dt);
+        return;
+    }
+#ifdef SOLSTICE_HAS_OPENMP
+#pragma omp parallel for schedule(static)
+    for (int si = 0; si < static_cast<int>(active.size()); ++si) {
+        active[static_cast<size_t>(si)]->Step(dt);
+    }
+#else
+    for (FluidSimulation* f : active) {
+        f->Step(dt);
+    }
+#endif
 }
 
 // PerformCCD and SweptSphereCast moved to CCD.cxx

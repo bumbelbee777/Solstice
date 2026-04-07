@@ -108,6 +108,9 @@ public:
     // Initialization state
     bool IsInitialized() const { return m_Initialized; }
 
+    int GetFramebufferWidth() const { return m_Width; }
+    int GetFramebufferHeight() const { return m_Height; }
+
     // Stats
     struct RenderStats {
         uint32_t VisibleObjects;

@@ -15,11 +15,18 @@ add_subdirectory(Scripting)
 add_subdirectory(Game)
 
 # SolsticeEngine: single shared library that links all engine parts
-add_library(SolsticeEngine SHARED Init.cxx)
+add_library(SolsticeEngine SHARED
+    Init.cxx
+    API/V1/Core.cxx
+    API/V1/Audio.cxx
+    API/V1/Scripting.cxx
+    API/V1/Physics.cxx
+)
 target_include_directories(SolsticeEngine
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<BUILD_INTERFACE:${ENGINE_SOURCE_DIR}>
+        $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/SDK>
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_SOURCE_DIR}/Solstice
@@ -30,7 +37,7 @@ set(ENGINE_LIBS Core Math Skeleton MinGfx Arzachel Game Physics Render UI Script
 if(MSVC)
     foreach(LIB IN LISTS ENGINE_LIBS)
         # Only apply /WHOLEARCHIVE to STATIC libraries (skip INTERFACE libraries like Entity)
-        target_link_options(SolsticeEngine PRIVATE 
+        target_link_options(SolsticeEngine PRIVATE
             "$<$<STREQUAL:$<TARGET_PROPERTY:${LIB},TYPE>,STATIC_LIBRARY>:/WHOLEARCHIVE:$<TARGET_FILE:${LIB}>>"
         )
     endforeach()
@@ -66,10 +73,16 @@ if(MSVC)
         SOLSTICE_BUILD_GIT_COMMIT="${GIT_COMMIT_HASH}"
     )
 else()
-    target_compile_definitions(SolsticeEngine PRIVATE SOLSTICE_BUILD_GIT_COMMIT="${GIT_COMMIT_HASH}")
+    target_compile_definitions(SolsticeEngine PRIVATE
+        SOLSTICE_EXPORTS
+        SOLSTICE_BUILD_GIT_COMMIT="${GIT_COMMIT_HASH}"
+    )
 endif()
 target_compile_features(SolsticeEngine PRIVATE cxx_std_20)
 set_target_properties(SolsticeEngine PROPERTIES
+    OUTPUT_NAME "$<$<PLATFORM_ID:Windows>:SolsticeEngine>$<$<NOT:$<PLATFORM_ID:Windows>>:solsticeengine>"
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
     CXX_EXTENSIONS OFF

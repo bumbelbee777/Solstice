@@ -61,6 +61,9 @@ void ManifoldManager::UpdateManifolds(const std::vector<CollisionResolution::Con
             for (size_t i = 0; i < newManifold.Contacts.size(); ++i) {
                 if (!newContactMatched[i] && cached.Manifold.Contacts.size() < 4) {
                     cached.Manifold.Contacts.push_back(newManifold.Contacts[i]);
+                    // Keep parallel with Contacts; without this, oldContactMatched[idx] goes out of bounds
+                    // (libstdc++ debug builds abort on vector<bool>::operator[]).
+                    oldContactMatched.push_back(false);
                 }
             }
 
@@ -69,6 +72,9 @@ void ManifoldManager::UpdateManifolds(const std::vector<CollisionResolution::Con
             auto contactsIt = cached.Manifold.Contacts.begin();
             size_t idx = 0;
             while (contactsIt != cached.Manifold.Contacts.end()) {
+                if (idx >= oldContactMatched.size()) {
+                    break;
+                }
                 if (!oldContactMatched[idx] && cached.Manifold.Contacts.size() > newManifold.Contacts.size()) {
                     // Remove stale contact if we have too many
                     contactsIt = cached.Manifold.Contacts.erase(contactsIt);

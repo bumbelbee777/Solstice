@@ -1,4 +1,15 @@
 cmake_minimum_required(VERSION 3.20)
+
+# Linux/macOS: use ccache when installed (large speedup on rebuilds).
+# Must be set before project()/enable_language() so the launcher applies to compiler detection.
+if(UNIX AND NOT DEFINED CMAKE_CXX_COMPILER_LAUNCHER)
+    find_program(SOLSTICE_CCACHE_EXECUTABLE ccache)
+    if(SOLSTICE_CCACHE_EXECUTABLE)
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${SOLSTICE_CCACHE_EXECUTABLE}" CACHE STRING "C++ compiler launcher (ccache when found)")
+        set(CMAKE_C_COMPILER_LAUNCHER "${SOLSTICE_CCACHE_EXECUTABLE}" CACHE STRING "C compiler launcher (ccache when found)")
+    endif()
+endif()
+
 project(Solstice VERSION 0.1.0 LANGUAGES CXX)
 
 # CMake 4 dropped compatibility defaults for projects declaring very old policy versions.
@@ -29,7 +40,13 @@ endif()
 # ============================================================================
 # Dependencies via CPM (fetch at configure time; no manual 3rdparty clone)
 # ============================================================================
-set(CPM_SOURCE_CACHE "${CMAKE_SOURCE_DIR}/.cpm-cache" CACHE PATH "CPM download cache")
+# Prefer CPM_SOURCE_CACHE from the environment (CI or a persistent user cache).
+# Example (bash): export CPM_SOURCE_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/solstice/cpm"
+set(_solstice_cpm_source_cache "${CMAKE_SOURCE_DIR}/.cpm-cache")
+if(DEFINED ENV{CPM_SOURCE_CACHE} AND NOT "$ENV{CPM_SOURCE_CACHE}" STREQUAL "")
+    set(_solstice_cpm_source_cache "$ENV{CPM_SOURCE_CACHE}")
+endif()
+set(CPM_SOURCE_CACHE "${_solstice_cpm_source_cache}" CACHE PATH "CPM dependency source cache (override with env CPM_SOURCE_CACHE or -DCPM_SOURCE_CACHE=)")
 include(${CMAKE_SOURCE_DIR}/cmake/CPM.cmake)
 
 # BGFX stack: fetch sources only; 3rdparty/cmake builds them
@@ -40,8 +57,16 @@ CPMAddPackage(NAME bimg GITHUB_REPOSITORY bkaradzic/bimg GIT_TAG master DOWNLOAD
 CPMAddPackage(NAME bgfx GITHUB_REPOSITORY bkaradzic/bgfx GIT_TAG master DOWNLOAD_ONLY YES)
 
 # SDL3: full CMake project
+# SDL_TEST_LIBRARY OFF: avoids SDL3_test + libunwind pkg-config noise (SDL_TEST is not a CMake flag).
+# SDL_PIPEWIRE OFF / SDL_HIDAPI_LIBUSB OFF: skip optional deps many dev images lack; ALSA/Pulse + evdev/hidraw remain.
 CPMAddPackage(NAME SDL3 GITHUB_REPOSITORY libsdl-org/SDL GIT_TAG release-3.4.2
-    OPTIONS "SDL_SHARED ON" "SDL_STATIC OFF" "SDL_TEST OFF"
+    OPTIONS
+        "SDL_SHARED ON"
+        "SDL_STATIC OFF"
+        "SDL_TEST_LIBRARY OFF"
+        "SDL_TESTS OFF"
+        "SDL_PIPEWIRE OFF"
+        "SDL_HIDAPI_LIBUSB OFF"
     EXCLUDE_FROM_ALL YES
 )
 
@@ -125,6 +150,7 @@ target_link_libraries(SolsticeEngine PUBLIC
 # ============================================================================
 # Shader Compilation
 # ============================================================================
+# tools/compile_shaders.py picks the profile per OS (Linux: spirv for Vulkan, Windows: s_5_0, macOS: metal).
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
 # Collect shader source files for dependency tracking
@@ -187,3 +213,4 @@ add_subdirectory(example/Blizzard)
 add_subdirectory(example/Hyperbourne)
 add_subdirectory(example/Avalanche)
 add_subdirectory(example/Disco)
+add_subdirectory(example/ThermalPlume)

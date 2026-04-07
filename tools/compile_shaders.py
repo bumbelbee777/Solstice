@@ -20,9 +20,10 @@ def get_platform_info():
     elif system == "darwin":
         return "osx", "metal", ""
     elif system == "linux":
-        return "linux", "440", ""
+        # SPIR-V for bgfx Vulkan (default on Linux). Use --profile 440 for OpenGL-only runs.
+        return "linux", "spirv", ""
     else:
-        return "linux", "440", ""  # Default to Linux
+        return "linux", "spirv", ""
 
 def get_web_platform_info(target):
     """Get platform info for web targets (WebGL/WebGPU)."""
@@ -160,6 +161,8 @@ def compile_shaders(args):
             varying_def = shader_dir / "varying_debug.def.sc"
         elif "_billboard" in stem_lower:
             varying_def = shader_dir / "varying_billboard.def.sc"
+        elif "_fluid_volume" in stem_lower:
+            varying_def = shader_dir / "varying_fluid_volume.def.sc"
 
         if not varying_def.exists():
             print(f"WARNING: Varying definition not found: {varying_def}")
@@ -227,7 +230,8 @@ def main():
         epilog="""
 Examples:
   %(prog)s                              # Auto-detect everything
-  %(prog)s --platform linux --profile 440
+  %(prog)s --platform linux --profile spirv   # Vulkan (default on Linux)
+  %(prog)s --platform linux --profile 440     # OpenGL only (not for Vulkan)
   %(prog)s --shaderc /path/to/shaderc --input-dir ./Shaders
   %(prog)s --copy-dir /path/to/game/dir  # Compile and copy to game/shaders/
         """
@@ -255,7 +259,7 @@ Examples:
     )
     parser.add_argument(
         "--profile",
-        help="Shader profile (e.g., s_5_0, metal, 440)"
+        help="Shader profile (e.g., s_5_0, metal, spirv, 440). Linux default is spirv for Vulkan."
     )
     parser.add_argument(
         "--copy-dir",

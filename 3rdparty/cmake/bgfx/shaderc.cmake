@@ -17,6 +17,11 @@ file(
 	${BGFX_DIR}/src/shader* #
 )
 
+# Keep exactly one compileDxilShader implementation:
+# - Windows: real DXIL backend
+# - Non-Windows: generated stub
+list(REMOVE_ITEM SHADERC_SOURCES "${BGFX_DIR}/tools/shaderc/shaderc_dxil_stub.cpp")
+
 # DXIL backend requires Windows SDK headers (for example unknwnbase.h).
 # Exclude it on non-Windows hosts so shaderc builds on Linux/macOS.
 if(NOT WIN32)

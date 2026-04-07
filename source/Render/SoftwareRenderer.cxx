@@ -532,7 +532,7 @@ void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam) {
     if (m_VolumetricLighting) {
         Math::Matrix4 View = Cam.GetViewMatrix();
         float aspectRatio = static_cast<float>(m_Width) / static_cast<float>(m_Height);
-        Math::Matrix4 Proj = Math::Matrix4::Perspective(Cam.GetZoom() * 0.0174533f, aspectRatio, 0.1f, 2000.0f);
+        Math::Matrix4 Proj = Cam.GetProjectionMatrix(aspectRatio, 0.1f, 2000.0f);
         Math::Matrix4 ViewProj = Proj * View;
 
         // Use cached lights from RenderScene(..., Lights) call, or empty list

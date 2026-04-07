@@ -5,10 +5,9 @@
 #include "Core/Relic/Relic.hxx"
 #include "UI/UISystem.hxx"
 #include "Physics/PhysicsSystem.hxx"
-#include "Scripting/Compiler.hxx"
-#include "Scripting/BytecodeVM.hxx"
+#include "SolsticeAPI/V1/Core.h"
+#include "SolsticeAPI/V1/Scripting.h"
 #include <cstring>
-#include <sstream>
 #include <filesystem>
 
 namespace Solstice {
@@ -114,129 +113,38 @@ SOLSTICE_API void Shutdown() {
 
 } // namespace Solstice
 
-// Extern "C" wrappers for DLL loading (to avoid C++ name mangling)
+#if defined(_MSC_VER)
+#define SOLSTICE_LEGACY_C_DEPRECATED __declspec(deprecated("Use SolsticeV1_* C API"))
+#elif defined(__GNUC__) || defined(__clang__)
+#define SOLSTICE_LEGACY_C_DEPRECATED __attribute__((deprecated("Use SolsticeV1_* C API")))
+#else
+#define SOLSTICE_LEGACY_C_DEPRECATED
+#endif
+
+// Extern "C" wrappers for DLL loading (to avoid C++ name mangling); deprecated in favor of SolsticeV1_*.
 extern "C" {
-    SOLSTICE_API bool Initialize() {
-        return Solstice::Initialize();
-    }
+SOLSTICE_LEGACY_C_DEPRECATED
+SOLSTICE_API bool Initialize() {
+    return SolsticeV1_CoreInitialize() != SolsticeV1_False;
+}
 
-    SOLSTICE_API bool Reinitialize() {
-        return Solstice::Reinitialize();
-    }
+SOLSTICE_LEGACY_C_DEPRECATED
+SOLSTICE_API bool Reinitialize() {
+    return SolsticeV1_CoreReinitialize() != SolsticeV1_False;
+}
 
-    SOLSTICE_API void Shutdown() {
-        Solstice::Shutdown();
-    }
+SOLSTICE_LEGACY_C_DEPRECATED
+SOLSTICE_API void Shutdown() {
+    SolsticeV1_CoreShutdown();
+}
 
-    // Compile Moonwalk script source to bytecode
-    // Returns: 0 on success, non-zero on error
-    // Error message is written to errorBuffer (max errorBufferSize chars)
-    SOLSTICE_API int Compile(const char* source, char* errorBuffer, size_t errorBufferSize) {
-        try {
-            Solstice::Scripting::Compiler compiler;
-            auto program = compiler.Compile(std::string(source));
-            (void)program; // Program compiled successfully
-            return 0; // Success
-        } catch (const std::exception& e) {
-            if (errorBuffer && errorBufferSize > 0) {
-                size_t len = std::min(errorBufferSize - 1, strlen(e.what()));
-#ifdef _WIN32
-                strncpy_s(errorBuffer, errorBufferSize, e.what(), len);
-#else
-                strncpy(errorBuffer, e.what(), len);
-#endif
-                errorBuffer[len] = '\0';
-            }
-            return 1; // Error
-        } catch (...) {
-            if (errorBuffer && errorBufferSize > 0) {
-                const char* msg = "Unknown compilation error";
-                size_t len = std::min(errorBufferSize - 1, strlen(msg));
-#ifdef _WIN32
-                strncpy_s(errorBuffer, errorBufferSize, msg, len);
-#else
-                strncpy(errorBuffer, msg, len);
-#endif
-                errorBuffer[len] = '\0';
-            }
-            return 1; // Error
-        }
-    }
+SOLSTICE_LEGACY_C_DEPRECATED
+SOLSTICE_API int Compile(const char* source, char* errorBuffer, size_t errorBufferSize) {
+    return static_cast<int>(SolsticeV1_ScriptingCompile(source, errorBuffer, errorBufferSize));
+}
 
-    // Execute Moonwalk script (compile and run)
-    // Returns: 0 on success, non-zero on error
-    // Output is written to outputBuffer (max outputBufferSize chars)
-    // Error message is written to errorBuffer (max errorBufferSize chars)
-    SOLSTICE_API int Execute(const char* source, char* outputBuffer, size_t outputBufferSize, char* errorBuffer, size_t errorBufferSize) {
-        try {
-            Solstice::Scripting::Compiler compiler;
-            auto program = compiler.Compile(std::string(source));
-
-            // Create VM with basic print function (no need for full bindings for simple execution)
-            Solstice::Scripting::BytecodeVM vm;
-
-            // Register print function to capture output
-            std::ostringstream outputStream;
-            vm.RegisterNative("print", [&outputStream](const std::vector<Solstice::Scripting::Value>& args) -> Solstice::Scripting::Value {
-                bool first = true;
-                for (const auto& arg : args) {
-                    if (!first) outputStream << " ";
-                    first = false;
-
-                    if (std::holds_alternative<int64_t>(arg)) {
-                        outputStream << std::get<int64_t>(arg);
-                    } else if (std::holds_alternative<double>(arg)) {
-                        outputStream << std::get<double>(arg);
-                    } else if (std::holds_alternative<std::string>(arg)) {
-                        outputStream << std::get<std::string>(arg);
-                    } else {
-                        outputStream << "[value]";
-                    }
-                }
-                outputStream << "\n";
-                return (int64_t)0;
-            });
-
-            // Load and run program
-            vm.LoadProgram(program);
-            vm.Run();
-
-            // Copy output to buffer
-            std::string output = outputStream.str();
-            if (outputBuffer && outputBufferSize > 0) {
-                size_t len = std::min(outputBufferSize - 1, output.length());
-#ifdef _WIN32
-                strncpy_s(outputBuffer, outputBufferSize, output.c_str(), len);
-#else
-                strncpy(outputBuffer, output.c_str(), len);
-#endif
-                outputBuffer[len] = '\0';
-            }
-
-            return 0; // Success
-        } catch (const std::exception& e) {
-            if (errorBuffer && errorBufferSize > 0) {
-                size_t len = std::min(errorBufferSize - 1, strlen(e.what()));
-#ifdef _WIN32
-                strncpy_s(errorBuffer, errorBufferSize, e.what(), len);
-#else
-                strncpy(errorBuffer, e.what(), len);
-#endif
-                errorBuffer[len] = '\0';
-            }
-            return 1; // Error
-        } catch (...) {
-            if (errorBuffer && errorBufferSize > 0) {
-                const char* msg = "Unknown execution error";
-                size_t len = std::min(errorBufferSize - 1, strlen(msg));
-#ifdef _WIN32
-                strncpy_s(errorBuffer, errorBufferSize, msg, len);
-#else
-                strncpy(errorBuffer, msg, len);
-#endif
-                errorBuffer[len] = '\0';
-            }
-            return 1; // Error
-        }
-    }
+SOLSTICE_LEGACY_C_DEPRECATED
+SOLSTICE_API int Execute(const char* source, char* outputBuffer, size_t outputBufferSize, char* errorBuffer, size_t errorBufferSize) {
+    return static_cast<int>(SolsticeV1_ScriptingExecute(source, outputBuffer, outputBufferSize, errorBuffer, errorBufferSize));
+}
 }

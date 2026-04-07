@@ -1,3 +1,14 @@
+# Solstice V1 C API smoke test (link + optional GetProcAddress on Windows)
+add_executable(CAPISmokeTest
+    CAPISmokeTest.cxx
+)
+target_link_libraries(CAPISmokeTest
+    SolsticeEngine
+)
+set_target_properties(CAPISmokeTest PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
 # Thread Safety Test
 add_executable(ThreadSafetyTest
     ThreadSafetyTest.cxx
@@ -53,5 +64,16 @@ target_link_libraries(JobSystemStressTest
     SolsticeEngine
 )
 set_target_properties(JobSystemStressTest PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+# Navier-Stokes Solver Test
+add_executable(NSSolverTest
+    NSSolverTest.cxx
+)
+target_link_libraries(NSSolverTest
+    SolsticeEngine
+)
+set_target_properties(NSSolverTest PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )

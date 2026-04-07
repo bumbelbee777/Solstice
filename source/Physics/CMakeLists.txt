@@ -2,6 +2,7 @@
 set(SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
 add_library(Physics STATIC
     PhysicsSystem.cxx
+    FluidSparse.cxx
     ReactPhysics3DBridge.cxx
     CollisionResolution.cxx
     IterativeSolver.cxx
@@ -18,6 +19,11 @@ add_library(Physics STATIC
 )
 target_include_directories(Physics PUBLIC ${SOURCE_DIR})
 target_link_libraries(Physics PUBLIC Core Math ReactPhysics3D::reactphysics3d)
+find_package(OpenMP)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(Physics PUBLIC OpenMP::OpenMP_CXX)
+    target_compile_definitions(Physics PRIVATE SOLSTICE_HAS_OPENMP)
+endif()
 if(MSVC)
     target_compile_options(Physics PRIVATE /Zc:preprocessor /W0)
     target_compile_definitions(Physics PRIVATE SOLSTICE_EXPORTS _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS _SILENCE_ALL_MS_EXT_DEPRECATION_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)

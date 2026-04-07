@@ -58,3 +58,12 @@ target_include_directories(
 	PRIVATE #
 			${SPIRV_CROSS}/include #
 )
+
+# GCC/Clang + C++20: spirv-cross uses [=] lambdas that implicitly capture this (deprecated in C++20).
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+	target_compile_options(
+		spirv-cross
+		PRIVATE #
+			$<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated> #
+	)
+endif()

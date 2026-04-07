@@ -6,6 +6,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=solstice_unix_build_env.sh
+source "$SCRIPT_DIR/solstice_unix_build_env.sh"
 
 BUILD_MODE="debug"
 CLEAN_BUILD="false"
@@ -20,8 +22,8 @@ Options:
   --release   Build with linux-release preset.
   --clean     Remove preset build directory before configuring.
   --refresh-deps
-              Remove cached CPM sources for Linux-sensitive deps
-              (reactphysics3d, SDL3) before configuring.
+              Remove cached CPM sources for reactphysics3d and SDL3
+              before configuring.
   --cmake4-compat
               Force CMake policy compatibility flag used by some
               older dependency CMake files (for example zstd).
@@ -124,18 +126,25 @@ main() {
     parse_args "$@"
     check_prereqs
 
+    solstice_export_build_caches
+    solstice_set_default_parallelism
+
     local preset="linux-debug"
     if [[ "$BUILD_MODE" == "release" ]]; then
         preset="linux-release"
     fi
 
     local build_dir="$PROJECT_ROOT/out/build/$preset"
-    local rp3d_cache="$PROJECT_ROOT/.cpm-cache/reactphysics3d"
-    local sdl3_cache="$PROJECT_ROOT/.cpm-cache/sdl3"
+    local rp3d_cache="${CPM_SOURCE_CACHE}/reactphysics3d"
+    local sdl3_cache="${CPM_SOURCE_CACHE}/sdl3"
     local -a configure_args=()
     local cmake_major
     log "Project root: $PROJECT_ROOT"
     log "Using preset: $preset"
+    solstice_log_build_caches log
+    if [[ -n "${CMAKE_BUILD_PARALLEL_LEVEL:-}" ]]; then
+        log "CMAKE_BUILD_PARALLEL_LEVEL=$CMAKE_BUILD_PARALLEL_LEVEL"
+    fi
 
     if [[ "$CLEAN_BUILD" == "true" ]]; then
         log "Cleaning build directory: $build_dir"
@@ -143,7 +152,7 @@ main() {
     fi
 
     if [[ "$REFRESH_DEPS" == "true" ]]; then
-        log "Refreshing CPM dependency cache for reactphysics3d and SDL3"
+        log "Refreshing CPM dependency cache for reactphysics3d and SDL3 under $CPM_SOURCE_CACHE"
         rm -rf "$rp3d_cache" "$sdl3_cache"
     fi
 

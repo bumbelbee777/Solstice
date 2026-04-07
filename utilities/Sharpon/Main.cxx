@@ -67,9 +67,9 @@ bool LoadSolsticeEngine() {
 
     return initFunc();
 #else
-    g_SolsticeDLL = dlopen("libSolsticeEngine.so", RTLD_LAZY);
+    g_SolsticeDLL = dlopen("libsolsticeengine.so", RTLD_LAZY);
     if (!g_SolsticeDLL) {
-        std::cerr << "Failed to load libSolsticeEngine.so: " << dlerror() << std::endl;
+        std::cerr << "Failed to load libsolsticeengine.so: " << dlerror() << std::endl;
         return false;
     }
 

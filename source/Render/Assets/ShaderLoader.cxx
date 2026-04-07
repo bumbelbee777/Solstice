@@ -53,24 +53,32 @@ bgfx::ShaderHandle ShaderLoader::LoadShader(const std::string& name) {
         return BGFX_INVALID_HANDLE;
     }
 
-    // Read file size and allocate memory
+    // Read file size; bgfx shader blobs are binary — pass exact byte count (no NUL padding).
     std::streamsize size = file.tellg();
     file.seekg(0, std::ios::beg);
 
-    // Allocate bgfx memory (size + 1 for null terminator)
-    const bgfx::Memory* mem = bgfx::alloc(static_cast<uint32_t>(size) + 1);
-    if (!mem || !mem->data) {
-        SIMPLE_LOG("ShaderLoader: ERROR - bgfx::alloc failed for " + name);
+    if (size <= 0) {
+        SIMPLE_LOG("ShaderLoader: Invalid or empty shader file: " + name);
         file.close();
         return BGFX_INVALID_HANDLE;
     }
 
-    // Read directly into bgfx memory
-    file.read(reinterpret_cast<char*>(mem->data), size);
-    mem->data[mem->size - 1] = '\0'; // Null terminate
+    const auto byteSize = static_cast<uint32_t>(size);
+    std::vector<uint8_t> buffer(byteSize);
+    file.read(reinterpret_cast<char*>(buffer.data()), size);
+    if (!file || file.gcount() != size) {
+        SIMPLE_LOG("ShaderLoader: ERROR - failed to read shader file: " + name);
+        file.close();
+        return BGFX_INVALID_HANDLE;
+    }
     file.close();
 
-    // Create shader
+    const bgfx::Memory* mem = bgfx::copy(buffer.data(), byteSize);
+    if (!mem || !mem->data) {
+        SIMPLE_LOG("ShaderLoader: ERROR - bgfx::copy failed for " + name);
+        return BGFX_INVALID_HANDLE;
+    }
+
     bgfx::ShaderHandle shader = bgfx::createShader(mem);
 
     if (!bgfx::isValid(shader)) {

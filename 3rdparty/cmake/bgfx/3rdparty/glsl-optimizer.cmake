@@ -228,6 +228,7 @@ else()
 				"-Wno-sign-compare" #
 				"-Wno-unused-function" #
 				"-Wno-unused-parameter" #
+				"-Wno-builtin-macro-redefined" # M_PIf / M_PI_2f vs glibc <math.h> (GCC 15+)
 	)
 endif()
 

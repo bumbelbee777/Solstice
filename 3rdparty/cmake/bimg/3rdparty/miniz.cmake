@@ -28,5 +28,11 @@ if(NOT MINIZ_LIBRARIES)
 	)
 	list(APPEND MINIZ_SOURCES ${MINIZ_SOURCES_LEGACY})
 	list(REMOVE_DUPLICATES MINIZ_SOURCES)
-	set(MINIZ_INCLUDE_DIR ${BIMG_DIR}/3rdparty/tinyexr/deps)
+	# tinyexr.h uses #include <miniz.h>; headers live under deps/miniz/, not deps/.
+	set(MINIZ_INCLUDE_DIR ${BIMG_DIR}/3rdparty/tinyexr/deps/miniz)
+
+	# Vendored C only: silence #pragma message and other third-party noise (one TU, low risk).
+	if(MINIZ_SOURCES AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+		set_source_files_properties(${MINIZ_SOURCES} PROPERTIES COMPILE_OPTIONS "-w")
+	endif()
 endif()

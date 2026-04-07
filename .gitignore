@@ -24,6 +24,7 @@ Makefile
 !CMakePresets.json
 !3rdparty/cmake/**
 compile_commands.json
+.cpm-cache/
 
 .vs/
 *.sln

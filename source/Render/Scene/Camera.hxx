@@ -65,6 +65,8 @@ struct SOLSTICE_API Camera {
            float Yaw, float Pitch);
 
     Math::Matrix4 GetViewMatrix() const;
+    /// Perspective (from Zoom FOV) or orthographic from OrthoHalfExtentY; must match between scene and fluid overlay.
+    Math::Matrix4 GetProjectionMatrix(float aspectRatio, float nearPlane = 0.1f, float farPlane = 2000.0f) const;
     Frustum GetFrustum(float Aspect, float FOV, float Near, float Far) const;
 
     // VR stereo camera support
@@ -100,6 +102,10 @@ struct SOLSTICE_API Camera {
 
     float Yaw, Pitch;
     float MovementSpeed, MouseSensitivity, Zoom;
+
+    /// When true, GetProjectionMatrix uses orthographic Y half-extent (world-aligned with view Up); width follows aspect.
+    bool UseOrthographic = false;
+    float OrthoHalfExtentY = 1.0f;
 
 private:
     // Calculates the front vector from the Camera's (updated) Euler angles

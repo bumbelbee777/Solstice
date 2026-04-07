@@ -1,6 +1,7 @@
 # Render: BGFX pipeline, scene, camera, post-processing, etc.
 set(SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
 add_library(Render STATIC
+    FluidVolumeVisualizer.cxx
     Scene/Camera.cxx
     Context/Context.cxx
     Framebuffers/Framebuffer.cxx
