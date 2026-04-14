@@ -1,23 +1,23 @@
-#include <UI/Window.hxx>
-#include <UI/UISystem.hxx>
+#include <UI/Core/Window.hxx>
+#include <UI/Core/UISystem.hxx>
 #include <Render/SoftwareRenderer.hxx>
 #include <Render/Scene/Scene.hxx>
 #include <Render/Scene/Camera.hxx>
 #include <Render/Assets/Mesh.hxx>
 #include <Render/Particle/ParticlePresets.hxx>
 #include <Render/Particle/ParticleSystem.hxx>
-#include <Core/Material.hxx>
+#include <Material/Material.hxx>
 #include <Arzachel/MeshFactory.hxx>
 #include <Render/PhysicsBridge.hxx>
-#include <Physics/PhysicsSystem.hxx>
-#include <Physics/RigidBody.hxx>
+#include <Physics/Integration/PhysicsSystem.hxx>
+#include <Physics/Dynamics/RigidBody.hxx>
 #include <Entity/Registry.hxx>
 #include <Math/Vector.hxx>
 #include <Math/Quaternion.hxx>
-#include <Core/Debug.hxx>
-#include <Core/Async.hxx>
-#include <Core/Audio.hxx>
-#include <UI/ViewportUI.hxx> // For world-space UI
+#include <Core/Debug/Debug.hxx>
+#include <Core/System/Async.hxx>
+#include <Core/Audio/Audio.hxx>
+#include <UI/Viewport/ViewportUI.hxx> // For world-space UI
 #include <bgfx/bgfx.h>
 
 #include <imgui.h>
@@ -402,13 +402,16 @@ int main() {
                 fx.Smoke->SetDensity(1.0f);
             }
 
-            auto source = Core::Audio::AudioManager::Instance().PlaySound3D(
+            auto emitter = Core::Audio::AudioManager::Instance().CreateEmitter(
                 explosionSfx[explosionSfxPick(rng)].c_str(),
                 position,
                 80.0f,
                 false
             );
-            Core::Audio::AudioManager::Instance().UpdateAudioSource(source);
+            if (emitter != 0) {
+                Core::Audio::AudioManager::Instance().SetEmitterVolume(emitter, std::clamp(impactSpeed / 18.0f, 0.4f, 1.0f));
+                Core::Audio::AudioManager::Instance().SetEmitterFlags(emitter, false, true, 2);
+            }
             totalExplosions++;
         };
 

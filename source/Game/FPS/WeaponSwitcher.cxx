@@ -1,7 +1,7 @@
 #include "WeaponSwitcher.hxx"
-#include "../Inventory.hxx"
-#include "../../Core/Debug.hxx"
-#include "../../UI/UISystem.hxx"
+#include "../Gameplay/Inventory.hxx"
+#include "../../Core/Debug/Debug.hxx"
+#include "../../UI/Core/UISystem.hxx"
 #include <imgui.h>
 #include <algorithm>
 

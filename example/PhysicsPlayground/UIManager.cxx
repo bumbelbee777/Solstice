@@ -1,6 +1,6 @@
 #include "UIManager.hxx"
 #include "ObjectSpawner.hxx"
-#include <UI/Widgets.hxx>
+#include <UI/Widgets/Widgets.hxx>
 #include <imgui.h>
 #include <string>
 

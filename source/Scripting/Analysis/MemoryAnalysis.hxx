@@ -1,6 +1,9 @@
 #pragma once
 
-#include "BytecodeVM.hxx"
+#include <Solstice.hxx>
+#include <string>
+#include <vector>
+#include "../VM/BytecodeVM.hxx"
 
 namespace Solstice::Scripting {
 
@@ -15,12 +18,10 @@ namespace Solstice::Scripting {
         size_t instructionIndex = 0;
     };
 
-    class MemoryAnalyzer {
-    public:
-        // Analyze a compiled and optimized Program for common pointer lifetime
-        // mistakes involving Ptr<T> operations. The current implementation is
-        // intentionally conservative and focuses on simple linear patterns
-        // involving PTR_NEW / PTR_RESET / PTR_GET.
+    struct SOLSTICE_API MemoryAnalyzer {
+        // Analyze a compiled Program for Ptr<T> lifetime issues using a
+        // per-function basic-block CFG and merged abstract states (Unknown /
+        // Live / Freed) at joins.
         static std::vector<MemoryIssue> AnalyzeProgram(const Program& program);
     };
 

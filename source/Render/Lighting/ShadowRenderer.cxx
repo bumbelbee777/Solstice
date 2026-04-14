@@ -1,7 +1,7 @@
 #include <Render/Lighting/ShadowRenderer.hxx>
 #include <Render/Post/PostProcessing.hxx>
 #include <Render/Assets/Mesh.hxx>
-#include <Core/Debug.hxx>
+#include <Core/Debug/Debug.hxx>
 #include <algorithm>
 #include <cstring>
 

@@ -5,8 +5,8 @@
 #include <unordered_map>
 #include <chrono>
 #include <functional>
-#include "Compiler.hxx"
-#include "BytecodeVM.hxx"
+#include "../Compiler/Compiler.hxx"
+#include "../VM/BytecodeVM.hxx"
 
 namespace Solstice::Scripting {
 

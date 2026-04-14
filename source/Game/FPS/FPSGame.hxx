@@ -1,15 +1,16 @@
 #pragma once
 
-#include "../GameBase.hxx"
+#include "../App/GameBase.hxx"
 #include "FPSMovement.hxx"
 #include "Weapon.hxx"
-#include "../HUD.hxx"
-#include "../InputManager.hxx"
-#include "../GameState.hxx"
-#include "../LoadingScreen.hxx"
-#include "../MainMenu.hxx"
-#include "../PauseMenu.hxx"
+#include "../UI/HUD.hxx"
+#include "../App/InputManager.hxx"
+#include "../App/GameState.hxx"
+#include "../UI/LoadingScreen.hxx"
+#include "../UI/MainMenu.hxx"
+#include "../UI/PauseMenu.hxx"
 #include "../../Entity/Registry.hxx"
+#include "../../Entity/Scheduler.hxx"
 #include <Render/Scene/Camera.hxx>
 #include <memory>
 
@@ -32,6 +33,7 @@ protected:
     virtual void InitializeFPSSystems();
     virtual void InitializePlayer();
     virtual void InitializeWeapons();
+    virtual void ConfigureECSPhases();
 
     // Systems
     std::unique_ptr<InputManager> m_InputManager;
@@ -43,6 +45,7 @@ protected:
 
     // ECS
     ECS::Registry m_Registry;
+    ECS::PhaseScheduler m_ECSScheduler;
     ECS::EntityId m_PlayerEntity{0};
 
     // Camera

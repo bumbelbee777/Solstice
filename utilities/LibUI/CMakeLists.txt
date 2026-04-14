@@ -13,7 +13,12 @@ add_library(LibUI SHARED
     Core/Core.cxx
     Widgets/Widgets.cxx
     Graphics/Graphics.cxx
+    Viewport/Viewport.cxx
+    Viewport/ViewportMath.cxx
     Animation/Animation.cxx
+    Icons/Icons.cxx
+    FileDialogs/FileDialogs.cxx
+    AssetBrowser/AssetBrowser.cxx
 )
 
 # Set up include directories
@@ -61,5 +66,9 @@ set_target_properties(LibUI PROPERTIES
 source_group("Core" FILES Core/Core.hxx Core/Core.cxx)
 source_group("Widgets" FILES Widgets/Widgets.hxx Widgets/Widgets.cxx)
 source_group("Graphics" FILES Graphics/Graphics.hxx Graphics/Graphics.cxx)
+source_group("Viewport" FILES Viewport/Viewport.hxx Viewport/Viewport.cxx Viewport/ViewportMath.hxx Viewport/ViewportMath.cxx)
 source_group("Animation" FILES Animation/Animation.hxx Animation/Animation.cxx)
+source_group("Icons" FILES Icons/Icons.hxx Icons/Icons.cxx)
+source_group("FileDialogs" FILES FileDialogs/FileDialogs.hxx FileDialogs/FileDialogs.cxx)
+source_group("AssetBrowser" FILES AssetBrowser/AssetBrowser.hxx AssetBrowser/AssetBrowser.cxx)
 

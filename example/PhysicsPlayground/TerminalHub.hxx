@@ -1,12 +1,12 @@
 #pragma once
 
-#include <UI/ViewportUI.hxx>
+#include <UI/Viewport/ViewportUI.hxx>
 #include <Render/Scene/Camera.hxx>
 #include <Render/Scene/Skybox.hxx>
 #include <Render/Particle/ParticleSystem.hxx>
 #include <Render/Particle/ParticlePresets.hxx>
-#include <Game/InputManager.hxx>
-#include <Physics/PhysicsSystem.hxx>
+#include <Game/App/InputManager.hxx>
+#include <Physics/Integration/PhysicsSystem.hxx>
 #include <Entity/Registry.hxx>
 #include <Math/Vector.hxx>
 #include <bgfx/bgfx.h>

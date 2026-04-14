@@ -2,8 +2,8 @@
 
 #include "../Solstice.hxx"
 #include "ProceduralTexture.hxx"
-#include "../Core/JSON.hxx"
-#include "../Core/Material.hxx"
+#include "../Core/Serialization/JSON.hxx"
+#include "../Material/Material.hxx"
 #include <string>
 
 namespace Solstice::Arzachel {

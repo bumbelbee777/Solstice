@@ -1,8 +1,9 @@
 #pragma once
 
-#include "../GameBase.hxx"
+#include "../App/GameBase.hxx"
 #include "ThirdPersonController.hxx"
 #include "../../Entity/Registry.hxx"
+#include "../../Entity/Scheduler.hxx"
 #include <Render/Scene/Camera.hxx>
 #include <memory>
 
@@ -22,6 +23,7 @@ protected:
     // Third-person specific
     virtual void InitializeCamera();
     virtual void InitializeCharacter();
+    virtual void ConfigureECSPhases();
 
     // Camera follow
     void UpdateCameraFollow(float DeltaTime);
@@ -32,6 +34,7 @@ protected:
     ECS::EntityId GetLockOnTarget() const { return m_LockOnTarget; }
 
     ECS::Registry m_Registry;
+    ECS::PhaseScheduler m_ECSScheduler;
     ECS::EntityId m_PlayerEntity{0};
     ECS::EntityId m_CameraTarget{0};
     ECS::EntityId m_LockOnTarget{0};

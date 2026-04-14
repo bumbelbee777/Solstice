@@ -1,5 +1,5 @@
 #include "Framebuffer.hxx"
-#include <Core/Debug.hxx>
+#include <Core/Debug/Debug.hxx>
 #include <cstdint>
 #include <algorithm>
 

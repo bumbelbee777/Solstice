@@ -2,6 +2,7 @@
 
 #include <unordered_map>
 #include <utility>
+#include <stdexcept>
 
 #include <Entity/EntityId.hxx>
 
@@ -14,20 +15,46 @@ struct IComponentStorage {
 
 template<class T>
 struct ComponentStorage : IComponentStorage {
-    std::unordered_map<EntityId, T> Data;
-
     template<class... A>
     T& Add(EntityId e, A&&... a) {
-        auto [it, inserted] = Data.emplace(e, T{std::forward<A>(a)...});
+        auto [it, inserted] = m_Data.emplace(e, T{std::forward<A>(a)...});
         if (!inserted) it->second = T{std::forward<A>(a)...};
         return it->second;
     }
 
-    void Remove(EntityId e) override { Data.erase(e); }
+    void Remove(EntityId e) override { m_Data.erase(e); }
 
-    bool Has(EntityId e) const override { return Data.find(e) != Data.end(); }
+    bool Has(EntityId e) const override { return m_Data.find(e) != m_Data.end(); }
 
-    T& Get(EntityId e) { return Data.at(e); }
-    const T& Get(EntityId e) const { return Data.at(e); }
+    T* TryGet(EntityId e) {
+        auto it = m_Data.find(e);
+        if (it == m_Data.end()) return nullptr;
+        return &it->second;
+    }
+
+    const T* TryGet(EntityId e) const {
+        auto it = m_Data.find(e);
+        if (it == m_Data.end()) return nullptr;
+        return &it->second;
+    }
+
+    T& Get(EntityId e) {
+        auto* ptr = TryGet(e);
+        if (!ptr) throw std::out_of_range("Component not found");
+        return *ptr;
+    }
+
+    const T& Get(EntityId e) const {
+        const auto* ptr = TryGet(e);
+        if (!ptr) throw std::out_of_range("Component not found");
+        return *ptr;
+    }
+
+    const std::unordered_map<EntityId, T>& Entries() const { return m_Data; }
+    std::unordered_map<EntityId, T>& Entries() { return m_Data; }
+    size_t Size() const { return m_Data.size(); }
+
+private:
+    std::unordered_map<EntityId, T> m_Data;
 };
 }

@@ -1,7 +1,7 @@
 #include "VolumetricLighting.hxx"
 #include <Render/Scene/Scene.hxx>
-#include <Core/Debug.hxx>
-#include <Core/Async.hxx>
+#include <Core/Debug/Debug.hxx>
+#include <Core/System/Async.hxx>
 #include <bx/uint32_t.h>
 #include <algorithm>
 #include <cmath>

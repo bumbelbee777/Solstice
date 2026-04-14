@@ -100,6 +100,9 @@ node_modules/
 .cache/
 .ccache/
 
+# tools/fetch_ffmpeg.py output (local FFmpeg CLI)
+tools/_ffmpeg/
+
 !.gitkeep
 !.gitignore
 !.gitattributes

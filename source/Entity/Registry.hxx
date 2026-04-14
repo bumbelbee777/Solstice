@@ -5,6 +5,7 @@
 #include <typeindex>
 #include <memory>
 #include <utility>
+#include <tuple>
 
 #include <Entity/EntityId.hxx>
 #include <Entity/ComponentStorage.hxx>
@@ -12,6 +13,10 @@
 namespace Solstice::ECS {
 class Registry {
 public:
+    template<class... T>
+    struct Exclude {
+    };
+
     EntityId Create() {
         EntityId id = m_NextId++;
         m_Alive.insert(id);
@@ -50,27 +55,63 @@ public:
     }
 
     template<class T>
-    void Remove(EntityId e) {
-        Ensure<T>().Remove(e);
-    }
-
-    template<class T, class F>
-    void ForEach(F&& fn) {
+    T* TryGet(EntityId e) {
         auto* s = GetStore<T>();
-        if (!s) return;
-        for (auto& [e, c] : s->Data) if (Valid(e)) fn(e, c);
+        return s ? s->TryGet(e) : nullptr;
     }
 
-    template<class T1, class T2, class F>
+    template<class T>
+    const T* TryGet(EntityId e) const {
+        auto* s = GetStore<T>();
+        return s ? s->TryGet(e) : nullptr;
+    }
+
+    template<class T>
+    void Remove(EntityId e) {
+        auto* s = GetStore<T>();
+        if (s) s->Remove(e);
+    }
+
+    template<class... T, class F>
     void ForEach(F&& fn) {
-        auto* s1 = GetStore<T1>();
-        auto* s2 = GetStore<T2>();
-        if (!s1 || !s2) return;
-        if (s1->Data.size() < s2->Data.size()) {
-            for (auto& [e, c1] : s1->Data) if (Valid(e) && s2->Has(e)) fn(e, c1, s2->Get(e));
-        } else {
-            for (auto& [e, c2] : s2->Data) if (Valid(e) && s1->Has(e)) fn(e, s1->Get(e), c2);
+        static_assert(sizeof...(T) > 0, "ForEach requires at least one component type");
+        using First = std::tuple_element_t<0, std::tuple<T...>>;
+        auto* primaryStore = GetStore<First>();
+        if (!primaryStore) return;
+
+        for (const auto& [e, _] : primaryStore->Entries()) {
+            if (!Valid(e) || !HasAll<T...>(e)) continue;
+            fn(e, Get<T>(e)...);
         }
+    }
+
+    template<class... Include, class... Excluded, class F>
+    void ForEachFiltered(Exclude<Excluded...>, F&& fn) {
+        static_assert(sizeof...(Include) > 0, "ForEachFiltered requires at least one include component");
+        using First = std::tuple_element_t<0, std::tuple<Include...>>;
+        auto* primaryStore = GetStore<First>();
+        if (!primaryStore) return;
+
+        for (const auto& [e, _] : primaryStore->Entries()) {
+            if (!Valid(e) || !HasAll<Include...>(e) || HasAny<Excluded...>(e)) continue;
+            fn(e, Get<Include>(e)...);
+        }
+    }
+
+    template<class... T>
+    bool HasAll(EntityId e) const {
+        if constexpr (sizeof...(T) == 0) {
+            return true;
+        }
+        return (Has<T>(e) && ...);
+    }
+
+    template<class... T>
+    bool HasAny(EntityId e) const {
+        if constexpr (sizeof...(T) == 0) {
+            return false;
+        }
+        return (Has<T>(e) || ...);
     }
 
 private:

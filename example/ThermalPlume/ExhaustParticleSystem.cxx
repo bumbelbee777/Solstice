@@ -1,5 +1,5 @@
 #include "ExhaustParticleSystem.hxx"
-#include <Core/Debug.hxx>
+#include <Core/Debug/Debug.hxx>
 #include <algorithm>
 #include <cmath>
 #include <cstring>

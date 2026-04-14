@@ -2,7 +2,7 @@
 
 #include <Render/Particle/ParticleSystem.hxx>
 #include <Math/Vector.hxx>
-#include <Physics/Fluid.hxx>
+#include <Physics/Fluid/Fluid.hxx>
 #include <cstdint>
 
 namespace Solstice::ThermalPlume {

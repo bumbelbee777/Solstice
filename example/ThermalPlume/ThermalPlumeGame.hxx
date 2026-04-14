@@ -1,15 +1,15 @@
 #pragma once
 
-#include <Game/GameBase.hxx>
-#include <UI/Window.hxx>
+#include <Game/App/GameBase.hxx>
+#include <UI/Core/Window.hxx>
 #include <Render/SoftwareRenderer.hxx>
 #include <Render/FluidVolumeVisualizer.hxx>
 #include <Render/Scene/Scene.hxx>
 #include <Render/Scene/Camera.hxx>
 #include <Render/Assets/Mesh.hxx>
-#include <Core/Material.hxx>
-#include <Physics/PhysicsSystem.hxx>
-#include <Physics/Fluid.hxx>
+#include <Material/Material.hxx>
+#include <Physics/Integration/PhysicsSystem.hxx>
+#include <Physics/Fluid/Fluid.hxx>
 #include <Entity/Registry.hxx>
 #include <Arzachel/Seed.hxx>
 #include <Math/Vector.hxx>

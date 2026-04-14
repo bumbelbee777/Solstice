@@ -1,10 +1,10 @@
 #pragma once
 
-#include "../../Solstice.hxx"
+#include "Solstice.hxx"
 #include "Types.hxx"
 #include "VirtualTable.hxx"
-#include "../Async.hxx"
-#include "../Cache.hxx"
+#include "Core/System/Async.hxx"
+#include "Core/Platform/Cache.hxx"
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>

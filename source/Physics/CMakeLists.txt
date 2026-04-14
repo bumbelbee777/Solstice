@@ -1,24 +1,25 @@
 # Physics: ReactPhysics3D bridge, collision, fluids, etc.
 set(SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
 add_library(Physics STATIC
-    PhysicsSystem.cxx
-    FluidSparse.cxx
-    ReactPhysics3DBridge.cxx
-    CollisionResolution.cxx
-    IterativeSolver.cxx
-    ShapeHelpers.cxx
-    ContactGeneration.cxx
-    ManifoldManager.cxx
-    ContactClustering.cxx
-    ConvexHullFactory.cxx
-    GJK.cxx
-    CCD.cxx
-    LightSource.cxx
-    Fluid.cxx
-    NSSolver.cxx
+    Integration/PhysicsSystem.cxx
+    Integration/ReactPhysics3DBridge.cxx
+    Fluid/FluidSparse.cxx
+    Fluid/Fluid.cxx
+    Fluid/NSSolver.cxx
+    Dynamics/IterativeSolver.cxx
+    Collision/Narrowphase/CollisionResolution.cxx
+    Collision/Narrowphase/ShapeHelpers.cxx
+    Collision/Narrowphase/ContactGeneration.cxx
+    Collision/Narrowphase/ManifoldManager.cxx
+    Collision/Narrowphase/ContactClustering.cxx
+    Collision/Narrowphase/GJK.cxx
+    Collision/Broadphase/CCD.cxx
+    Content/ConvexHullFactory.cxx
+    Lighting/LightSource.cxx
 )
 target_include_directories(Physics PUBLIC ${SOURCE_DIR})
 target_link_libraries(Physics PUBLIC Core Math ReactPhysics3D::reactphysics3d)
+target_link_libraries(Physics PRIVATE Plugin)
 find_package(OpenMP)
 if(OpenMP_CXX_FOUND)
     target_link_libraries(Physics PUBLIC OpenMP::OpenMP_CXX)

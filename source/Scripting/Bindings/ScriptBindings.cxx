@@ -1,25 +1,25 @@
 #include "ScriptBindings.hxx"
-#include "BytecodeVM.hxx"
-#include "../UI/Widgets.hxx"
+#include "../VM/BytecodeVM.hxx"
+#include "../../UI/Widgets/Widgets.hxx"
 #include <Render/Scene/Scene.hxx>
 #include <Render/Scene/Camera.hxx>
-#include "../Entity/Registry.hxx"
-#include "../Entity/Transform.hxx"
-#include "../Entity/Name.hxx"
-#include "../Entity/Kind.hxx"
-#include "../Physics/PhysicsSystem.hxx"
-#include "../Physics/RigidBody.hxx"
-#include "../Physics/ReactPhysics3DBridge.hxx"
+#include "../../Entity/Registry.hxx"
+#include "../../Entity/Transform.hxx"
+#include "../../Entity/Name.hxx"
+#include "../../Entity/Kind.hxx"
+#include "../../Physics/Integration/PhysicsSystem.hxx"
+#include "../../Physics/Dynamics/RigidBody.hxx"
+#include "../../Physics/Integration/ReactPhysics3DBridge.hxx"
 #include <reactphysics3d/collision/RaycastInfo.h>
 #include <reactphysics3d/collision/OverlapCallback.h>
 #include <reactphysics3d/mathematics/Ray.h>
 #include <reactphysics3d/collision/shapes/AABB.h>
-#include "../Arzachel/AnimationClip.hxx"
-#include "../Arzachel/Generator.hxx"
-#include "../UI/MotionGraphics.hxx"
-#include "../Core/Audio.hxx"
-#include "../Core/Profiler.hxx"
-#include "../Core/Relic/Relic.hxx"
+#include "../../Arzachel/AnimationClip.hxx"
+#include "../../Arzachel/Generator.hxx"
+#include "../../UI/Motion/MotionGraphics.hxx"
+#include "../../Core/Audio/Audio.hxx"
+#include "../../Core/Profiling/Profiler.hxx"
+#include "../../Core/Relic/Relic.hxx"
 #include <imgui.h>
 
 #include <iostream>
@@ -620,18 +620,19 @@ namespace Solstice::Scripting {
             });
 
             vm.RegisterNative("ECS.GetTransform", [registry](const std::vector<Value>& args) -> Value {
-                if (args.size() > 0 && registry->Has<ECS::Transform>((ECS::EntityId)GetInt(args[0]))) {
-                    const auto& t = registry->Get<ECS::Transform>((ECS::EntityId)GetInt(args[0]));
-                    return t.Position; // Return Vec3
+                if (!registry || args.empty()) return Vec3();
+                if (const ECS::Transform* t = registry->TryGet<ECS::Transform>((ECS::EntityId)GetInt(args[0]))) {
+                    return t->Position; // Return Vec3
                 }
                 return Vec3();
             });
 
             vm.RegisterNative("ECS.GetName", [registry](const std::vector<Value>& args) -> Value {
                 if (!registry) return std::string("");
-                if (args.size() > 0 && registry->Has<ECS::Name>((ECS::EntityId)GetInt(args[0]))) {
-                    const auto& n = registry->Get<ECS::Name>((ECS::EntityId)GetInt(args[0]));
-                    return n.Value;
+                if (args.size() > 0) {
+                    if (const ECS::Name* n = registry->TryGet<ECS::Name>((ECS::EntityId)GetInt(args[0]))) {
+                        return n->Value;
+                    }
                 }
                 return std::string("");
             });
@@ -1611,6 +1612,107 @@ namespace Solstice::Scripting {
                 }
             }
             return (int64_t)0;
+        });
+
+        vm.RegisterNative("Audio.CreateEmitter", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 4) {
+                return (int64_t)0;
+            }
+            try {
+                std::string path = GetString(args[0]);
+                Vec3 pos(GetFloat(args[1]), GetFloat(args[2]), GetFloat(args[3]));
+                float maxDistance = args.size() > 4 ? GetFloat(args[4]) : 50.0f;
+                bool loop = args.size() > 5 ? (GetInt(args[5]) != 0) : false;
+                auto handle = Core::Audio::AudioManager::Instance().CreateEmitter(
+                    path.c_str(),
+                    Math::Vec3(pos.x, pos.y, pos.z),
+                    maxDistance,
+                    loop
+                );
+                return static_cast<int64_t>(handle);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.UpdateEmitterTransform", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 4) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                Math::Vec3 pos(GetFloat(args[1]), GetFloat(args[2]), GetFloat(args[3]));
+                bool ok = Core::Audio::AudioManager::Instance().UpdateEmitterTransform(handle, pos);
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.SetEmitterVolume", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 2) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                bool ok = Core::Audio::AudioManager::Instance().SetEmitterVolume(handle, GetFloat(args[1]));
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.SetEmitterOcclusion", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 2) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                bool ok = Core::Audio::AudioManager::Instance().SetEmitterOcclusion(handle, GetFloat(args[1]));
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.DestroyEmitter", [](const std::vector<Value>& args) -> Value {
+            if (args.empty()) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                bool ok = Core::Audio::AudioManager::Instance().DestroyEmitter(handle);
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.SetListener", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 9) {
+                return (int64_t)0;
+            }
+            Core::Audio::Listener listener;
+            listener.Position = Math::Vec3(GetFloat(args[0]), GetFloat(args[1]), GetFloat(args[2]));
+            listener.Forward = Math::Vec3(GetFloat(args[3]), GetFloat(args[4]), GetFloat(args[5]));
+            listener.Up = Math::Vec3(GetFloat(args[6]), GetFloat(args[7]), GetFloat(args[8]));
+            listener.CurrentReverb = {0.0f, 0.0f, 1.0f};
+            listener.TargetReverb = Core::Audio::ReverbPresetType::Room;
+            Core::Audio::AudioManager::Instance().SetListener(listener);
+            return (int64_t)1;
+        });
+
+        vm.RegisterNative("Audio.SetReverbPreset", [](const std::vector<Value>& args) -> Value {
+            if (args.empty()) {
+                return (int64_t)0;
+            }
+            int preset = static_cast<int>(GetInt(args[0]));
+            if (preset < static_cast<int>(Core::Audio::ReverbPresetType::None)
+                || preset >= static_cast<int>(Core::Audio::ReverbPresetType::COUNT)) {
+                preset = static_cast<int>(Core::Audio::ReverbPresetType::Room);
+            }
+            Core::Audio::AudioManager::Instance().SetReverbPreset(static_cast<Core::Audio::ReverbPresetType>(preset));
+            return (int64_t)1;
         });
 
         vm.RegisterNative("Audio.SetVolume", [](const std::vector<Value>& args) -> Value {

@@ -1,10 +1,10 @@
 #pragma once
 
 #include <Solstice.hxx>
-#include <Game/Enemy.hxx>
+#include <Game/Gameplay/Enemy.hxx>
 #include <Entity/Registry.hxx>
 #include <Entity/Transform.hxx>
-#include <Physics/RigidBody.hxx>
+#include <Physics/Dynamics/RigidBody.hxx>
 #include <Math/Vector.hxx>
 #include <string>
 #include <vector>
@@ -55,7 +55,7 @@ struct Archon {
 };
 
 // Archon system for updating Archon behaviors
-class SOLSTICE_API ArchonSystem {
+class ArchonSystem {
 public:
     // Update all Archons
     static void Update(ECS::Registry& Registry, float DeltaTime, ECS::EntityId PlayerEntity);

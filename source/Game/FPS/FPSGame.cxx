@@ -1,10 +1,11 @@
 #include "FPSGame.hxx"
 #include "FPSMovement.hxx"
 #include "Weapon.hxx"
-#include "../../Core/Debug.hxx"
-#include "../../Physics/RigidBody.hxx"
+#include "../../Core/Debug/Debug.hxx"
+#include "../../Physics/Dynamics/RigidBody.hxx"
+#include "../../Physics/Integration/PhysicsSystem.hxx"
 #include "../../Entity/Transform.hxx"
-#include "../../UI/UISystem.hxx"
+#include "../../UI/Core/UISystem.hxx"
 #include <bgfx/bgfx.h>
 
 namespace Solstice::Game {
@@ -27,6 +28,7 @@ void FPSGame::Initialize() {
     InitializeFPSSystems();
     InitializePlayer();
     InitializeWeapons();
+    ConfigureECSPhases();
 
     // Start in Main Menu by default
     if (m_GameState) {
@@ -88,6 +90,46 @@ void FPSGame::InitializeFPSSystems() {
     SIMPLE_LOG("FPSGame: FPS systems initialized");
 }
 
+void FPSGame::ConfigureECSPhases() {
+    m_ECSScheduler.Clear();
+    m_ECSScheduler.Register(ECS::SystemPhase::Input, "FPSMovementInput", [this](ECS::Registry&, float) {
+        if (m_PlayerEntity == 0) {
+            return;
+        }
+
+        Math::Vec3 moveDir(0, 0, 0);
+        bool jump = false;
+        bool crouch = false;
+        bool sprint = false;
+        if (m_InputManager) {
+            if (m_InputManager->IsKeyPressed(26) || m_InputManager->IsKeyPressed(25)) moveDir.z += 1.0f;
+            if (m_InputManager->IsKeyPressed(22)) moveDir.z -= 1.0f;
+            if (m_InputManager->IsKeyPressed(4) || m_InputManager->IsKeyPressed(20)) moveDir.x -= 1.0f;
+            if (m_InputManager->IsKeyPressed(7)) moveDir.x += 1.0f;
+            if (m_InputManager->IsKeyPressed(44)) jump = true;
+            if (m_InputManager->IsKeyPressed(29)) crouch = true;
+            if (m_InputManager->IsKeyPressed(225)) sprint = true;
+        }
+        FPSMovementSystem::ProcessInput(m_Registry, m_PlayerEntity, moveDir, jump, crouch, sprint);
+    });
+
+    m_ECSScheduler.Register(ECS::SystemPhase::Simulation, "FPSMovement", [this](ECS::Registry&, float deltaTime) {
+        FPSMovementSystem::Update(m_Registry, deltaTime, m_Camera);
+    });
+
+    m_ECSScheduler.Register(ECS::SystemPhase::Simulation, "PhysicsStep", [this](ECS::Registry&, float deltaTime) {
+        auto& physics = Physics::PhysicsSystem::Instance();
+        if (!physics.IsRunning() || !physics.IsBoundTo(m_Registry)) {
+            physics.Start(m_Registry);
+        }
+        physics.Update(deltaTime);
+    });
+
+    m_ECSScheduler.Register(ECS::SystemPhase::Late, "Weapons", [this](ECS::Registry&, float deltaTime) {
+        WeaponSystem::Update(m_Registry, deltaTime);
+    });
+}
+
 void FPSGame::InitializePlayer() {
     m_PlayerEntity = m_Registry.Create();
 
@@ -143,8 +185,7 @@ void FPSGame::Update(float DeltaTime) {
                 m_PauseMenu->Update(DeltaTime, *m_InputManager, *m_GameState);
             }
         } else {
-        UpdateFPSMovement(DeltaTime);
-        UpdateWeapons(DeltaTime);
+        m_ECSScheduler.ExecuteAll(m_Registry, DeltaTime);
         }
 
         if (m_GameState) {
@@ -203,38 +244,12 @@ void FPSGame::HandleInput() {
 }
 
 void FPSGame::UpdateFPSMovement(float DeltaTime) {
-    if (m_PlayerEntity == 0) return;
-
-    // Get input
-    Math::Vec3 moveDir(0, 0, 0);
-    bool jump = false;
-    bool crouch = false;
-    bool sprint = false;
-
-    if (m_InputManager) {
-        // WASD (QWERTY) and ZQSD (AZERTY) movement support
-        // Forward: W (26) or Z (25)
-        if (m_InputManager->IsKeyPressed(26) || m_InputManager->IsKeyPressed(25)) moveDir.z += 1.0f;
-        // Backward: S (22) - same for both layouts
-        if (m_InputManager->IsKeyPressed(22)) moveDir.z -= 1.0f;
-        // Left: A (4) or Q (20)
-        if (m_InputManager->IsKeyPressed(4) || m_InputManager->IsKeyPressed(20)) moveDir.x -= 1.0f;
-        // Right: D (7) - same for both layouts
-        if (m_InputManager->IsKeyPressed(7)) moveDir.x += 1.0f;
-        // Jump: Space (44)
-        if (m_InputManager->IsKeyPressed(44)) jump = true;
-        // Crouch: Ctrl (29)
-        if (m_InputManager->IsKeyPressed(29)) crouch = true;
-        // Sprint: Shift (225)
-        if (m_InputManager->IsKeyPressed(225)) sprint = true;
-    }
-
-    FPSMovementSystem::ProcessInput(m_Registry, m_PlayerEntity, moveDir, jump, crouch, sprint);
-    FPSMovementSystem::Update(m_Registry, DeltaTime, m_Camera);
+    m_ECSScheduler.ExecutePhase(ECS::SystemPhase::Input, m_Registry, DeltaTime);
+    m_ECSScheduler.ExecutePhase(ECS::SystemPhase::Simulation, m_Registry, DeltaTime);
 }
 
 void FPSGame::UpdateWeapons(float DeltaTime) {
-    WeaponSystem::Update(m_Registry, DeltaTime);
+    m_ECSScheduler.ExecutePhase(ECS::SystemPhase::Late, m_Registry, DeltaTime);
 }
 
 void FPSGame::RenderFPSHUD() {

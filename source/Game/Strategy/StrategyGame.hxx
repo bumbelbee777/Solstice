@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../GameBase.hxx"
+#include "../App/GameBase.hxx"
 #include "StrategyCamera.hxx"
-#include "../HUD.hxx"
+#include "../UI/HUD.hxx"
 #include "../../Entity/Registry.hxx"
 #include "../../Math/Vector.hxx"
 #include <vector>

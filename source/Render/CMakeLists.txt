@@ -24,6 +24,7 @@ add_library(Render STATIC
 )
 target_include_directories(Render PUBLIC ${SOURCE_DIR})
 target_link_libraries(Render PUBLIC Core Math Arzachel Physics)
+target_link_libraries(Render PRIVATE Plugin)
 if(MSVC)
     target_compile_options(Render PRIVATE /Zc:preprocessor /W0)
     target_compile_definitions(Render PRIVATE SOLSTICE_EXPORTS _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS _SILENCE_ALL_MS_EXT_DEPRECATION_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)

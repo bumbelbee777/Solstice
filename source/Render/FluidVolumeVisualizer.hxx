@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Solstice.hxx>
-#include <Physics/Fluid.hxx>
+#include <Physics/Fluid/Fluid.hxx>
 #include <bgfx/bgfx.h>
 #include <cstdint>
 #include <vector>

@@ -4,11 +4,11 @@
 #include <Render/Scene/Scene.hxx>
 #include <Render/Scene/Camera.hxx>
 #include <Render/Assets/Mesh.hxx>
-#include <Core/Material.hxx>
+#include <Material/Material.hxx>
 #include <Render/Post/PostProcessing.hxx>
 #include <Render/Scene/Skybox.hxx>
 #include <Render/Assets/TextureRegistry.hxx>
-#include <Physics/LightSource.hxx>
+#include <Physics/Lighting/LightSource.hxx>
 #include <bgfx/bgfx.h>
 #include <vector>
 #include <set>
@@ -56,6 +56,7 @@ public:
 
 private:
     bgfx::ProgramHandle m_SceneProgram = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle m_VelocityProgram = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle m_SkyboxProgram = BGFX_INVALID_HANDLE;
     bgfx::VertexLayout m_VertexLayout;
     PostProcessing* m_PostProcessing = nullptr;
@@ -76,6 +77,9 @@ private:
     Math::Matrix4 m_PreviousViewProj;
     Math::Vec3 m_PreviousCameraPos;
     bool m_HasPreviousFrame = false;
+    uint32_t m_JitterFrame = 0;
+    bgfx::UniformHandle m_uVelocityCurrViewProj = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle m_uVelocityPrevViewProj = BGFX_INVALID_HANDLE;
 
     // Helper: Setup buffers for an object
     bool SetupBuffers(Mesh* meshPtr, bool optimizeStatic);

@@ -3,8 +3,8 @@
 #include "../../Solstice.hxx"
 #include "../../Entity/Registry.hxx"
 #include "Weapon.hxx"
-#include "../Inventory.hxx"
-#include "../../UI/Widgets.hxx"
+#include "../Gameplay/Inventory.hxx"
+#include "../../UI/Widgets/Widgets.hxx"
 #include <vector>
 #include <string>
 

@@ -1,24 +1,20 @@
 # Core: engine fundamentals, asset loading, materials, etc.
 set(SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
 add_library(Core STATIC
-    Debug.cxx
-    Audio.cxx
-    WavefrontParser.cxx
-    Cache.cxx
-    MLP.cxx
-    CNN.cxx
-    NavMesh.cxx
-    FSM.cxx
-    AssetStream.cxx
-    Save.cxx
-    JSON.cxx
-    Base64.cxx
-    Material.cxx
-    AssetLoader.cxx
-    Profiler.cxx
-    ScopeTimer.cxx
-    Mmap.cxx
-    LZ4.cxx
+    Debug/Debug.cxx
+    Audio/Audio.cxx
+    ML/MLP.cxx
+    ML/CNN.cxx
+    Spatial/NavMesh.cxx
+    Logic/FSM.cxx
+    Serialization/Save.cxx
+    Serialization/JSON.cxx
+    Serialization/Base64.cxx
+    Profiling/Profiler.cxx
+    Profiling/ScopeTimer.cxx
+    Platform/Mmap.cxx
+    Platform/Cache.cxx
+    System/LZ4.cxx
     Relic/Bootstrap.cxx
     Relic/Reader.cxx
     Relic/VirtualTable.cxx

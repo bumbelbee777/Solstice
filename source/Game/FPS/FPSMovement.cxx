@@ -1,8 +1,8 @@
 #include "FPSMovement.hxx"
 #include "SnowSystem.hxx"
-#include "../../Core/Debug.hxx"
-#include "../../Physics/PhysicsSystem.hxx"
-#include "../../Physics/ReactPhysics3DBridge.hxx"
+#include "../../Core/Debug/Debug.hxx"
+#include "../../Physics/Integration/PhysicsSystem.hxx"
+#include "../../Physics/Integration/ReactPhysics3DBridge.hxx"
 #include <cmath>
 #include <algorithm>
 

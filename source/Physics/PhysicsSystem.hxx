@@ -2,7 +2,7 @@
 
 #include "../Solstice.hxx"
 #include "../Entity/Registry.hxx"
-#include "../Core/Async.hxx"
+#include "../Core/System/Async.hxx"
 #include <functional>
 #include "../Math/Vector.hxx"
 #include "ReactPhysics3DBridge.hxx"
@@ -25,6 +25,9 @@ public:
 
     void Start(Solstice::ECS::Registry& registry);
     void Stop();
+    bool IsRunning() const { return m_Running; }
+    Solstice::ECS::Registry* GetRegistry() const { return m_Registry; }
+    bool IsBoundTo(const Solstice::ECS::Registry& registry) const { return m_Registry == &registry; }
 
     // Submits a physics step to the job system
     void UpdateAsync(float dt);

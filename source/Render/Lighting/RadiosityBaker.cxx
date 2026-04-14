@@ -1,9 +1,9 @@
 #include <Render/Lighting/RadiosityBaker.hxx>
 #include <Render/Scene/Scene.hxx>
 #include <Render/Assets/Mesh.hxx>
-#include <Core/Material.hxx>
-#include <Core/SIMD.hxx>
-#include <Core/Debug.hxx>
+#include <Material/Material.hxx>
+#include <Core/ML/SIMD.hxx>
+#include <Core/Debug/Debug.hxx>
 #include <algorithm>
 #include <cmath>
 #include <thread>

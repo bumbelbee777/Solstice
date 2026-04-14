@@ -1,9 +1,9 @@
 #pragma once
 
 #include <Solstice.hxx>
-#include <Core/SIMD.hxx>
-#include <Core/Async.hxx>
-#include <Physics/LightSource.hxx>
+#include <Core/ML/SIMD.hxx>
+#include <Core/System/Async.hxx>
+#include <Physics/Lighting/LightSource.hxx>
 #include <Math/Vector.hxx>
 #include <Math/Matrix.hxx>
 #include <bgfx/bgfx.h>

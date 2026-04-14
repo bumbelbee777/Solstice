@@ -1,5 +1,5 @@
 #include "MaterialSerializer.hxx"
-#include "../Core/Base64.hxx"
+#include "../Core/Serialization/Base64.hxx"
 #include <fstream>
 #include <sstream>
 #include <filesystem>

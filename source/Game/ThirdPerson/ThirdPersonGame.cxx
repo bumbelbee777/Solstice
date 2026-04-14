@@ -1,5 +1,5 @@
 #include "ThirdPersonGame.hxx"
-#include "../../Core/Debug.hxx"
+#include "../../Core/Debug/Debug.hxx"
 #include "../../Entity/Transform.hxx"
 
 namespace Solstice::Game {
@@ -11,6 +11,7 @@ void ThirdPersonGame::Initialize() {
     GameBase::Initialize();
     InitializeCamera();
     InitializeCharacter();
+    ConfigureECSPhases();
 }
 
 void ThirdPersonGame::InitializeCamera() {
@@ -27,9 +28,16 @@ void ThirdPersonGame::InitializeCharacter() {
     SIMPLE_LOG("ThirdPersonGame: Character initialized");
 }
 
+void ThirdPersonGame::ConfigureECSPhases() {
+    m_ECSScheduler.Clear();
+    m_ECSScheduler.Register(ECS::SystemPhase::Simulation, "ThirdPersonCameraFollow", [this](ECS::Registry&, float dt) {
+        UpdateCameraFollow(dt);
+    });
+}
+
 void ThirdPersonGame::Update(float DeltaTime) {
     GameBase::Update(DeltaTime);
-    UpdateCameraFollow(DeltaTime);
+    m_ECSScheduler.ExecuteAll(m_Registry, DeltaTime);
 }
 
 void ThirdPersonGame::Render() {

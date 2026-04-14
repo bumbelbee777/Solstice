@@ -1,10 +1,11 @@
 #include "Solstice.hxx"
-#include "Core/Debug.hxx"
-#include "Core/Async.hxx"
-#include "Core/Audio.hxx"
+#include "Core/Debug/Debug.hxx"
+#include "Core/System/Async.hxx"
+#include "Core/Audio/Audio.hxx"
 #include "Core/Relic/Relic.hxx"
-#include "UI/UISystem.hxx"
-#include "Physics/PhysicsSystem.hxx"
+#include "UI/Core/UISystem.hxx"
+#include "Physics/Integration/PhysicsSystem.hxx"
+#include "Networking/NetworkingSystem.hxx"
 #include "SolsticeAPI/V1/Core.h"
 #include "SolsticeAPI/V1/Scripting.h"
 #include <cstring>
@@ -39,7 +40,15 @@ SOLSTICE_API bool Initialize() {
         Core::JobSystem::Instance().Initialize();
         SIMPLE_LOG("Solstice: Job system initialized");
 
-        // 4. Initialize audio
+        // 4. Initialize networking
+        SIMPLE_LOG("Solstice: Initializing networking system...");
+        if (!Networking::NetworkingSystem::Instance().Start()) {
+            SIMPLE_LOG("Solstice: Networking system initialization failed");
+        } else {
+            SIMPLE_LOG("Solstice: Networking system initialized");
+        }
+
+        // 5. Initialize audio
         SIMPLE_LOG("Solstice: Initializing audio system...");
         Core::Audio::AudioManager::Instance().Initialize();
         SIMPLE_LOG("Solstice: Audio system initialized");
@@ -87,21 +96,32 @@ SOLSTICE_API void Shutdown() {
         Core::Relic::Shutdown();
 
         // 3. Shutdown physics system (if running)
-        // Note: We can't easily check if physics is running, so we'll just call Stop()
-        // It's safe to call even if not started
-        SIMPLE_LOG("Solstice: Shutting down physics system...");
-        Physics::PhysicsSystem::Instance().Stop();
-        SIMPLE_LOG("Solstice: Physics system shut down");
+        if (Physics::PhysicsSystem::Instance().IsRunning()) {
+            SIMPLE_LOG("Solstice: Shutting down physics system...");
+            Physics::PhysicsSystem::Instance().Stop();
+            SIMPLE_LOG("Solstice: Physics system shut down");
+        }
 
-        // 4. Shutdown audio
-        SIMPLE_LOG("Solstice: Shutting down audio system...");
-        Core::Audio::AudioManager::Instance().Shutdown();
-        SIMPLE_LOG("Solstice: Audio system shut down");
+        // 4. Shutdown networking
+        if (Networking::NetworkingSystem::Instance().IsRunning()) {
+            SIMPLE_LOG("Solstice: Shutting down networking system...");
+            Networking::NetworkingSystem::Instance().Stop();
+            SIMPLE_LOG("Solstice: Networking system shut down");
+        }
 
-        // 5. Shutdown job system
-        SIMPLE_LOG("Solstice: Shutting down job system...");
-        Core::JobSystem::Instance().Shutdown();
-        SIMPLE_LOG("Solstice: Job system shut down");
+        // 5. Shutdown audio
+        if (Core::Audio::AudioManager::Instance().IsInitialized()) {
+            SIMPLE_LOG("Solstice: Shutting down audio system...");
+            Core::Audio::AudioManager::Instance().Shutdown();
+            SIMPLE_LOG("Solstice: Audio system shut down");
+        }
+
+        // 6. Shutdown job system
+        if (Core::JobSystem::Instance().IsRunning()) {
+            SIMPLE_LOG("Solstice: Shutting down job system...");
+            Core::JobSystem::Instance().Shutdown();
+            SIMPLE_LOG("Solstice: Job system shut down");
+        }
 
         Initialized.store(false, std::memory_order_release);
         SIMPLE_LOG("Solstice: Shutdown complete");

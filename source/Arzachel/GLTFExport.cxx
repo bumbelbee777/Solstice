@@ -1,5 +1,5 @@
 #include "GLTFExport.hxx"
-#include <Core/AssetLoader.hxx>
+#include <Asset/Loading/AssetLoader.hxx>
 #include <tiny_gltf.h>
 #include <fstream>
 #include <sstream>

@@ -69,5 +69,16 @@ LIBUI_API void ProcessEvent(const SDL_Event* event);
 LIBUI_API ImGuiContext* GetContext();
 LIBUI_API bool IsInitialized();
 
+// ImGui state is saved under the SDL base path (next to the executable) as `solstice_tools_imgui.ini`.
+// Recent paths (newline-separated file `solstice_tools_recent.txt`, max 16): index 0 is most recent.
+LIBUI_API void RecentPathPush(const char* path);
+LIBUI_API int RecentPathGetCount();
+/** Valid until the next RecentPathPush or Shutdown; null if index out of range. */
+LIBUI_API const char* RecentPathGet(int index);
+
+/** ImGui frame without SDL backend (for offscreen / FBO export). Requires OpenGL3 backend initialized. */
+LIBUI_API void NewFrameOffscreen(float width, float height, float deltaTime);
+LIBUI_API void RenderOffscreen();
+
 } // namespace LibUI::Core
 

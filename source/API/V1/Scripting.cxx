@@ -1,7 +1,7 @@
 #include "SolsticeAPI/V1/Scripting.h"
 #include <algorithm>
-#include "Scripting/Compiler.hxx"
-#include "Scripting/BytecodeVM.hxx"
+#include "Scripting/Compiler/Compiler.hxx"
+#include "Scripting/VM/BytecodeVM.hxx"
 #include <cstring>
 #include <sstream>
 #include <string>

@@ -1,10 +1,65 @@
 #include "LibUI/Core/Core.hxx"
+#include "LibUI/Icons/Icons.hxx"
 #include <imgui.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_opengl3.h>
+#include <SDL3/SDL.h>
+
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <cstdlib>
 #include <iostream>
+#include <string>
+#include <vector>
 
 namespace LibUI::Core {
+
+namespace {
+
+constexpr int kRecentMax = 16;
+static std::string s_ImgIniPath;
+static std::vector<std::string> s_RecentPaths;
+
+static std::filesystem::path ToolsStateDir() {
+    if (!s_ImgIniPath.empty()) {
+        return std::filesystem::path(s_ImgIniPath).parent_path();
+    }
+    return std::filesystem::current_path();
+}
+
+static void RecentPathsSave() {
+    const auto p = ToolsStateDir() / "solstice_tools_recent.txt";
+    std::error_code ec;
+    std::filesystem::create_directories(p.parent_path(), ec);
+    std::ofstream out(p, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        return;
+    }
+    for (const auto& line : s_RecentPaths) {
+        out << line << '\n';
+    }
+}
+
+static void RecentPathsLoad() {
+    s_RecentPaths.clear();
+    const auto p = ToolsStateDir() / "solstice_tools_recent.txt";
+    std::ifstream in(p, std::ios::binary);
+    if (!in) {
+        return;
+    }
+    std::string line;
+    while (std::getline(in, line) && static_cast<int>(s_RecentPaths.size()) < kRecentMax) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) {
+            line.pop_back();
+        }
+        if (!line.empty()) {
+            s_RecentPaths.push_back(std::move(line));
+        }
+    }
+}
+
+} // namespace
 
 Context& Context::Instance() {
     static Context instance;
@@ -36,6 +91,16 @@ bool Context::Initialize(SDL_Window* window) {
         m_Context = ImGui::CreateContext();
         ImGui::SetCurrentContext(m_Context);
 
+        const char* base = SDL_GetBasePath();
+        if (base) {
+            s_ImgIniPath = std::string(base) + "solstice_tools_imgui.ini";
+            SDL_free((void*)base);
+        } else {
+            s_ImgIniPath = "solstice_tools_imgui.ini";
+        }
+        ImGui::GetIO().IniFilename = s_ImgIniPath.data();
+        RecentPathsLoad();
+
         // Setup ImGui style
         ImGui::StyleColorsDark();
 
@@ -50,6 +115,12 @@ bool Context::Initialize(SDL_Window* window) {
             ImGui::DestroyContext(m_Context);
             m_Context = nullptr;
             return false;
+        }
+
+        if (const char* iconPath = std::getenv("SOLSTICE_ICON_FONT")) {
+            if (Icons::TryLoadIconFontPackFromFile(iconPath, 15.f)) {
+                Icons::RefreshFontGpuTexture();
+            }
         }
 
         m_Window = window;
@@ -87,6 +158,8 @@ void Context::Shutdown() {
 
         m_Window = nullptr;
         m_Initialized.store(false, std::memory_order_release);
+        s_RecentPaths.clear();
+        s_ImgIniPath.clear();
     } catch (const std::exception& e) {
         std::cerr << "LibUI::Core::Shutdown: Exception: " << e.what() << std::endl;
     } catch (...) {
@@ -169,6 +242,73 @@ ImGuiContext* GetContext() {
 
 bool IsInitialized() {
     return Context::Instance().IsInitialized();
+}
+
+void RecentPathPush(const char* path) {
+    if (!path || !path[0]) {
+        return;
+    }
+    std::string p(path);
+    while (!p.empty() && (p.back() == '/' || p.back() == '\\')) {
+        p.pop_back();
+    }
+    if (p.empty()) {
+        return;
+    }
+    auto it = std::find(s_RecentPaths.begin(), s_RecentPaths.end(), p);
+    if (it != s_RecentPaths.end()) {
+        s_RecentPaths.erase(it);
+    }
+    s_RecentPaths.insert(s_RecentPaths.begin(), std::move(p));
+    if (static_cast<int>(s_RecentPaths.size()) > kRecentMax) {
+        s_RecentPaths.resize(static_cast<size_t>(kRecentMax));
+    }
+    RecentPathsSave();
+}
+
+int RecentPathGetCount() {
+    return static_cast<int>(s_RecentPaths.size());
+}
+
+const char* RecentPathGet(int index) {
+    if (index < 0 || index >= static_cast<int>(s_RecentPaths.size())) {
+        return nullptr;
+    }
+    return s_RecentPaths[static_cast<size_t>(index)].c_str();
+}
+
+void NewFrameOffscreen(float width, float height, float deltaTime) {
+    if (!Context::Instance().IsInitialized()) {
+        return;
+    }
+    try {
+        ImGui::SetCurrentContext(Context::Instance().GetContext());
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGuiIO& io = ImGui::GetIO();
+        io.DisplaySize = ImVec2(width, height);
+        io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+        io.DeltaTime = deltaTime > 0.0f ? deltaTime : (1.0f / 60.0f);
+        ImGui::NewFrame();
+    } catch (const std::exception& e) {
+        std::cerr << "LibUI::Core::NewFrameOffscreen: Exception: " << e.what() << std::endl;
+    } catch (...) {
+        std::cerr << "LibUI::Core::NewFrameOffscreen: Unknown exception" << std::endl;
+    }
+}
+
+void RenderOffscreen() {
+    if (!Context::Instance().IsInitialized()) {
+        return;
+    }
+    try {
+        ImGui::SetCurrentContext(Context::Instance().GetContext());
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    } catch (const std::exception& e) {
+        std::cerr << "LibUI::Core::RenderOffscreen: Exception: " << e.what() << std::endl;
+    } catch (...) {
+        std::cerr << "LibUI::Core::RenderOffscreen: Unknown exception" << std::endl;
+    }
 }
 
 } // namespace LibUI::Core

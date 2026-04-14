@@ -4,7 +4,7 @@
 #include "MeshData.hxx"
 #include "RiggedMesh.hxx"
 #include "AnimationClip.hxx"
-#include <Core/AssetLoader.hxx>
+#include <Asset/Loading/AssetLoader.hxx>
 #include <filesystem>
 #include <cstdint>
 #include <functional>

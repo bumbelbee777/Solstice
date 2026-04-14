@@ -1,0 +1,50 @@
+{
+  "format": "solstice.narrative.v1",
+  "startNodeId": "start",
+  "nodes": [
+    {
+      "nodeId": "start",
+      "speakerName": "Narrator",
+      "text": "Welcome to the visual novel preset. Press Space or Enter to advance.",
+      "nextNodeId": "second",
+      "choices": [],
+      "voiceAssetPath": "",
+      "subtitleId": "vn.start",
+      "subtitleText": "",
+      "speakerStyleTag": "",
+      "onEnterEvent": ""
+    },
+    {
+      "nodeId": "second",
+      "speakerName": "Narrator",
+      "text": "This is a second line. You'll see a choice next.",
+      "nextNodeId": "choice_node",
+      "choices": []
+    },
+    {
+      "nodeId": "choice_node",
+      "speakerName": "System",
+      "text": "What do you want to do?",
+      "nextNodeId": "",
+      "choices": [
+        { "label": "Continue the story", "targetNodeId": "continue" },
+        { "label": "End for now", "targetNodeId": "end" }
+      ]
+    },
+    {
+      "nodeId": "continue",
+      "speakerName": "Narrator",
+      "text": "You chose to continue. The dialogue system is working.",
+      "nextNodeId": "end",
+      "choices": []
+    },
+    {
+      "nodeId": "end",
+      "speakerName": "",
+      "text": "Thanks for trying the visual novel preset. Restart to see the dialogue again.",
+      "nextNodeId": "",
+      "choices": []
+    }
+  ],
+  "provenance": { "source": "json" }
+}

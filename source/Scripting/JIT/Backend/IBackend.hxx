@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../../Solstice.hxx"
-#include "../BytecodeVM.hxx"
+#include "../../../Solstice.hxx"
+#include "../../VM/BytecodeVM.hxx"
 #include <vector>
 #include <memory>
 #include <functional>

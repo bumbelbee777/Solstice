@@ -1,7 +1,7 @@
 #pragma once
 
 #include "FPSGame.hxx"
-#include "../Inventory.hxx"
+#include "../Gameplay/Inventory.hxx"
 #include <vector>
 #include <string>
 

@@ -1,5 +1,5 @@
 #include "FPSSandbox.hxx"
-#include "../../Core/Debug.hxx"
+#include "../../Core/Debug/Debug.hxx"
 
 namespace Solstice::Game {
 

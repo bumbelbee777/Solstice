@@ -2,7 +2,7 @@
 #include "Backend_x64.hxx"
 #include "Backend_ARM.hxx"
 #include "Backend_RISCV.hxx"
-#include <Core/Debug.hxx>
+#include <Core/Debug/Debug.hxx>
 
 namespace Solstice::Scripting::Backend {
 

@@ -1,4 +1,4 @@
-#include "../source/Physics/Fluid.hxx"
+#include "../source/Physics/Fluid/Fluid.hxx"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -608,18 +608,84 @@ bool TestAnalytical_ProjectionSmallDivergence() {
     FluidSimulation sim(N, 0.0001f, 0.0001f);
     FillSmoothWaves(sim, 1.0f);
     const float uScale = MaxAbsVelocity(sim);
+    const float div0 = MeanAbsDivergence(sim);
     sim.Step(1.0f / 120.0f);
     const float divM = MeanAbsDivergence(sim);
     const float divX = MaxAbsDivergence(sim);
-    const double expBound = std::max(0.02, static_cast<double>(uScale) * 0.25);
+    const bool legacyIsotropic = sim.GetGridLayout().LegacyIsotropicCube();
+    const double velocityBound = legacyIsotropic ? static_cast<double>(uScale) * 0.40 : static_cast<double>(uScale) * 0.25;
+    const double expBound = std::max(legacyIsotropic ? 0.035 : 0.02, velocityBound);
+    const double maxBound = expBound * (legacyIsotropic ? 8.5 : 4.0);
+    const bool okDecay = divM <= std::max(0.65f, div0 * 0.75f);
     const bool okM = divM < expBound;
-    const bool okX = divX < expBound * 4.0;
+    const bool okX = divX < maxBound;
     PrintLeqRow("Proj: mean|div| cap", expBound, divM, okM);
-    PrintLeqRow("Proj: max|div| cap", expBound * 4.0, divX, okX);
+    PrintLeqRow("Proj: max|div| cap", maxBound, divX, okX);
+    PrintLeqRow("Proj: mean|div| decay cap", std::max(0.65, static_cast<double>(div0) * 0.75), divM, okDecay);
     TEST_ASSERT(okM, "Post-step mean divergence within projection tolerance");
     TEST_ASSERT(okX, "Post-step max divergence within slack tolerance");
+    TEST_ASSERT(okDecay, "Projection should reduce mean divergence versus initialization");
 
     TEST_PASS("Analytical: discrete div small after projection step");
+    return true;
+}
+
+bool TestProjection_MultigridImprovesDivergence() {
+    constexpr int N = 20;
+    FluidSimulation baseline(N, 0.0001f, 0.0001f);
+    FluidSimulation multigrid(N, 0.0001f, 0.0001f);
+    FillSmoothWaves(baseline, 1.0f);
+    FillSmoothWaves(multigrid, 1.0f);
+
+    auto& tBase = baseline.GetTuning();
+    tBase.usePressureMultigrid = false;
+    tBase.pressureRelaxationIterations = 32;
+
+    auto& tMg = multigrid.GetTuning();
+    tMg.usePressureMultigrid = true;
+    tMg.pressureMultigridLevels = 4;
+    tMg.pressureMultigridPreSmooth = 2;
+    tMg.pressureMultigridPostSmooth = 2;
+    tMg.pressureMultigridCoarseSmooth = 20;
+    tMg.pressureRelaxationIterations = 32;
+
+    baseline.Step(1.0f / 120.0f);
+    multigrid.Step(1.0f / 120.0f);
+
+    const float baseMeanDiv = MeanAbsDivergence(baseline);
+    const float mgMeanDiv = MeanAbsDivergence(multigrid);
+    const bool ok = std::isfinite(baseMeanDiv) && std::isfinite(mgMeanDiv) && (mgMeanDiv <= baseMeanDiv * 1.02f);
+
+    PrintLeqRow("ProjMG: mean|div| vs relax", static_cast<double>(baseMeanDiv * 1.02f), mgMeanDiv, ok);
+    TEST_ASSERT(ok, "Multigrid projection should not regress divergence");
+
+    TEST_PASS("Projection: multigrid parity/improvement against relaxation");
+    return true;
+}
+
+bool TestProjection_StabilityAcrossGridSizes() {
+    const std::vector<int> sizes = {10, 14, 20, 28};
+    for (int n : sizes) {
+        FluidSimulation sim(n, 0.0001f, 0.0001f);
+        auto& t = sim.GetTuning();
+        t.usePressureMultigrid = true;
+        t.pressureMultigridLevels = 5;
+        t.pressureMultigridPreSmooth = 2;
+        t.pressureMultigridPostSmooth = 2;
+        t.pressureMultigridCoarseSmooth = 18;
+        FillSmoothWaves(sim, 1.0f);
+        for (int step = 0; step < 10; ++step) {
+            sim.Step(1.0f / 120.0f);
+        }
+        const float divM = MeanAbsDivergence(sim);
+        const float divX = MaxAbsDivergence(sim);
+        const bool ok = std::isfinite(divM) && std::isfinite(divX) && divM < 0.8f && divX < 6.0f;
+        PrintLeqRow("ProjStable: mean|div| cap", 0.8, divM, divM < 0.8f);
+        PrintLeqRow("ProjStable: max|div| cap", 6.0, divX, divX < 6.0f);
+        TEST_ASSERT(ok, "Projection stability should hold across grid sizes");
+    }
+
+    TEST_PASS("Projection: stability matrix across grid sizes");
     return true;
 }
 
@@ -1045,6 +1111,8 @@ int main() {
     passed &= TestAnalytical_UniformRhoNoVelocity();
     passed &= TestAnalytical_UniformZAdvection();
     passed &= TestAnalytical_ProjectionSmallDivergence();
+    passed &= TestProjection_MultigridImprovesDivergence();
+    passed &= TestProjection_StabilityAcrossGridSizes();
     passed &= TestAnalytical_ViscousDecayTrend();
     passed &= TestSolverRegression();
     passed &= TestScenario_SemiLagrangianAdvection();

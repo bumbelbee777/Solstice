@@ -1,9 +1,9 @@
 #include "BlizzardGame.hxx"
 #include <Game/FPS/FPSMovement.hxx>
-#include <Game/Health.hxx>
-#include <UI/UISystem.hxx>
+#include <Game/Gameplay/Health.hxx>
+#include <UI/Core/UISystem.hxx>
 #include <Render/Assets/Mesh.hxx>
-#include <Core/Material.hxx>
+#include <Material/Material.hxx>
 #include <Arzachel/ProceduralTexture.hxx>
 #include <Arzachel/MaterialPresets.hxx>
 #include <Arzachel/GeometryOps.hxx>
@@ -13,14 +13,14 @@
 #include <Arzachel/Seed.hxx>
 #include <Render/Scene/Skybox.hxx>
 #include <Render/PhysicsBridge.hxx>
-#include <Physics/PhysicsSystem.hxx>
-#include <Physics/RigidBody.hxx>
-#include <Physics/LightSource.hxx>
+#include <Physics/Integration/PhysicsSystem.hxx>
+#include <Physics/Dynamics/RigidBody.hxx>
+#include <Physics/Lighting/LightSource.hxx>
 #include <Arzachel/MaterialSerializer.hxx>
-#include <Core/Async.hxx>
-#include <Core/Audio.hxx>
-#include <Core/AssetStream.hxx>
-#include <Core/Debug.hxx>
+#include <Core/System/Async.hxx>
+#include <Core/Audio/Audio.hxx>
+#include <Asset/Streaming/AssetStream.hxx>
+#include <Core/Debug/Debug.hxx>
 #include <Solstice.hxx>
 #include <imgui.h>
 #include <iostream>
@@ -1089,12 +1089,11 @@ void BlizzardGame::UpdateFootsteps(float DeltaTime) {
         // Only play if enough time has passed since last footstep
         if (m_LastFootstepTime >= m_FootstepInterval) {
             try {
-                // Play footstep sound at reduced volume (20% volume)
-                auto footstepSource = Core::Audio::AudioManager::Instance().PlaySound3D(
+                auto emitter = Core::Audio::AudioManager::Instance().CreateEmitter(
                     "assets/footsteps.wav", currentPos, 20.0f, false);
-                if (footstepSource.Track) {
-                    footstepSource.Volume = 0.2f; // 20% volume
-                    Core::Audio::AudioManager::Instance().UpdateAudioSource(footstepSource);
+                if (emitter != 0) {
+                    Core::Audio::AudioManager::Instance().SetEmitterVolume(emitter, 0.2f);
+                    Core::Audio::AudioManager::Instance().SetEmitterFlags(emitter, false, false, 0);
                 }
             } catch (const std::exception& e) {
                 SIMPLE_LOG("ERROR: Exception playing footstep sound: " + std::string(e.what()));

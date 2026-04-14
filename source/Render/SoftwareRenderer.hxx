@@ -1,10 +1,10 @@
 #pragma once
 
 #include <Solstice.hxx>
-#include <Core/Allocator.hxx>
-#include <Core/Async.hxx>
+#include <Core/System/Allocator.hxx>
+#include <Core/System/Async.hxx>
 #include <Render/Assets/Mesh.hxx>
-#include <Core/Material.hxx>
+#include <Material/Material.hxx>
 #include <Render/Scene/Camera.hxx>
 #include <Math/Matrix.hxx>
 #include <Math/Vector.hxx>
@@ -20,7 +20,7 @@
 #include <Render/Lighting/VolumetricLighting.hxx>
 #include <Render/Lighting/ShadowRenderer.hxx>
 #include <Render/Scene/SceneRenderer.hxx>
-#include <Physics/LightSource.hxx>
+#include <Physics/Lighting/LightSource.hxx>
 #include <bgfx/bgfx.h>
 #include <set>
 #include <cstdint>
@@ -44,7 +44,8 @@ public:
     virtual uint32_t cacheReadSize(uint64_t _id) override { return 0; }
     virtual bool cacheRead(uint64_t _id, void* _data, uint32_t _size) override { return false; }
     virtual void cacheWrite(uint64_t _id, const void* _data, uint32_t _size) override {}
-    virtual void screenShot(const char* _filePath, uint32_t _width, uint32_t _height, uint32_t _pitch, bgfx::TextureFormat::Enum _format, const void* _data, uint32_t _size, bool _yflip) override {}
+    virtual void screenShot(const char* _filePath, uint32_t _width, uint32_t _height, uint32_t _pitch,
+        bgfx::TextureFormat::Enum _format, const void* _data, uint32_t _size, bool _yflip) override;
     virtual void captureBegin(uint32_t _width, uint32_t _height, uint32_t _pitch, bgfx::TextureFormat::Enum _format, bool _yflip) override {}
     virtual void captureEnd() override {}
     virtual void captureFrame(const void* _data, uint32_t _size) override {}
@@ -62,6 +63,7 @@ struct SOLSTICE_API ViewportConfig {
 class SOLSTICE_API SoftwareRenderer {
 public:
     static constexpr int TILE_SIZE = 16;
+    static constexpr bgfx::ViewId VIEW_WORLD_UI = 5;
     SoftwareRenderer(int Width, int Height, int TileSize = TILE_SIZE, SDL_Window* Window = nullptr);
     ~SoftwareRenderer();
 
@@ -138,7 +140,8 @@ public:
     void RenderPhysicsDebug(const void* PhysicsSystem); // void* to avoid circular dependency
 
     // Optional physics integration: when set, RenderScene will sync physics transforms to the scene
-    void SetPhysicsRegistry(Solstice::ECS::Registry* R) { m_PhysicsRegistry = R; }
+    void BindECSRegistry(Solstice::ECS::Registry* registry) { m_PhysicsRegistry = registry; }
+    void SetPhysicsRegistry(Solstice::ECS::Registry* R) { BindECSRegistry(R); }
 
     // Selection and hover state
     void SetSelectedObjects(const std::set<SceneObjectID>& objects);
@@ -154,6 +157,11 @@ public:
     // Post-processing access
     PostProcessing* GetPostProcessing() { return m_PostProcessing.get(); }
     const PostProcessing* GetPostProcessing() const { return m_PostProcessing.get(); }
+
+    /// After `RenderScene` + `QueueFramebufferCapture`, call `Present()`. Then poll until this returns true
+    /// (BGRA backbuffer → RGBA8 top-down for ImGui / OpenGL upload). Optional; for editor tool previews.
+    void QueueFramebufferCapture();
+    bool TryGetLastFramebufferCaptureRGBA8(std::vector<std::byte>& outRgbaTopDown, int& outW, int& outH);
 
     // Volumetric lighting access
     void SetVolumetricLighting(VolumetricLighting* volumetrics) { m_VolumetricLighting = volumetrics; }

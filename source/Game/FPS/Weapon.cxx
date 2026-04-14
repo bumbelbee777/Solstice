@@ -1,8 +1,8 @@
 #include "Weapon.hxx"
-#include "../Health.hxx"
-#include "../SFXManager.hxx"
-#include "../../Core/Debug.hxx"
-#include "../../Physics/RigidBody.hxx"
+#include "../Gameplay/Health.hxx"
+#include "../Gameplay/SFXManager.hxx"
+#include "../../Core/Debug/Debug.hxx"
+#include "../../Physics/Dynamics/RigidBody.hxx"
 #include "../../Entity/Transform.hxx"
 #include <cmath>
 #include <algorithm>

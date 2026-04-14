@@ -1,6 +1,6 @@
 #pragma once
 
-#include "BytecodeVM.hxx"
+#include "../VM/BytecodeVM.hxx"
 
 namespace Solstice::Scripting {
 

@@ -1,5 +1,5 @@
 #include "Relic.hxx"
-#include "../Debug.hxx"
+#include "Core/Debug/Debug.hxx"
 #include <memory>
 
 namespace Solstice::Core::Relic {

@@ -1448,6 +1448,25 @@ If the **main module** (e.g. run via `ExecuteModule`) calls `WaitFrames` or `Wai
 - **GameBase** (or your game’s main loop) should call `ScriptManager::Update(DeltaTime)` every frame. This updates internal time and frame counters and resumes all due coroutines.
 - Coroutines are single-threaded: one runs at a time on the VM. No extra locking is required for script state.
 
+### Narrative and cutscenes (ScriptManager)
+
+When `ScriptManager` is initialized, additional natives are registered for dialogue and cutscenes. The game must set **`NarrativeBridge`** pointers to the active `DialogueTree`, `NarrativeRuntime`, and optional `CutscenePlayer` (see `source/Game/Dialogue/NarrativeBridge.hxx` and `VisualNovelGame`).
+
+| Native | Description |
+|--------|-------------|
+| `Dialogue.LoadFromFile(path)` | Load `solstice.narrative.v1` JSON (or `.yaml`/`.yml`) into the bridge dialogue tree. |
+| `Dialogue.Start()` | Start the tree from `startNodeId` and play the first line’s voiceline (if any). |
+| `Dialogue.Advance()` | Advance along a linear node. |
+| `Dialogue.AdvanceChoice(i)` | Take choice index `i` on a branching node. |
+| `Dialogue.JumpTo(nodeId)` | Jump to a node id (script/cutscene hook). |
+| `Dialogue.CurrentNodeId()` | Current node id string. |
+| `Dialogue.IsAtEnd()` | Non-zero if dialogue has ended. |
+| `Cutscene.LoadFromFile(path)` | Load cutscene JSON (see `docs/Narrative.md`). |
+| `Cutscene.Play()` / `Cutscene.Stop()` / `Cutscene.Skip()` | Control the bridge cutscene player. |
+| `Cutscene.IsPlaying()` | Non-zero while the cutscene timeline is running. |
+
+Full narrative schema, YAML notes, and C API (`SolsticeV1_NarrativeValidateJSON`) are documented in **`docs/Narrative.md`**.
+
 ---
 
 ## Events and callbacks
@@ -1495,4 +1514,30 @@ function onPlayerHit(entityId, damage) {
 - **Hot Reloading**: Minimal overhead when files unchanged
 - **Bytecode Optimization**: Constant folding and dead code elimination reduce instruction count
 - **JIT Compilation**: Hot paths are compiled to native code (when implemented)
+
+## Typed C++ Interop Helpers
+
+`source/Scripting/NativeBinding.hxx` provides typed registration helpers over `Value`:
+
+```cpp
+using namespace Solstice::Scripting;
+
+NativeBinding::Register<int64_t, int64_t, int64_t>(vm, "AddInts",
+    [](int64_t a, int64_t b) { return a + b; });
+```
+
+For object methods:
+
+```cpp
+vm.RegisterNative("Counter.Add", NativeBinding::BindMethod(&counter, &Counter::Add));
+```
+
+This removes most manual `std::variant` extraction from native bindings while preserving the existing VM ABI.
+
+## JIT Runtime Notes
+
+- `ScriptManager::Initialize` enables JIT by default.
+- ARM64 and RISC-V backends now mirror x64 fallback behavior by compiling hot calls to a VM slice trampoline.
+- `BytecodeVM::GetJITStats()` exposes call/compile/fallback counters for diagnostics.
+- `BytecodeVM::ReloadProgram` invalidates compiled JIT cache to keep hot-reload deterministic.
 

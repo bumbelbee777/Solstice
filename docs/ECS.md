@@ -1,3 +1,82 @@
+# ECS (Registry-First)
+
+Solstice uses a registry-first ECS model in `source/Entity`.
+
+## Design Goals
+
+- component-centric data model
+- minimal entity handle (`EntityId`)
+- ergonomic multi-component queries
+- no required object-oriented entity base type
+
+## Core API
+
+Primary type: `Solstice::ECS::Registry`.
+
+Entity lifecycle:
+
+- `EntityId Create()`
+- `void Destroy(EntityId)`
+- `bool Valid(EntityId) const`
+
+Component operations:
+
+- `template<class T, class... A> T& Add(EntityId, A&&...)`
+- `template<class T> bool Has(EntityId) const`
+- `template<class T> T& Get(EntityId)`
+- `template<class T> T* TryGet(EntityId)`
+- `template<class T> void Remove(EntityId)`
+- `template<class... T> bool HasAll(EntityId) const`
+- `template<class... T> bool HasAny(EntityId) const`
+
+Query operations:
+
+- `template<class... T, class F> void ForEach(F&&)`
+- `template<class... Include, class... Excluded, class F> void ForEachFiltered(Exclude<Excluded...>, F&&)`
+
+Example:
+
+```cpp
+registry.ForEach<Transform, Name>([](EntityId e, Transform& t, Name& n) {
+    (void)e;
+    // update logic
+});
+
+registry.ForEachFiltered<Transform, Name>(
+    Registry::Exclude<Physics::RigidBody>{},
+    [](EntityId e, Transform& t, Name& n) {
+        (void)e; (void)t; (void)n;
+        // entities with Transform+Name and without RigidBody
+    });
+```
+
+## Built-in Components
+
+- `Transform`
+- `Name`
+- `Kind` (`EntityKind`)
+- `PlayerTag`
+
+## Legacy Compatibility
+
+`IEntity` is retained only as a legacy compatibility type and is no longer the preferred modeling approach.
+
+Use pure ECS components for gameplay/entity data. `PlayerFactory` now creates default player entities with ECS components only.
+
+## Engine Touchpoints
+
+High-impact systems that use registry-first ECS patterns:
+
+- physics (`source/Physics/Integration/PhysicsSystem.cxx`, `source/Physics/Integration/ReactPhysics3DBridge.cxx`)
+- render bridge (`source/Render/PhysicsBridge.hxx`)
+- scripting bindings (`source/Scripting/ScriptBindings.cxx`)
+
+## Migration Notes
+
+- Prefer `TryGet` instead of `Has + Get` when possible.
+- Prefer variadic `ForEach<...>` over ad hoc per-component loops.
+- Use `ForEachFiltered` for include/exclude-style queries.
+- Keep systems component-driven and avoid storing gameplay state in OOP entity wrappers.
 # Entity Component System (ECS)
 
 ## Overview
@@ -235,7 +314,7 @@ registry.Destroy(player);
 The ECS integrates with the physics system through the `RigidBody` component:
 
 ```cpp
-#include <Physics/RigidBody.hxx>
+#include <Physics/Dynamics/RigidBody.hxx>
 
 // Add physics body to entity
 auto& rb = registry.Add<Physics::RigidBody>(player);
@@ -296,4 +375,24 @@ The engine provides several built-in components:
 - `ForEach` iterates only over existing components (no sparse iteration)
 - Two-component queries optimize by choosing the smaller component set
 - Entity destruction is O(n) where n is the number of component types (typically small)
+
+## Phase Scheduler
+
+`Entity/Scheduler.hxx` adds an explicit ECS phase runner that can be shared by game layers:
+
+```cpp
+Solstice::ECS::PhaseScheduler scheduler;
+scheduler.Register(Solstice::ECS::SystemPhase::Input, "Input", [&](Registry& r, float dt) {
+    // Collect and apply input components.
+});
+scheduler.Register(Solstice::ECS::SystemPhase::Simulation, "Simulation", [&](Registry& r, float dt) {
+    // Run gameplay and physics integration.
+});
+scheduler.Register(Solstice::ECS::SystemPhase::Late, "Late", [&](Registry& r, float dt) {
+    // Final per-frame bookkeeping.
+});
+scheduler.ExecuteAll(registry, deltaTime);
+```
+
+Execution order is deterministic: `Input -> Simulation -> Presentation -> Late`.
 

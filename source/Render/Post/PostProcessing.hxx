@@ -53,7 +53,9 @@ public:
 
     // Reflection probe integration
     void SetReflectionProbeTexture(bgfx::TextureHandle probeTexture) { m_ReflectionProbeTexture = probeTexture; }
-    void SetCameraMatrices(const Math::Matrix4& view, const Math::Matrix4& proj, const Math::Vec3& cameraPos);
+    void SetCameraMatrices(const Math::Matrix4& view, const Math::Matrix4& jitteredProj,
+                           const Math::Matrix4& unjitteredProj, const Math::Vec3& cameraPos,
+                           const Math::Vec2& jitterNdc);
 
     struct ReflectionSettings {
         float Intensity = 0.4f;
@@ -89,6 +91,16 @@ public:
     MotionBlurQuality GetMotionBlurQuality() const { return m_MotionBlurSettings.Quality; }
     void SetPreviousViewProj(const Math::Matrix4& prevViewProj) { m_PreviousViewProj = prevViewProj; }
 
+    struct TAASettings {
+        bool Enabled = true;
+        float BlendFactor = 0.10f;
+        float ClampStrength = 1.25f;
+        float Sharpen = 0.10f;
+    };
+    void SetTAASettings(const TAASettings& settings) { m_TAASettings = settings; }
+    const TAASettings& GetTAASettings() const { return m_TAASettings; }
+    void InvalidateTAAHistory();
+
     // Bloom settings (HDR glow extraction)
     struct BloomSettings {
         bool Enabled = false;
@@ -121,6 +133,9 @@ public:
     void EndVelocityPass();
     bgfx::FrameBufferHandle GetVelocityFramebuffer() const { return m_VelocityFB; }
     bgfx::TextureHandle GetVelocityBuffer() const { return m_VelocityBuffer; }
+    bgfx::TextureHandle GetTAAHistoryTexture() const { return m_TAAHistoryColor[m_TAAHistoryReadIndex]; }
+    const Math::Matrix4& GetCurrentUnjitteredViewProj() const { return m_ViewProjUnjittered; }
+    const Math::Matrix4& GetPreviousUnjitteredViewProj() const { return m_PreviousViewProjUnjittered; }
 
     // Per-object velocity tracking
     void UpdateObjectVelocity(uint32_t objectId, const Math::Matrix4& currentTransform);
@@ -149,6 +164,9 @@ private:
     bgfx::TextureHandle m_SceneDepth = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle m_VelocityBuffer = BGFX_INVALID_HANDLE;
     bgfx::FrameBufferHandle m_VelocityFB = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle m_TAAHistoryColor[2] = { BGFX_INVALID_HANDLE, BGFX_INVALID_HANDLE };
+    uint8_t m_TAAHistoryReadIndex = 0;
+    bool m_TAAHistoryValid = false;
 
     // Per-object velocity tracking
     std::unordered_map<uint32_t, Math::Matrix4> m_PreviousTransforms;
@@ -185,9 +203,20 @@ private:
     // Motion blur settings
     MotionBlurSettings m_MotionBlurSettings;
     Math::Matrix4 m_PreviousViewProj;
+    Math::Matrix4 m_ViewProjUnjittered;
+    Math::Matrix4 m_PreviousViewProjUnjittered;
+    Math::Vec2 m_CurrentJitterNdc = Math::Vec2(0.0f, 0.0f);
+    Math::Vec2 m_PreviousJitterNdc = Math::Vec2(0.0f, 0.0f);
     bgfx::UniformHandle u_MotionBlurParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_PrevViewProj = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_TexDepth = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_TexVelocity = BGFX_INVALID_HANDLE;
+
+    // TAA settings
+    TAASettings m_TAASettings;
+    bgfx::UniformHandle s_TexHistory = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_TAAParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_TAAJitter = BGFX_INVALID_HANDLE;
 
     // Bloom settings
     BloomSettings m_BloomSettings;

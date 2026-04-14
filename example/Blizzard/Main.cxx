@@ -1,5 +1,5 @@
 #include "BlizzardGame.hxx"
-#include <Core/Debug.hxx>
+#include <Core/Debug/Debug.hxx>
 #include <iostream>
 #include <exception>
 

@@ -1,5 +1,5 @@
 #include "Bootstrap.hxx"
-#include "../Debug.hxx"
+#include "Core/Debug/Debug.hxx"
 #include <fstream>
 #include <cstring>
 

@@ -1,11 +1,11 @@
 #include "TerminalHub.hxx"
 #include "ObjectSpawner.hxx"
-#include <UI/UISystem.hxx>
+#include <UI/Core/UISystem.hxx>
 #include <Render/Scene/Skybox.hxx>
 #include <Render/Particle/ParticlePresets.hxx>
-#include <Core/Material.hxx>
+#include <Material/Material.hxx>
 #include <Arzachel/MeshFactory.hxx>
-#include <Game/InputManager.hxx>
+#include <Game/App/InputManager.hxx>
 #include <bgfx/bgfx.h>
 #include <imgui.h>
 #include <algorithm>

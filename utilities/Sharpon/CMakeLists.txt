@@ -9,14 +9,19 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Create the executable
 add_executable(Sharpon
     "Main.cxx"
+    "PluginLoader.cxx"
+    "SharponConsole.cxx"
+    "SharponProfiler.cxx"
 )
+
+target_include_directories(Sharpon PRIVATE "${CMAKE_SOURCE_DIR}/SDK")
 
 # Link against LibUI and OpenGL
 target_link_libraries(Sharpon PRIVATE LibUI)
 
 # Link OpenGL on Windows
 if(WIN32)
-    target_link_libraries(Sharpon PRIVATE opengl32)
+    target_link_libraries(Sharpon PRIVATE opengl32 shell32)
 else()
     find_package(OpenGL REQUIRED)
     target_link_libraries(Sharpon PRIVATE OpenGL::GL)

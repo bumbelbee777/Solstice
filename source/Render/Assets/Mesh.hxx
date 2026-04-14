@@ -3,7 +3,7 @@
 #include <Solstice.hxx>
 #include <Math/Vector.hxx>
 #include <Math/Matrix.hxx>
-#include <Core/Material.hxx>
+#include <Material/Material.hxx>
 #include <vector>
 #include <cstdint>
 #include <memory>

@@ -7,7 +7,7 @@
 #include "../../../source/Arzachel/Presets/Furniture/FurniturePresets.hxx"
 #include "../../../source/Arzachel/Presets/LevelCompositions.hxx"
 #include "../../../source/Arzachel/Seed.hxx"
-#include "../../../source/Core/Debug.hxx"
+#include "../../../source/Core/Debug/Debug.hxx"
 #include <Math/Vector.hxx>
 #include <Math/Quaternion.hxx>
 

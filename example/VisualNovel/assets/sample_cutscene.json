@@ -1,0 +1,8 @@
+{
+  "id": "sample_intro",
+  "durationSeconds": 2.0,
+  "events": [
+    { "timeSeconds": 0.0, "type": "log", "payload": "Cutscene sample tick" },
+    { "timeSeconds": 1.0, "type": "emit", "payload": "SampleCutsceneMid" }
+  ]
+}

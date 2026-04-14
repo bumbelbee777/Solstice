@@ -1,10 +1,10 @@
 #pragma once
 
 #include "../Solstice.hxx"
-#include "../Core/JSON.hxx"
+#include "../Core/Serialization/JSON.hxx"
 #include <Render/Scene/Scene.hxx>
-#include "../Core/Material.hxx"
-#include "../Physics/LightSource.hxx"
+#include "../Material/Material.hxx"
+#include "../Physics/Lighting/LightSource.hxx"
 #include "../Arzachel/Seed.hxx"
 #include <string>
 #include <vector>
@@ -35,6 +35,20 @@ struct MapData {
     
     // Lighting
     std::vector<Physics::LightSource> Lights;
+
+    // Acoustic zones for cinematic spatial audio.
+    struct AcousticZoneData {
+        std::string Name;
+        Math::Vec3 Center;
+        Math::Vec3 Extents{5.0f, 5.0f, 5.0f};
+        std::string ReverbPreset{"Room"};
+        float Wetness{0.35f};
+        float ObstructionMultiplier{1.0f};
+        int Priority{0};
+        bool IsSpherical{false};
+        bool Enabled{true};
+    };
+    std::vector<AcousticZoneData> AcousticZones;
     
     // Metadata
     struct Metadata {
@@ -57,7 +71,7 @@ public:
     
     // Version management
     static bool IsCompatibleVersion(const std::string& Version);
-    static std::string GetCurrentVersion() { return "1.0"; }
+    static std::string GetCurrentVersion() { return "1.1"; }
 };
 
 } // namespace Solstice::Arzachel

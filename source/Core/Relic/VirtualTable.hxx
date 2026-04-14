@@ -1,9 +1,9 @@
 #pragma once
 
-#include "../../Solstice.hxx"
+#include "Solstice.hxx"
 #include "Types.hxx"
 #include "Reader.hxx"
-#include "../Mmap.hxx"
+#include "Core/Platform/Mmap.hxx"
 #include <optional>
 #include <vector>
 #include <unordered_map>

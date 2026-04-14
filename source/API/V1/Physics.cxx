@@ -1,7 +1,7 @@
 #include "SolsticeAPI/V1/Physics.h"
 #include "Solstice.hxx"
 #include "Entity/Registry.hxx"
-#include "Physics/PhysicsSystem.hxx"
+#include "Physics/Integration/PhysicsSystem.hxx"
 #include <memory>
 
 extern "C" {

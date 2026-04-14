@@ -1,14 +1,14 @@
 #include "ThermalPlumeGame.hxx"
-#include <UI/UISystem.hxx>
+#include <UI/Core/UISystem.hxx>
 #include <Solstice.hxx>
-#include <Physics/LightSource.hxx>
+#include <Physics/Lighting/LightSource.hxx>
 #include <Arzachel/MeshFactory.hxx>
 #include <Arzachel/GeometryOps.hxx>
 #include <Arzachel/Polyhedra.hxx>
 #include <Arzachel/MaterialPresets.hxx>
-#include <Core/Async.hxx>
-#include <Core/Audio.hxx>
-#include <Core/Debug.hxx>
+#include <Core/System/Async.hxx>
+#include <Core/Audio/Audio.hxx>
+#include <Core/Debug/Debug.hxx>
 #include <imgui.h>
 #include <iostream>
 #include <algorithm>
@@ -461,6 +461,9 @@ void ThermalPlumeGame::InitializeFluidSim() {
     tune.useSparseRaymarch = false;
     tune.enableMacCormack = true;
     tune.useSpectralDiffusion = false;
+    tune.parallelAnisotropicLinearSolve = true;
+    // Keep reprojection active but lighter for better real-time throughput.
+    tune.temporalReprojectWeight = 0.12f;
 
     auto& th = m_Fluid->GetThermal();
     th.enableBoussinesq = true;

@@ -1,6 +1,6 @@
 #include "../source/Solstice.hxx"
-#include "../source/Core/Async.hxx"
-#include "../source/Scripting/BytecodeVM.hxx"
+#include "../source/Core/System/Async.hxx"
+#include "../source/Scripting/VM/BytecodeVM.hxx"
 #include <iostream>
 #include <vector>
 #include <thread>

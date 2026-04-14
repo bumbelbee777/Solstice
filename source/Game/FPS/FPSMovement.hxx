@@ -3,7 +3,7 @@
 #include "../../Solstice.hxx"
 #include "FirstPersonController.hxx"
 #include "../../Entity/Registry.hxx"
-#include "../../Physics/RigidBody.hxx"
+#include "../../Physics/Dynamics/RigidBody.hxx"
 #include <Render/Scene/Camera.hxx>
 #include "../../Math/Vector.hxx"
 #include <string>

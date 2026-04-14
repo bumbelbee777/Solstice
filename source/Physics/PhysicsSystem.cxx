@@ -20,14 +20,24 @@
 namespace Solstice::Physics {
 
 void PhysicsSystem::Start(Solstice::ECS::Registry& registry) {
+    if (m_Running && m_Registry == &registry) {
+        return;
+    }
+    if (m_Running && m_Registry && m_Registry != &registry) {
+        Stop();
+    }
     m_Registry = &registry;
     m_Running = true;
     m_Bridge.Initialize(registry);
 }
 
 void PhysicsSystem::Stop() {
+    if (!m_Running && !m_Registry) {
+        return;
+    }
     m_Running = false;
     m_Bridge.Shutdown();
+    m_Registry = nullptr;
 }
 
 void PhysicsSystem::SetVelocityIterations(int iterations) {
@@ -84,14 +94,13 @@ void PhysicsSystem::IntegrateVelocity(float dt) {
         rb.PendingTorques.clear();
 
         // Legacy Fluid component (buoyancy / damping) — apply before acceleration
-        if (m_Registry->Has<Fluid>(entityId)) {
-            const Fluid& fluid = m_Registry->Get<Fluid>(entityId);
+        if (const Fluid* fluid = m_Registry->TryGet<Fluid>(entityId)) {
             float displacement = 1.0f;
-            float buoyancyForce = fluid.Density * 9.81f * displacement;
+            float buoyancyForce = fluid->Density * 9.81f * displacement;
             rb.Force.y += buoyancyForce;
-            rb.Force.x -= rb.Velocity.x * fluid.Viscosity;
-            rb.Force.y -= rb.Velocity.y * fluid.Viscosity;
-            rb.Force.z -= rb.Velocity.z * fluid.Viscosity;
+            rb.Force.x -= rb.Velocity.x * fluid->Viscosity;
+            rb.Force.y -= rb.Velocity.y * fluid->Viscosity;
+            rb.Force.z -= rb.Velocity.z * fluid->Viscosity;
         }
 
         // FluidSimulation: drag and buoyancy relative to sampled fluid velocity

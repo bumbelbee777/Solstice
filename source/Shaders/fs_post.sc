@@ -12,6 +12,7 @@ SAMPLER2D(s_texDepth,  1);
 SAMPLER2D(s_texVelocity, 2);
 SAMPLER2D(s_texVolumetric, 3);  // Volumetric lighting (god rays)
 SAMPLERCUBE(s_texReflectionProbe, 4);
+SAMPLER2D(s_texHistory, 5);
 uniform vec4 u_hdrExposure; // x: exposure, yzw: unused
 uniform vec4 u_motionBlurParams; // x: strength, y: sampleCount, z: depthScale, w: unused
 uniform mat4 u_prevViewProj; // Previous frame view-projection matrix
@@ -22,6 +23,8 @@ uniform vec4 u_reflectionParams; // x: intensity, y: maxSteps, z: thickness, w: 
 uniform mat4 u_reflectionViewProj;
 uniform mat4 u_reflectionInvViewProj;
 uniform vec4 u_cameraPos;
+uniform vec4 u_taaParams; // x: blend, y: clampStrength, z: sharpenAmount, w: historyValid
+uniform vec4 u_taaJitter; // xy: current jitter ndc, zw: previous jitter ndc
 
 // Narkowicz ACES (cheaper)
 vec3 aces(vec3 x) {
@@ -79,6 +82,10 @@ vec3 computeNormalFromDepth(vec2 uv, float depth) {
     return n;
 }
 
+float luminance(vec3 color) {
+    return dot(color, vec3(0.2126, 0.7152, 0.0722));
+}
+
 void main()
 {
     // Optimized post-processing for CPU/iGPU with HDR support
@@ -93,49 +100,73 @@ void main()
         color *= 1.25; // Default exposure fallback
     }
 
-    // 2. Motion Blur (if enabled) - Optimized with reduced samples
+    // 2. Temporal AA (balanced quality/cost)
+    float taaBlend = clamp(u_taaParams.x, 0.0, 0.95);
+    float taaClampStrength = max(u_taaParams.y, 0.01);
+    float taaSharpen = clamp(u_taaParams.z, 0.0, 0.5);
+    bool taaHasHistory = u_taaParams.w > 0.5;
+
+    // Reconstruct motion in UV space.
+    float depthAtPixel = texture2D(s_texDepth, TexCoord).r;
+    vec2 screenVelUv = texture2D(s_texVelocity, TexCoord).rg;
+    bool hasVelocity = length(screenVelUv) > 0.0002;
+    if (!hasVelocity && depthAtPixel < 0.999) {
+        vec3 worldPos = reconstructWorldPos(TexCoord, depthAtPixel);
+        vec4 prevClip = mul(u_prevViewProj, vec4(worldPos, 1.0));
+        if (prevClip.w > 0.0001) {
+            vec2 prevUv = prevClip.xy / prevClip.w * 0.5 + 0.5;
+            screenVelUv = TexCoord - prevUv;
+            hasVelocity = length(screenVelUv) > 0.0002;
+        }
+    }
+
+    if (taaHasHistory) {
+        vec2 jitterDeltaUv = (u_taaJitter.xy - u_taaJitter.zw) * 0.5;
+        vec2 historyUv = clamp(TexCoord - screenVelUv - jitterDeltaUv, 0.0, 1.0);
+        vec3 historyColor = texture2D(s_texHistory, historyUv).rgb;
+
+        // Neighborhood clamp to reduce ghosting.
+        vec2 texel = vec2(1.0, 1.0) / u_viewportSize.xy;
+        vec3 n1 = texture2D(s_texColor, TexCoord + vec2(texel.x, 0.0)).rgb;
+        vec3 n2 = texture2D(s_texColor, TexCoord - vec2(texel.x, 0.0)).rgb;
+        vec3 n3 = texture2D(s_texColor, TexCoord + vec2(0.0, texel.y)).rgb;
+        vec3 n4 = texture2D(s_texColor, TexCoord - vec2(0.0, texel.y)).rgb;
+        vec3 minNeighbor = min(min(n1, n2), min(n3, n4));
+        vec3 maxNeighbor = max(max(n1, n2), max(n3, n4));
+        vec3 clampMin = min(minNeighbor, color) - vec3_splat(taaClampStrength * 0.05);
+        vec3 clampMax = max(maxNeighbor, color) + vec3_splat(taaClampStrength * 0.05);
+        historyColor = clamp(historyColor, clampMin, clampMax);
+
+        float lumaDelta = abs(luminance(color) - luminance(historyColor));
+        float historyWeight = taaBlend * (1.0 - clamp(lumaDelta * 4.0, 0.0, 1.0));
+        historyWeight *= hasVelocity ? 1.0 : 0.8;
+        color = mix(color, historyColor, historyWeight);
+
+        // Tiny unsharp mask to recover detail after TAA.
+        if (taaSharpen > 0.001) {
+            vec3 center = color;
+            vec3 blur = (n1 + n2 + n3 + n4) * 0.25;
+            color = center + (center - blur) * taaSharpen;
+        }
+    }
+
+    // 3. Motion Blur (if enabled) - Optimized with reduced samples
     float motionBlurStrength = u_motionBlurParams.x;
     float sampleCount = u_motionBlurParams.y;
     float depthScale = u_motionBlurParams.z;
 
     if (motionBlurStrength > 0.001 && sampleCount > 0.5) {
-        // Sample depth
-        float depth = texture2D(s_texDepth, TexCoord).r;
-
-        // Sample velocity from velocity buffer (if available)
-        vec2 screenVel = vec2(0.0, 0.0);
-        bool hasVelocity = false;
-
-        // Try to sample velocity buffer
-        vec2 velocitySample = texture2D(s_texVelocity, TexCoord).rg;
-        if (length(velocitySample) > 0.001) {
-            screenVel = velocitySample;
-            hasVelocity = true;
-        }
-        
-        // Fallback: Calculate camera-based velocity from previous view-projection matrix
-        // This helps smooth fast camera movement when velocity buffer isn't populated
-        if (!hasVelocity && depth < 0.999) {
-            vec3 worldPos = reconstructWorldPos(TexCoord, depth);
-            vec4 prevClip = mul(u_prevViewProj, vec4(worldPos, 1.0));
-            if (prevClip.w > 0.0001) {
-                vec2 prevUV = prevClip.xy / prevClip.w * 0.5 + 0.5;
-                screenVel = (TexCoord - prevUV) * 2.0; // Convert to screen-space velocity
-                hasVelocity = length(screenVel) > 0.001;
-            }
-        }
-
         if (hasVelocity) {
             // Calculate velocity magnitude
-            float velMag = length(screenVel);
+            float velMag = length(screenVelUv);
 
             // Apply depth-aware scaling (reduce blur for near objects)
-            float depthFactor = 1.0 - clamp(depth * depthScale, 0.0, 1.0);
+            float depthFactor = 1.0 - clamp(depthAtPixel * depthScale, 0.0, 1.0);
             velMag *= depthFactor * motionBlurStrength;
 
             // Optimized motion blur with fewer samples
             if (velMag > 0.001) {
-                vec2 velDir = normalize(screenVel);
+                vec2 velDir = normalize(screenVelUv);
                 vec3 blurColor = color;
                 float totalWeight = 1.0;
 
@@ -147,7 +178,7 @@ void main()
                 for (int i = 1; i <= MAX_MOTION_BLUR_SAMPLES && i <= numSamples; i++) {
                     float t = float(i) / float(numSamples);
                     vec2 offset = velDir * velMag * t;
-                    vec2 sampleUV = TexCoord + offset / u_viewportSize.xy;
+                    vec2 sampleUV = TexCoord + offset;
                     sampleUV = clamp(sampleUV, 0.0, 1.0);
 
                     float weight = 1.0 - t;

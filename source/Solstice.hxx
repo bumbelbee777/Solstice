@@ -2,8 +2,8 @@
 
 #include <atomic>
 
-#define SOLSTICE_VERSION "0.1.0"
-#define SOLSTICE_BUILD_NUM_MAJOR "7"
+#define SOLSTICE_VERSION "1.0.0"
+#define SOLSTICE_BUILD_NUM_MAJOR "13"
 #define SOLSTICE_BUILD_NUM_MINOR "0"
 #define SOLSTICE_BUILD_NUM_PATCH "0"
 #ifndef SOLSTICE_BUILD_GIT_COMMIT
@@ -16,6 +16,9 @@ SOLSTICE_DEVELOPMENT_BUILD = 1
 #if defined(_WIN32) || defined(_WIN64)
     #ifdef SOLSTICE_EXPORTS
         #define SOLSTICE_API __declspec(dllexport)
+    #elif defined(SOLSTICE_STATIC_LINK)
+        /* Static libs (e.g. Math.lib) + TUs that only consume headers: avoid dllimport __imp_ refs. */
+        #define SOLSTICE_API
     #else
         #define SOLSTICE_API __declspec(dllimport)
     #endif

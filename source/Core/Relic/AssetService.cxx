@@ -1,8 +1,8 @@
 #include "AssetService.hxx"
 #include "Decompress.hxx"
 #include "Delta.hxx"
-#include "../Debug.hxx"
-#include "../Profiler.hxx"
+#include "Core/Debug/Debug.hxx"
+#include "Core/Profiling/Profiler.hxx"
 #include <algorithm>
 
 namespace Solstice::Core::Relic {

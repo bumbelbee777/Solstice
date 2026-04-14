@@ -10,7 +10,75 @@ if(UNIX AND NOT DEFINED CMAKE_CXX_COMPILER_LAUNCHER)
     endif()
 endif()
 
-project(Solstice VERSION 0.1.0 LANGUAGES CXX)
+# Ninja + MSVC: tools from PATH (e.g. llvm-mingw) can be chosen instead of MSVC link.exe / lib.exe.
+# - Wrong linker: try_compile with cl fails ("%1 is not a valid Win32 application").
+# - Wrong archiver: static libs get MSVC flags (/nologo, /out:) passed to GNU/llvm ar → link fails.
+# Prefer MSVC link.exe and lib.exe when the VS toolchain environment is active (CMake Tools / vcvars).
+if(CMAKE_HOST_WIN32 AND CMAKE_GENERATOR MATCHES "Ninja")
+    if(DEFINED ENV{VCToolsInstallDir})
+        set(_solstice_need_msvc_link FALSE)
+        if(NOT DEFINED CMAKE_LINKER)
+            set(_solstice_need_msvc_link TRUE)
+        else()
+            get_filename_component(_solstice_link_base "${CMAKE_LINKER}" NAME_WE)
+            string(TOLOWER "${_solstice_link_base}" _solstice_link_base)
+            if(_solstice_link_base STREQUAL "ld")
+                set(_solstice_need_msvc_link TRUE)
+            endif()
+        endif()
+        set(_solstice_need_msvc_ar FALSE)
+        if(NOT DEFINED CMAKE_AR)
+            set(_solstice_need_msvc_ar TRUE)
+        else()
+            get_filename_component(_solstice_ar_base "${CMAKE_AR}" NAME_WE)
+            string(TOLOWER "${_solstice_ar_base}" _solstice_ar_base)
+            if(_solstice_ar_base STREQUAL "ar" OR _solstice_ar_base STREQUAL "llvm-ar")
+                set(_solstice_need_msvc_ar TRUE)
+            endif()
+        endif()
+        foreach(_pair IN ITEMS Hostx64/x64 Hostx86/x86 Hostarm64/arm64 Hostx64/x86)
+            set(_solstice_link_try "$ENV{VCToolsInstallDir}/bin/${_pair}/link.exe")
+            set(_solstice_lib_try "$ENV{VCToolsInstallDir}/bin/${_pair}/lib.exe")
+            if(EXISTS "${_solstice_link_try}" AND EXISTS "${_solstice_lib_try}")
+                if(_solstice_need_msvc_link)
+                    set(CMAKE_LINKER "${_solstice_link_try}" CACHE FILEPATH "MSVC link.exe (avoid GNU ld on PATH)" FORCE)
+                endif()
+                if(_solstice_need_msvc_ar)
+                    set(CMAKE_AR "${_solstice_lib_try}" CACHE FILEPATH "MSVC lib.exe (avoid GNU/llvm ar on PATH)" FORCE)
+                endif()
+                break()
+            endif()
+        endforeach()
+    endif()
+endif()
+
+project(Solstice VERSION 0.1.0 LANGUAGES C CXX)
+
+option(SOLSTICE_BUILD_UTILITIES "Build LibUI, Sharpon, LevelEditor, and MovieMaker" ON)
+
+# enable_language() can re-resolve CMAKE_AR / CMAKE_LINKER from PATH after the pre-project() hints
+# above, so llvm-mingw ar/ld can win again. Re-pin MSVC lib.exe / link.exe once MSVC is known.
+if(CMAKE_HOST_WIN32 AND CMAKE_GENERATOR MATCHES "Ninja" AND MSVC)
+    if(DEFINED ENV{VCToolsInstallDir})
+        foreach(_pair IN ITEMS Hostx64/x64 Hostx86/x86 Hostarm64/arm64 Hostx64/x86)
+            set(_solstice_link_try "$ENV{VCToolsInstallDir}/bin/${_pair}/link.exe")
+            set(_solstice_lib_try "$ENV{VCToolsInstallDir}/bin/${_pair}/lib.exe")
+            if(EXISTS "${_solstice_link_try}" AND EXISTS "${_solstice_lib_try}")
+                get_filename_component(_solstice_link_base "${CMAKE_LINKER}" NAME_WE)
+                string(TOLOWER "${_solstice_link_base}" _solstice_link_base)
+                if(NOT _solstice_link_base STREQUAL "link")
+                    set(CMAKE_LINKER "${_solstice_link_try}" CACHE FILEPATH "MSVC link.exe (avoid GNU ld on PATH)" FORCE)
+                endif()
+                get_filename_component(_solstice_ar_base "${CMAKE_AR}" NAME_WE)
+                string(TOLOWER "${_solstice_ar_base}" _solstice_ar_base)
+                if(NOT _solstice_ar_base STREQUAL "lib")
+                    set(CMAKE_AR "${_solstice_lib_try}" CACHE FILEPATH "MSVC lib.exe (avoid GNU/llvm ar on PATH)" FORCE)
+                endif()
+                break()
+            endif()
+        endforeach()
+    endif()
+endif()
 
 # CMake 4 dropped compatibility defaults for projects declaring very old policy versions.
 # Some transitive dependencies (for example zstd's build/cmake project) still rely on that.
@@ -92,6 +160,75 @@ CPMAddPackage(NAME SDL_mixer GITHUB_REPOSITORY libsdl-org/SDL_mixer GIT_TAG prer
     EXCLUDE_FROM_ALL YES
 )
 
+# Protobuf: required by GameNetworkingSockets for generated protocol code
+CPMAddPackage(NAME protobuf GITHUB_REPOSITORY protocolbuffers/protobuf GIT_TAG v3.21.12
+    OPTIONS
+        "protobuf_BUILD_TESTS OFF"
+        "protobuf_BUILD_CONFORMANCE OFF"
+        "protobuf_BUILD_EXAMPLES OFF"
+        "protobuf_INSTALL ON"
+        "protobuf_MSVC_STATIC_RUNTIME OFF"
+    EXCLUDE_FROM_ALL YES
+)
+find_package(Protobuf REQUIRED CONFIG)
+if(NOT COMMAND protobuf_generate_cpp)
+    function(protobuf_generate_cpp SRCS HDRS)
+        if(NOT TARGET protobuf::protoc)
+            message(FATAL_ERROR "protobuf::protoc target is required for protobuf_generate_cpp compatibility")
+        endif()
+
+        set(_protobuf_generated_srcs)
+        set(_protobuf_generated_hdrs)
+        foreach(_protobuf_proto IN LISTS ARGN)
+            get_filename_component(_protobuf_abs "${_protobuf_proto}" ABSOLUTE)
+            get_filename_component(_protobuf_proto_dir "${_protobuf_abs}" DIRECTORY)
+            get_filename_component(_protobuf_filename "${_protobuf_abs}" NAME)
+            get_filename_component(_protobuf_name "${_protobuf_abs}" NAME_WE)
+            set(_protobuf_cc "${CMAKE_CURRENT_BINARY_DIR}/${_protobuf_name}.pb.cc")
+            set(_protobuf_h "${CMAKE_CURRENT_BINARY_DIR}/${_protobuf_name}.pb.h")
+            add_custom_command(
+                OUTPUT "${_protobuf_cc}" "${_protobuf_h}"
+                COMMAND "${CMAKE_COMMAND}" -E make_directory "${CMAKE_CURRENT_BINARY_DIR}"
+                COMMAND "$<TARGET_FILE:protobuf::protoc>"
+                ARGS
+                    "--cpp_out=${CMAKE_CURRENT_BINARY_DIR}"
+                    "-I" "${_protobuf_proto_dir}"
+                    "${_protobuf_filename}"
+                DEPENDS "${_protobuf_abs}" protobuf::protoc
+                WORKING_DIRECTORY "${_protobuf_proto_dir}"
+                VERBATIM
+            )
+            list(APPEND _protobuf_generated_srcs "${_protobuf_cc}")
+            list(APPEND _protobuf_generated_hdrs "${_protobuf_h}")
+        endforeach()
+
+        set(${SRCS} "${_protobuf_generated_srcs}" PARENT_SCOPE)
+        set(${HDRS} "${_protobuf_generated_hdrs}" PARENT_SCOPE)
+    endfunction()
+endif()
+if(WIN32)
+    set(SOLSTICE_GNS_CRYPTO "BCrypt")
+    set(SOLSTICE_GNS_CRYPTO25519 "Reference")
+else()
+    set(SOLSTICE_GNS_CRYPTO "OpenSSL")
+    set(SOLSTICE_GNS_CRYPTO25519 "OpenSSL")
+    find_package(OpenSSL REQUIRED)
+endif()
+set(Protobuf_USE_STATIC_LIBS ON CACHE BOOL "Force static protobuf linkage for GameNetworkingSockets" FORCE)
+
+CPMAddPackage(NAME GameNetworkingSockets GITHUB_REPOSITORY ValveSoftware/GameNetworkingSockets GIT_TAG v1.4.1
+    OPTIONS
+        "BUILD_STATIC_LIB ON"
+        "BUILD_SHARED_LIB OFF"
+        "BUILD_EXAMPLES OFF"
+        "BUILD_TESTS OFF"
+        "BUILD_TOOLS OFF"
+        "USE_CRYPTO ${SOLSTICE_GNS_CRYPTO}"
+        "USE_CRYPTO25519 ${SOLSTICE_GNS_CRYPTO25519}"
+        "Protobuf_USE_STATIC_LIBS ON"
+    EXCLUDE_FROM_ALL YES
+)
+
 # tinygltf: header-only; v2.5.0 CMake does not create a target, so provide one for include path
 CPMAddPackage(NAME tinygltf GITHUB_REPOSITORY syoyo/tinygltf GIT_TAG v2.5.0
     OPTIONS
@@ -130,6 +267,27 @@ set(BGFX_DIR "${bgfx_SOURCE_DIR}" CACHE STRING "Location of bgfx" FORCE)
 # BGFX + ImGui glue (uses BX_DIR, BIMG_DIR, BGFX_DIR, imgui_SOURCE_DIR)
 add_subdirectory(3rdparty)
 
+# LibSmf — Solstice Map Format (.smf) v1 I/O (SolsticeEngine V1 validate API; LibParallax uses shared wire codec)
+add_subdirectory(SDK/LibSmf)
+
+# FFmpeg (optional): libav for file video decode in source/Multimedia (FindFFmpeg from SDL3 cmake tree).
+option(SOLSTICE_WITH_FFMPEG "Build FFmpeg-backed video decode (Multimedia)" ON)
+set(SOLSTICE_HAVE_FFMPEG 0)
+if(SOLSTICE_WITH_FFMPEG)
+    list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/3rdparty/sdl3/cmake")
+    set(_SolsticePrevFFmpegComponents "${FFmpeg_FIND_COMPONENTS}")
+    set(FFmpeg_FIND_COMPONENTS AVCODEC AVFORMAT AVUTIL SWSCALE)
+    find_package(FFmpeg QUIET)
+    set(FFmpeg_FIND_COMPONENTS "${_SolsticePrevFFmpegComponents}")
+    unset(_SolsticePrevFFmpegComponents)
+    if(FFmpeg_FOUND)
+        set(SOLSTICE_HAVE_FFMPEG 1)
+        message(STATUS "FFmpeg: Multimedia video decode enabled")
+    else()
+        message(STATUS "FFmpeg (libav) not found — Multimedia video decode disabled")
+    endif()
+endif()
+
 # Engine source: per-directory static libs + SolsticeEngine SHARED (see source/CMakeLists.txt)
 add_subdirectory(source)
 
@@ -151,23 +309,50 @@ target_link_libraries(SolsticeEngine PUBLIC
 # Shader Compilation
 # ============================================================================
 # tools/compile_shaders.py picks the profile per OS (Linux: spirv for Vulkan, Windows: s_5_0, macOS: metal).
+# Outputs are listed explicitly so CMake only runs the step when a .sc / varying / shaderc / script
+# is newer than a produced .bin, or a .bin is missing (add_custom_target alone always ran every build).
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
-# Collect shader source files for dependency tracking
-# CONFIGURE_DEPENDS forces CMake to re-check for new/removed files on each build
-file(GLOB SHADER_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/source/Shaders/*.sc")
+file(GLOB SOLSTICE_SHADER_SC CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/source/Shaders/*.sc")
+file(GLOB SOLSTICE_SHADER_VARYING CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/source/Shaders/varying*.def.sc")
+set(SOLSTICE_COMPILE_SHADERS_PY "${CMAKE_SOURCE_DIR}/tools/compile_shaders.py")
 
-add_custom_target(CompileShaders
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/tools/compile_shaders.py
+# Expected .bin paths — rules must stay aligned with tools/compile_shaders.py (vs_/fs_/cs_ only; skip varyings).
+set(SOLSTICE_SHADER_BIN_OUTPUTS "")
+foreach(_sc IN LISTS SOLSTICE_SHADER_SC)
+    get_filename_component(_stem ${_sc} NAME_WE)
+    string(TOLOWER "${_stem}" _lower)
+    if(_lower MATCHES "varying")
+        continue()
+    endif()
+    if(NOT (_lower MATCHES "^vs_" OR _lower MATCHES "^fs_" OR _lower MATCHES "^cs_"))
+        continue()
+    endif()
+    list(APPEND SOLSTICE_SHADER_BIN_OUTPUTS "${CMAKE_SOURCE_DIR}/source/Shaders/bin/${_stem}.bin")
+endforeach()
+
+if(NOT SOLSTICE_SHADER_BIN_OUTPUTS)
+    message(FATAL_ERROR "No BGFX shader outputs listed (expected vs_/fs_/cs_ *.sc under source/Shaders).")
+endif()
+
+add_custom_command(
+    OUTPUT ${SOLSTICE_SHADER_BIN_OUTPUTS}
+    COMMAND ${Python3_EXECUTABLE} ${SOLSTICE_COMPILE_SHADERS_PY}
         --shaderc $<TARGET_FILE:shaderc>
         --input-dir ${CMAKE_SOURCE_DIR}/source/Shaders
         --output-dir ${CMAKE_SOURCE_DIR}/source/Shaders/bin
         --bgfx-include ${bgfx_SOURCE_DIR}/src
-    DEPENDS shaderc ${SHADER_SOURCES}
+    DEPENDS
+        shaderc
+        ${SOLSTICE_SHADER_SC}
+        ${SOLSTICE_SHADER_VARYING}
+        ${SOLSTICE_COMPILE_SHADERS_PY}
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    COMMENT "Compiling BGFX shaders..."
+    COMMENT "Compiling BGFX shaders (stale outputs only)..."
     VERBATIM
 )
+
+add_custom_target(CompileShaders DEPENDS ${SOLSTICE_SHADER_BIN_OUTPUTS})
 
 # Ensure shaders are compiled before the engine is built
 add_dependencies(SolsticeEngine CompileShaders)
@@ -193,17 +378,26 @@ function(copy_shaders_to_target target_name)
 endfunction()
 
 # ============================================================================
-# Tests
+# LibParallax (tests link this; must be configured before add_subdirectory(tests))
 # ============================================================================
+add_subdirectory(SDK/LibParallax)
+
+# ============================================================================
+# Tests (CTest; targets + labels live in tests/CMakeLists.txt)
+# ============================================================================
+enable_testing()
 add_subdirectory(tests)
 
 # ============================================================================
 # Utilities
 # ============================================================================
-add_subdirectory(utilities/LibUI)
-add_subdirectory(utilities/Sharpon)
-add_subdirectory(utilities/MovieMaker)
-add_subdirectory(utilities/LevelEditor)
+if(SOLSTICE_BUILD_UTILITIES)
+    add_subdirectory(utilities/LibUI)
+    add_subdirectory(utilities/EditorEnginePreview)
+    add_subdirectory(utilities/Sharpon)
+    add_subdirectory(utilities/MovieMaker)
+    add_subdirectory(utilities/LevelEditor)
+endif()
 
 # ============================================================================
 # Examples
@@ -214,3 +408,4 @@ add_subdirectory(example/Hyperbourne)
 add_subdirectory(example/Avalanche)
 add_subdirectory(example/Disco)
 add_subdirectory(example/ThermalPlume)
+add_subdirectory(example/MotionFusion)

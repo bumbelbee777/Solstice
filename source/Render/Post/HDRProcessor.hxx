@@ -2,7 +2,7 @@
 
 #include <Solstice.hxx>
 #include <bgfx/bgfx.h>
-#include <Core/SIMD.hxx>
+#include <Core/ML/SIMD.hxx>
 #include <Math/Vector.hxx>
 #include <cstdint>
 

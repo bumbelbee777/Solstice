@@ -1,6 +1,6 @@
 #include "Decompress.hxx"
-#include "../LZ4.hxx"
-#include "../Debug.hxx"
+#include "Core/System/LZ4.hxx"
+#include "Core/Debug/Debug.hxx"
 #include <zstd.h>
 #include <cstring>
 

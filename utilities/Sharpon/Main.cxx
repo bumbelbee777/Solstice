@@ -1,22 +1,39 @@
 #include "LibUI/Core/Core.hxx"
+#include "LibUI/FileDialogs/FileDialogs.hxx"
 #include "LibUI/Widgets/Widgets.hxx"
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_dialog.h>
 #include <SDL3/SDL_opengl.h>
 #include <imgui.h>
+
+#include <algorithm>
 #include <iostream>
 #include <string>
 #include <vector>
 #include <set>
-#include <algorithm>
 #include <cctype>
 #include <cstring>
 #include <fstream>
 #include <filesystem>
+#include <mutex>
+#include <optional>
+#include <sstream>
+#include <span>
+#include <cstdlib>
+
+#include "PluginLoader.hxx"
+#include "SharponConsole.hxx"
+#include "SharponProfiler.hxx"
+#include "SolsticeAPI/V1/Cutscene.h"
+#include "SolsticeAPI/V1/Narrative.h"
+#include "SolsticeAPI/V1/Scripting.h"
 
 #ifdef _WIN32
 #include <windows.h>
+#include <shellapi.h>
 #else
 #include <dlfcn.h>
+#include <unistd.h>
 #endif
 
 // Solstice engine DLL loading
@@ -37,11 +54,105 @@ void* g_SolsticeDLL = nullptr;
 CompileFunc g_CompileFunc = nullptr;
 ExecuteFunc g_ExecuteFunc = nullptr;
 
-bool LoadSolsticeEngine() {
+typedef SolsticeV1_ResultCode (*ScriptingCompileV1Func)(const char*, char*, size_t);
+typedef SolsticeV1_ResultCode (*ScriptingExecuteV1Func)(
+    const char*, char*, size_t, char*, size_t);
+ScriptingCompileV1Func g_ScriptingCompileV1 = nullptr;
+ScriptingExecuteV1Func g_ScriptingExecuteV1 = nullptr;
+
+typedef SolsticeV1_ResultCode (*NarrativeValidateFunc)(const char*, char*, size_t);
+typedef SolsticeV1_ResultCode (*NarrativeJsonToYamlFunc)(const char*, char*, size_t, char*, size_t);
+NarrativeValidateFunc g_NarrativeValidate = nullptr;
+NarrativeJsonToYamlFunc g_NarrativeJsonToYaml = nullptr;
+
+typedef SolsticeV1_ResultCode (*CutsceneValidateFunc)(const char*, char*, size_t);
+CutsceneValidateFunc g_CutsceneValidate = nullptr;
+
 #ifdef _WIN32
-    g_SolsticeDLL = LoadLibraryA("SolsticeEngine.dll");
+static std::string SharponExeDirectory() {
+    char buf[MAX_PATH];
+    DWORD n = GetModuleFileNameA(nullptr, buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) {
+        return {};
+    }
+    std::error_code ec;
+    return std::filesystem::path(buf).parent_path().string();
+}
+#else
+static std::string SharponExeDirectory() {
+    char buf[4096];
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len <= 0) {
+        return {};
+    }
+    buf[len] = '\0';
+    std::error_code ec;
+    return std::filesystem::path(buf).parent_path().string();
+}
+#endif
+
+static void ClearEngineApiPointers() {
+    g_ScriptingCompileV1 = nullptr;
+    g_ScriptingExecuteV1 = nullptr;
+    g_CompileFunc = nullptr;
+    g_ExecuteFunc = nullptr;
+    g_NarrativeValidate = nullptr;
+    g_NarrativeJsonToYaml = nullptr;
+    g_CutsceneValidate = nullptr;
+}
+
+#ifdef _WIN32
+static HMODULE TryLoadSolsticeModule(const std::filesystem::path& path) {
+    std::string s = path.string();
+    return LoadLibraryA(s.c_str());
+}
+#else
+static void* TryLoadSolsticeModule(const std::filesystem::path& path) {
+    std::string s = path.string();
+    return dlopen(s.c_str(), RTLD_NOW);
+}
+#endif
+
+bool LoadSolsticeEngine() {
+    ClearEngineApiPointers();
+
+    std::vector<std::filesystem::path> candidates;
+#ifdef _WIN32
+    const char* baseNames[] = {"SolsticeEngine.dll"};
+#else
+    const char* baseNames[] = {"libsolsticeengine.so"};
+#endif
+    std::string exeDir = SharponExeDirectory();
+    if (!exeDir.empty()) {
+        for (const char* bn : baseNames) {
+            candidates.push_back(std::filesystem::path(exeDir) / bn);
+            candidates.push_back(std::filesystem::path(exeDir).parent_path() / bn);
+        }
+    }
+    std::error_code ec;
+    std::filesystem::path cwd = std::filesystem::current_path(ec);
+    if (!ec) {
+        for (const char* bn : baseNames) {
+            candidates.push_back(cwd / bn);
+            candidates.push_back(cwd.parent_path() / bn);
+        }
+    }
+
+#ifdef _WIN32
+    for (const auto& c : candidates) {
+        if (!std::filesystem::is_regular_file(c)) {
+            continue;
+        }
+        g_SolsticeDLL = TryLoadSolsticeModule(c);
+        if (g_SolsticeDLL) {
+            break;
+        }
+    }
     if (!g_SolsticeDLL) {
-        std::cerr << "Failed to load SolsticeEngine.dll" << std::endl;
+        g_SolsticeDLL = LoadLibraryA("SolsticeEngine.dll");
+    }
+    if (!g_SolsticeDLL) {
+        std::cerr << "Failed to load SolsticeEngine.dll (searched exe directory, cwd, and PATH)" << std::endl;
         return false;
     }
 
@@ -53,21 +164,35 @@ bool LoadSolsticeEngine() {
         return false;
     }
 
-    // Get Compile function
+    g_ScriptingCompileV1 = (ScriptingCompileV1Func)GetProcAddress(g_SolsticeDLL, "SolsticeV1_ScriptingCompile");
+    g_ScriptingExecuteV1 = (ScriptingExecuteV1Func)GetProcAddress(g_SolsticeDLL, "SolsticeV1_ScriptingExecute");
     g_CompileFunc = (CompileFunc)GetProcAddress(g_SolsticeDLL, "Compile");
-    if (!g_CompileFunc) {
-        std::cerr << "Warning: Compile function not found in SolsticeEngine.dll" << std::endl;
+    g_ExecuteFunc = (ExecuteFunc)GetProcAddress(g_SolsticeDLL, "Execute");
+    if (!g_ScriptingCompileV1 && !g_CompileFunc) {
+        std::cerr << "Warning: No Moonwalk compile export (V1 or legacy) in SolsticeEngine.dll" << std::endl;
+    }
+    if (!g_ScriptingExecuteV1 && !g_ExecuteFunc) {
+        std::cerr << "Warning: No Moonwalk execute export (V1 or legacy) in SolsticeEngine.dll" << std::endl;
     }
 
-    // Get Execute function
-    g_ExecuteFunc = (ExecuteFunc)GetProcAddress(g_SolsticeDLL, "Execute");
-    if (!g_ExecuteFunc) {
-        std::cerr << "Warning: Execute function not found in SolsticeEngine.dll" << std::endl;
-    }
+    g_NarrativeValidate = (NarrativeValidateFunc)GetProcAddress(g_SolsticeDLL, "SolsticeV1_NarrativeValidateJSON");
+    g_NarrativeJsonToYaml = (NarrativeJsonToYamlFunc)GetProcAddress(g_SolsticeDLL, "SolsticeV1_NarrativeJSONToYAML");
+    g_CutsceneValidate = (CutsceneValidateFunc)GetProcAddress(g_SolsticeDLL, "SolsticeV1_CutsceneValidateJSON");
 
     return initFunc();
 #else
-    g_SolsticeDLL = dlopen("libsolsticeengine.so", RTLD_LAZY);
+    for (const auto& c : candidates) {
+        if (!std::filesystem::is_regular_file(c)) {
+            continue;
+        }
+        g_SolsticeDLL = TryLoadSolsticeModule(c);
+        if (g_SolsticeDLL) {
+            break;
+        }
+    }
+    if (!g_SolsticeDLL) {
+        g_SolsticeDLL = dlopen("libsolsticeengine.so", RTLD_NOW);
+    }
     if (!g_SolsticeDLL) {
         std::cerr << "Failed to load libsolsticeengine.so: " << dlerror() << std::endl;
         return false;
@@ -81,23 +206,27 @@ bool LoadSolsticeEngine() {
         return false;
     }
 
-    // Get Compile function
+    g_ScriptingCompileV1 = (ScriptingCompileV1Func)dlsym(g_SolsticeDLL, "SolsticeV1_ScriptingCompile");
+    g_ScriptingExecuteV1 = (ScriptingExecuteV1Func)dlsym(g_SolsticeDLL, "SolsticeV1_ScriptingExecute");
     g_CompileFunc = (CompileFunc)dlsym(g_SolsticeDLL, "Compile");
-    if (!g_CompileFunc) {
-        std::cerr << "Warning: Compile function not found: " << dlerror() << std::endl;
+    g_ExecuteFunc = (ExecuteFunc)dlsym(g_SolsticeDLL, "Execute");
+    if (!g_ScriptingCompileV1 && !g_CompileFunc) {
+        std::cerr << "Warning: No Moonwalk compile export (V1 or legacy) in engine" << std::endl;
+    }
+    if (!g_ScriptingExecuteV1 && !g_ExecuteFunc) {
+        std::cerr << "Warning: No Moonwalk execute export (V1 or legacy) in engine" << std::endl;
     }
 
-    // Get Execute function
-    g_ExecuteFunc = (ExecuteFunc)dlsym(g_SolsticeDLL, "Execute");
-    if (!g_ExecuteFunc) {
-        std::cerr << "Warning: Execute function not found: " << dlerror() << std::endl;
-    }
+    g_NarrativeValidate = (NarrativeValidateFunc)dlsym(g_SolsticeDLL, "SolsticeV1_NarrativeValidateJSON");
+    g_NarrativeJsonToYaml = (NarrativeJsonToYamlFunc)dlsym(g_SolsticeDLL, "SolsticeV1_NarrativeJSONToYAML");
+    g_CutsceneValidate = (CutsceneValidateFunc)dlsym(g_SolsticeDLL, "SolsticeV1_CutsceneValidateJSON");
 
     return initFunc();
 #endif
 }
 
 void UnloadSolsticeEngine() {
+    ClearEngineApiPointers();
     if (g_SolsticeDLL) {
 #ifdef _WIN32
         ShutdownFunc shutdownFunc = (ShutdownFunc)GetProcAddress(g_SolsticeDLL, "Shutdown");
@@ -123,8 +252,22 @@ struct Tab {
     bool UnsavedChanges = false;
     int Id; // Unique identifier
 
+    std::vector<std::string> UndoStack;
+    std::vector<std::string> RedoStack;
+    std::string UndoSentinel;
+    bool WantSelectAll = false;
+    bool WantCut = false;
+    bool WantCopy = false;
+    bool WantPasteFromMenu = false;
+
     Tab() : Id(-1) {}
     Tab(int id, const std::string& path) : FilePath(path), Id(id) {}
+
+    void ResetEditorHistory() {
+        UndoStack.clear();
+        RedoStack.clear();
+        UndoSentinel = CodeBuffer;
+    }
 };
 
 // Simple script editor state
@@ -153,7 +296,162 @@ struct EditorState {
     // Legacy members (will be removed after tab migration)
     bool ShowFileBrowser = false;
     std::vector<std::string> RecentFiles;
+
+    bool ShowNarrativePanel = false;
+    bool ShowCutscenePanel = false;
+    bool ShowPluginsPanel = true;
+    bool ShowConsolePanel = true;
+    bool ShowProfilerPanel = true;
+    std::string NarrativeJSONBuffer;
+    std::string NarrativeValidationOutput;
+    std::string NarrativeYAMLBuffer;
+
+    std::string CutsceneJSONBuffer;
+    std::string CutsceneValidationOutput;
+
+    std::vector<std::string> ConsoleScrollback;
+    char ConsoleInputBuf[512] = {};
+
+    /// Non-empty when engine missing or exports incomplete (shown under menu bar).
+    std::string EngineStatusBanner;
 };
+
+static SDL_Window* g_SharponSdlWindow = nullptr;
+
+static std::mutex g_SharponPendingMutex;
+static std::optional<std::string> g_PendingWorkspaceFolder;
+static std::optional<std::string> g_PendingNarrativeOpenPath;
+static std::optional<std::string> g_PendingCutsceneOpenPath;
+static std::optional<std::string> g_PendingNarrativeSavePath;
+static std::optional<std::string> g_PendingCutsceneSavePath;
+
+static const LibUI::FileDialogs::FileFilter kJsonFileFilters[] = {
+    {"JSON", "json"},
+    {"All", "*"},
+};
+
+static std::filesystem::path SharponWritableStateDir() {
+    const char* b = SDL_GetBasePath();
+    if (b) {
+        std::filesystem::path p(b);
+        SDL_free((void*)b);
+        return p;
+    }
+    return std::filesystem::current_path();
+}
+
+static void SaveSharponWorkspaceFile(const std::string& path) {
+    std::error_code ec;
+    std::filesystem::create_directories(SharponWritableStateDir(), ec);
+    std::ofstream out(SharponWritableStateDir() / "sharpon_workspace.txt", std::ios::binary | std::ios::trunc);
+    if (out) {
+        out << path;
+    }
+}
+
+static std::string LoadSharponWorkspaceFile() {
+    std::ifstream in(SharponWritableStateDir() / "sharpon_workspace.txt");
+    if (!in) {
+        return {};
+    }
+    std::string line;
+    std::getline(in, line);
+    while (!line.empty() && (line.back() == '\r' || line.back() == '\n')) {
+        line.pop_back();
+    }
+    return line;
+}
+
+static void SDLCALL OnWorkspaceFolderPick(void*, const char* const* filelist, int) {
+    if (!filelist || !filelist[0]) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_SharponPendingMutex);
+    g_PendingWorkspaceFolder = std::string(filelist[0]);
+}
+
+static bool ReadFileUtf8(const std::filesystem::path& path, std::string& out, std::string& err) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        err = "Failed to open file.";
+        return false;
+    }
+    std::ostringstream oss;
+    oss << in.rdbuf();
+    out = oss.str();
+    return true;
+}
+
+static void DrainSharponPendingQueues(EditorState& state) {
+    std::optional<std::string> w, no, co, ns, cs;
+    {
+        std::lock_guard<std::mutex> lock(g_SharponPendingMutex);
+        w = std::move(g_PendingWorkspaceFolder);
+        no = std::move(g_PendingNarrativeOpenPath);
+        co = std::move(g_PendingCutsceneOpenPath);
+        ns = std::move(g_PendingNarrativeSavePath);
+        cs = std::move(g_PendingCutsceneSavePath);
+    }
+    std::string err;
+    if (w) {
+        state.FileBrowserRootPath = *w;
+        SaveSharponWorkspaceFile(*w);
+        LibUI::Core::RecentPathPush(w->c_str());
+    }
+    if (no) {
+        if (ReadFileUtf8(std::filesystem::path(*no), state.NarrativeJSONBuffer, err)) {
+            state.NarrativeValidationOutput = std::string("Loaded: ") + *no;
+        } else {
+            state.NarrativeValidationOutput = err;
+        }
+    }
+    if (co) {
+        if (ReadFileUtf8(std::filesystem::path(*co), state.CutsceneJSONBuffer, err)) {
+            state.CutsceneValidationOutput = std::string("Loaded: ") + *co;
+        } else {
+            state.CutsceneValidationOutput = err;
+        }
+    }
+    if (ns) {
+        std::ofstream out(std::filesystem::path(*ns), std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << state.NarrativeJSONBuffer;
+            state.NarrativeValidationOutput = "Saved narrative JSON.";
+        } else {
+            state.NarrativeValidationOutput = "Save failed.";
+        }
+    }
+    if (cs) {
+        std::ofstream out(std::filesystem::path(*cs), std::ios::binary | std::ios::trunc);
+        if (out) {
+            out << state.CutsceneJSONBuffer;
+            state.CutsceneValidationOutput = "Saved cutscene JSON.";
+        } else {
+            state.CutsceneValidationOutput = "Cutscene save failed.";
+        }
+    }
+}
+
+static void TryOpenRepositoryDocsFolder() {
+    std::filesystem::path p(SharponExeDirectory());
+    if (p.empty()) {
+        p = std::filesystem::current_path();
+    }
+    for (int i = 0; i < 10 && !p.empty(); ++i) {
+        auto docs = p / "docs";
+        std::error_code ec;
+        if (std::filesystem::is_directory(docs, ec) && std::filesystem::exists(docs / "Utilities.md", ec)) {
+#ifdef _WIN32
+            ShellExecuteA(nullptr, "open", docs.string().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+#else
+            std::string cmd = std::string("xdg-open \"") + docs.string() + "\"";
+            std::system(cmd.c_str());
+#endif
+            return;
+        }
+        p = p.parent_path();
+    }
+}
 
 void LoadFont() {
     // Make sure we're using the LibUI ImGui context
@@ -369,6 +667,7 @@ void OpenFileInTab(EditorState& state, const std::string& filePath) {
     }
 
     state.Tabs.push_back(newTab);
+    state.Tabs.back().ResetEditorHistory();
     state.ActiveTabId = newTab.Id;
 }
 
@@ -399,8 +698,129 @@ void SwitchToTab(EditorState& state, int tabId) {
     }
 }
 
+namespace {
+
+struct SharponImGuiStrUserData {
+    Tab* TabPtr{nullptr};
+};
+
+static constexpr size_t kSharponMaxUndo = 128;
+
+static int SharponCodeBufferCallback(ImGuiInputTextCallbackData* data) {
+    auto* ud = reinterpret_cast<SharponImGuiStrUserData*>(data->UserData);
+    Tab* tab = ud->TabPtr;
+    std::string* str = &tab->CodeBuffer;
+
+    if (data->EventFlag == ImGuiInputTextFlags_CallbackResize) {
+        IM_ASSERT(data->Buf == str->c_str());
+        str->resize(static_cast<size_t>(data->BufTextLen));
+        data->Buf = (char*)str->c_str();
+        return 0;
+    }
+    if (data->EventFlag == ImGuiInputTextFlags_CallbackEdit) {
+        std::string newStr(data->Buf, static_cast<size_t>(data->BufTextLen));
+        if (newStr != tab->UndoSentinel) {
+            if (tab->UndoStack.size() >= kSharponMaxUndo) {
+                tab->UndoStack.erase(tab->UndoStack.begin());
+            }
+            tab->UndoStack.push_back(tab->UndoSentinel);
+            tab->UndoSentinel = std::move(newStr);
+            tab->RedoStack.clear();
+        }
+        tab->UnsavedChanges = true;
+        return 0;
+    }
+    if (data->EventFlag == ImGuiInputTextFlags_CallbackAlways) {
+        if (tab->WantSelectAll) {
+            data->SelectAll();
+            tab->WantSelectAll = false;
+        }
+        if (tab->WantCut && data->HasSelection()) {
+            const int a = std::min(data->SelectionStart, data->SelectionEnd);
+            const int b = std::max(data->SelectionStart, data->SelectionEnd);
+            const std::string sel(data->Buf + a, data->Buf + b);
+            ImGui::SetClipboardText(sel.c_str());
+            data->DeleteChars(a, b - a);
+            tab->WantCut = false;
+            tab->UndoSentinel.assign(data->Buf, static_cast<size_t>(data->BufTextLen));
+        }
+        if (tab->WantCopy && data->HasSelection()) {
+            const int a = std::min(data->SelectionStart, data->SelectionEnd);
+            const int b = std::max(data->SelectionStart, data->SelectionEnd);
+            const std::string sel(data->Buf + a, data->Buf + b);
+            ImGui::SetClipboardText(sel.c_str());
+            tab->WantCopy = false;
+        }
+        if (tab->WantPasteFromMenu) {
+            const char* clip = ImGui::GetClipboardText();
+            if (clip && clip[0] != '\0') {
+                int pos = data->CursorPos;
+                if (data->HasSelection()) {
+                    const int a = std::min(data->SelectionStart, data->SelectionEnd);
+                    const int b = std::max(data->SelectionStart, data->SelectionEnd);
+                    data->DeleteChars(a, b - a);
+                    pos = a;
+                }
+                data->InsertChars(pos, clip);
+            }
+            tab->WantPasteFromMenu = false;
+        }
+        return 0;
+    }
+    return 0;
+}
+
+} // namespace
+
+static void RefreshSharponEngineBanner(EditorState& state) {
+    if (!g_SolsticeDLL) {
+        std::string dir = SharponExeDirectory();
+        state.EngineStatusBanner =
+            "SolsticeEngine not loaded. Place SolsticeEngine.dll next to Sharpon (or run from the build output bin folder). "
+            "See docs/SolsticeAPI.md. Exe directory: "
+            + (dir.empty() ? "(unknown)" : dir);
+        return;
+    }
+    if (!g_ScriptingCompileV1 && !g_CompileFunc) {
+        state.EngineStatusBanner = "Engine loaded but no Moonwalk compile export (SolsticeV1_ScriptingCompile or legacy Compile).";
+        return;
+    }
+    if (!g_ScriptingExecuteV1 && !g_ExecuteFunc) {
+        state.EngineStatusBanner =
+            "Engine loaded but no Moonwalk execute export (SolsticeV1_ScriptingExecute or legacy Execute). Run may fail.";
+        return;
+    }
+    state.EngineStatusBanner.clear();
+}
+
+static void SharponApplyUndo(EditorState& state) {
+    Tab* t = GetActiveTab(state);
+    if (!t || t->UndoStack.empty()) {
+        return;
+    }
+    ImGui::ClearActiveID();
+    t->RedoStack.push_back(t->CodeBuffer);
+    t->CodeBuffer = std::move(t->UndoStack.back());
+    t->UndoStack.pop_back();
+    t->UndoSentinel = t->CodeBuffer;
+    t->UnsavedChanges = true;
+}
+
+static void SharponApplyRedo(EditorState& state) {
+    Tab* t = GetActiveTab(state);
+    if (!t || t->RedoStack.empty()) {
+        return;
+    }
+    ImGui::ClearActiveID();
+    t->UndoStack.push_back(t->CodeBuffer);
+    t->CodeBuffer = std::move(t->RedoStack.back());
+    t->RedoStack.pop_back();
+    t->UndoSentinel = t->CodeBuffer;
+    t->UnsavedChanges = true;
+}
+
 void CompileScript(EditorState& state) {
-    if (!g_CompileFunc) {
+    if (!g_ScriptingCompileV1 && !g_CompileFunc) {
         state.CompilationOutput += "Error: Compile function not available. Make sure SolsticeEngine.dll is loaded.\n";
         return;
     }
@@ -414,7 +834,12 @@ void CompileScript(EditorState& state) {
     state.CompilationOutput += "Compiling...\n";
 
     char errorBuffer[1024] = {0};
-    int result = g_CompileFunc(activeTab->CodeBuffer.c_str(), errorBuffer, sizeof(errorBuffer));
+    int result = 1;
+    if (g_ScriptingCompileV1) {
+        result = static_cast<int>(g_ScriptingCompileV1(activeTab->CodeBuffer.c_str(), errorBuffer, sizeof(errorBuffer)));
+    } else {
+        result = g_CompileFunc(activeTab->CodeBuffer.c_str(), errorBuffer, sizeof(errorBuffer));
+    }
 
     if (result == 0) {
         state.CompilationOutput += "✓ Compilation successful!\n";
@@ -429,7 +854,7 @@ void CompileScript(EditorState& state) {
 }
 
 void RunScript(EditorState& state) {
-    if (!g_ExecuteFunc) {
+    if (!g_ScriptingExecuteV1 && !g_ExecuteFunc) {
         state.ScriptOutput += "Error: Execute function not available. Make sure SolsticeEngine.dll is loaded.\n";
         return;
     }
@@ -444,7 +869,14 @@ void RunScript(EditorState& state) {
 
     char outputBuffer[8192] = {0};
     char errorBuffer[1024] = {0};
-    int result = g_ExecuteFunc(activeTab->CodeBuffer.c_str(), outputBuffer, sizeof(outputBuffer), errorBuffer, sizeof(errorBuffer));
+    int result = 1;
+    if (g_ScriptingExecuteV1) {
+        result = static_cast<int>(g_ScriptingExecuteV1(
+            activeTab->CodeBuffer.c_str(), outputBuffer, sizeof(outputBuffer), errorBuffer, sizeof(errorBuffer)));
+    } else {
+        result = g_ExecuteFunc(
+            activeTab->CodeBuffer.c_str(), outputBuffer, sizeof(outputBuffer), errorBuffer, sizeof(errorBuffer));
+    }
 
     if (result == 0) {
         if (outputBuffer[0] != '\0') {
@@ -459,6 +891,28 @@ void RunScript(EditorState& state) {
         } else {
             state.ScriptOutput += "Unknown error\n";
         }
+    }
+}
+
+void OnConsoleLine(void* user, const char* line) {
+    auto* state = static_cast<EditorState*>(user);
+    if (!line || !line[0]) {
+        return;
+    }
+    state->ConsoleScrollback.push_back(std::string("> ") + line);
+    std::string cmd = line;
+    if (cmd == "help") {
+        state->ConsoleScrollback.push_back("Commands: help | compile | run | clear");
+    } else if (cmd == "compile") {
+        CompileScript(*state);
+        state->ConsoleScrollback.push_back("(compile output in Compilation tab)");
+    } else if (cmd == "run") {
+        RunScript(*state);
+        state->ConsoleScrollback.push_back("(run output in Script Output tab)");
+    } else if (cmd == "clear") {
+        state->ConsoleScrollback.clear();
+    } else {
+        state->ConsoleScrollback.push_back("Unknown command. Type help.");
     }
 }
 
@@ -570,6 +1024,140 @@ void RenameFileOrFolder(EditorState& state, const std::filesystem::path& oldPath
 }
 
 // Render dialog modals
+void RenderNarrativePanel(EditorState& state) {
+    if (!state.ShowNarrativePanel) {
+        return;
+    }
+    ImGui::SetNextWindowSize(ImVec2(720, 560), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Narrative JSON", &state.ShowNarrativePanel)) {
+        if (ImGui::Button("Open...") && g_SharponSdlWindow) {
+            LibUI::FileDialogs::ShowOpenFile(
+                g_SharponSdlWindow, "Open narrative JSON",
+                [](std::optional<std::string> path) {
+                    if (!path.has_value() || path->empty()) {
+                        return;
+                    }
+                    std::lock_guard<std::mutex> lock(g_SharponPendingMutex);
+                    g_PendingNarrativeOpenPath = std::move(path).value();
+                },
+                std::span<const LibUI::FileDialogs::FileFilter>(kJsonFileFilters));
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Save As...") && g_SharponSdlWindow) {
+            LibUI::FileDialogs::ShowSaveFile(
+                g_SharponSdlWindow, "Save narrative JSON",
+                [](std::optional<std::string> path) {
+                    if (!path.has_value() || path->empty()) {
+                        return;
+                    }
+                    std::lock_guard<std::mutex> lock(g_SharponPendingMutex);
+                    g_PendingNarrativeSavePath = std::move(path).value();
+                },
+                std::span<const LibUI::FileDialogs::FileFilter>(kJsonFileFilters));
+        }
+        LibUI::Widgets::InputTextMultiline("##narr_json", state.NarrativeJSONBuffer, ImVec2(-1, 200), 0);
+        if (ImGui::Button("Validate")) {
+            state.NarrativeValidationOutput.clear();
+            if (!g_NarrativeValidate) {
+                state.NarrativeValidationOutput =
+                    "Narrative API not available. Ensure SolsticeEngine exports SolsticeV1_NarrativeValidateJSON.";
+            } else {
+                char Err[4096];
+                Err[0] = '\0';
+                SolsticeV1_ResultCode R = g_NarrativeValidate(state.NarrativeJSONBuffer.c_str(), Err, sizeof(Err));
+                if (R == SolsticeV1_ResultSuccess) {
+                    state.NarrativeValidationOutput = "Validation OK.";
+                } else {
+                    state.NarrativeValidationOutput = Err;
+                }
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("JSON to YAML")) {
+            state.NarrativeYAMLBuffer.clear();
+            if (!g_NarrativeJsonToYaml) {
+                state.NarrativeYAMLBuffer = "# API not loaded";
+            } else {
+                constexpr size_t kYamlCap = 512u * 1024u;
+                std::vector<char> Yaml(kYamlCap);
+                char Err[1024];
+                Yaml[0] = '\0';
+                Err[0] = '\0';
+                SolsticeV1_ResultCode R = g_NarrativeJsonToYaml(
+                    state.NarrativeJSONBuffer.c_str(), Yaml.data(), Yaml.size(), Err, sizeof(Err));
+                if (R == SolsticeV1_ResultSuccess) {
+                    state.NarrativeYAMLBuffer.assign(Yaml.data());
+                } else {
+                    state.NarrativeYAMLBuffer = std::string("Error: ") + Err;
+                }
+            }
+        }
+        ImGui::Separator();
+        ImGui::TextUnformatted("Status / validation:");
+        LibUI::Widgets::InputTextMultiline("##narr_val", state.NarrativeValidationOutput, ImVec2(-1, 64),
+            ImGuiInputTextFlags_ReadOnly);
+        ImGui::TextUnformatted("YAML preview:");
+        LibUI::Widgets::InputTextMultiline("##narr_yaml", state.NarrativeYAMLBuffer, ImVec2(-1, 120),
+            ImGuiInputTextFlags_ReadOnly);
+    }
+    ImGui::End();
+}
+
+void RenderCutscenePanel(EditorState& state) {
+    if (!state.ShowCutscenePanel) {
+        return;
+    }
+    ImGui::SetNextWindowSize(ImVec2(640, 480), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Cutscene JSON", &state.ShowCutscenePanel)) {
+        if (ImGui::Button("Open...") && g_SharponSdlWindow) {
+            LibUI::FileDialogs::ShowOpenFile(
+                g_SharponSdlWindow, "Open cutscene JSON",
+                [](std::optional<std::string> path) {
+                    if (!path.has_value() || path->empty()) {
+                        return;
+                    }
+                    std::lock_guard<std::mutex> lock(g_SharponPendingMutex);
+                    g_PendingCutsceneOpenPath = std::move(path).value();
+                },
+                std::span<const LibUI::FileDialogs::FileFilter>(kJsonFileFilters));
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Save As...") && g_SharponSdlWindow) {
+            LibUI::FileDialogs::ShowSaveFile(
+                g_SharponSdlWindow, "Save cutscene JSON",
+                [](std::optional<std::string> path) {
+                    if (!path.has_value() || path->empty()) {
+                        return;
+                    }
+                    std::lock_guard<std::mutex> lock(g_SharponPendingMutex);
+                    g_PendingCutsceneSavePath = std::move(path).value();
+                },
+                std::span<const LibUI::FileDialogs::FileFilter>(kJsonFileFilters));
+        }
+        LibUI::Widgets::InputTextMultiline("##cut_json", state.CutsceneJSONBuffer, ImVec2(-1, 220), 0);
+        if (ImGui::Button("Validate")) {
+            state.CutsceneValidationOutput.clear();
+            if (!g_CutsceneValidate) {
+                state.CutsceneValidationOutput =
+                    "Cutscene API not available. Ensure SolsticeEngine exports SolsticeV1_CutsceneValidateJSON.";
+            } else {
+                char Err[2048];
+                Err[0] = '\0';
+                SolsticeV1_ResultCode R = g_CutsceneValidate(state.CutsceneJSONBuffer.c_str(), Err, sizeof(Err));
+                if (R == SolsticeV1_ResultSuccess) {
+                    state.CutsceneValidationOutput = "Validation OK.";
+                } else {
+                    state.CutsceneValidationOutput = Err;
+                }
+            }
+        }
+        ImGui::Separator();
+        LibUI::Widgets::InputTextMultiline("##cut_val", state.CutsceneValidationOutput, ImVec2(-1, 100),
+            ImGuiInputTextFlags_ReadOnly);
+    }
+    ImGui::End();
+}
+
 void RenderFileOperationDialogs(EditorState& state) {
     // New File Dialog
     if (state.ShowNewFileDialog) {
@@ -726,6 +1314,7 @@ void RenderEditor(EditorState& state) {
                     Tab newTab(state.NextTabId++, "");
                     newTab.CodeBuffer = "-- New file\n";
                     state.Tabs.push_back(newTab);
+                    state.Tabs.back().ResetEditorHistory();
                     state.ActiveTabId = newTab.Id;
                 }
                 if (ImGui::MenuItem("Open", "Ctrl+O")) {
@@ -760,6 +1349,11 @@ void RenderEditor(EditorState& state) {
                         state.ShowRenameDialog = true; // Reuse rename dialog for Save As
                     }
                 }
+                if (ImGui::MenuItem("Open Workspace Folder...") && g_SharponSdlWindow) {
+                    const char* defLoc =
+                        state.FileBrowserRootPath.empty() ? nullptr : state.FileBrowserRootPath.c_str();
+                    SDL_ShowOpenFolderDialog(OnWorkspaceFolderPick, nullptr, g_SharponSdlWindow, defLoc, false);
+                }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Exit")) {
                     // Will be handled by main loop
@@ -767,6 +1361,35 @@ void RenderEditor(EditorState& state) {
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Edit")) {
+                Tab* edTab = GetActiveTab(state);
+                if (ImGui::MenuItem("Undo", "Ctrl+Z", false, edTab && !edTab->UndoStack.empty())) {
+                    SharponApplyUndo(state);
+                }
+                if (ImGui::MenuItem("Redo", "Ctrl+Y", false, edTab && !edTab->RedoStack.empty())) {
+                    SharponApplyRedo(state);
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Cut", "Ctrl+X", false, edTab != nullptr)) {
+                    if (edTab) {
+                        edTab->WantCut = true;
+                    }
+                }
+                if (ImGui::MenuItem("Copy", "Ctrl+C", false, edTab != nullptr)) {
+                    if (edTab) {
+                        edTab->WantCopy = true;
+                    }
+                }
+                if (ImGui::MenuItem("Paste", "Ctrl+V", false, edTab != nullptr)) {
+                    if (edTab) {
+                        edTab->WantPasteFromMenu = true;
+                    }
+                }
+                if (ImGui::MenuItem("Select All", "Ctrl+A", false, edTab != nullptr)) {
+                    if (edTab) {
+                        edTab->WantSelectAll = true;
+                    }
+                }
+                ImGui::Separator();
                 if (ImGui::MenuItem("Compile", "F5")) {
                     CompileScript(state);
                 }
@@ -775,7 +1398,28 @@ void RenderEditor(EditorState& state) {
                 }
                 ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("Tools")) {
+                ImGui::MenuItem("Narrative JSON...", nullptr, &state.ShowNarrativePanel);
+                ImGui::MenuItem("Cutscene JSON...", nullptr, &state.ShowCutscenePanel);
+                ImGui::Separator();
+                ImGui::MenuItem("Plugins window", nullptr, &state.ShowPluginsPanel);
+                ImGui::MenuItem("Console window", nullptr, &state.ShowConsolePanel);
+                ImGui::MenuItem("Performance / profiler", nullptr, &state.ShowProfilerPanel);
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Help")) {
+                if (ImGui::MenuItem("Open documentation folder")) {
+                    TryOpenRepositoryDocsFolder();
+                }
+                ImGui::EndMenu();
+            }
             ImGui::EndMenuBar();
+        }
+
+        RefreshSharponEngineBanner(state);
+        if (!state.EngineStatusBanner.empty()) {
+            ImGui::TextWrapped("%s", state.EngineStatusBanner.c_str());
+            ImGui::Separator();
         }
 
         // Toolbar with action buttons
@@ -785,6 +1429,14 @@ void RenderEditor(EditorState& state) {
         ImGui::SameLine();
         if (ImGui::Button("Run (F6)")) {
             RunScript(state);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Narrative")) {
+            state.ShowNarrativePanel = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cutscene")) {
+            state.ShowCutscenePanel = true;
         }
         ImGui::Separator();
 
@@ -868,44 +1520,50 @@ void RenderEditor(EditorState& state) {
 
             // Right-click context menu for editor
             if (ImGui::BeginPopupContextWindow("##editor_context", ImGuiPopupFlags_MouseButtonRight)) {
+                if (ImGui::MenuItem("Undo", "Ctrl+Z", false, !activeTab->UndoStack.empty())) {
+                    SharponApplyUndo(state);
+                }
+                if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !activeTab->RedoStack.empty())) {
+                    SharponApplyRedo(state);
+                }
+                ImGui::Separator();
                 if (ImGui::MenuItem("Cut", "Ctrl+X")) {
-                    ImGui::SetClipboardText(activeTab->CodeBuffer.c_str());
-                    // TODO: Implement actual cut (remove selected text)
+                    activeTab->WantCut = true;
                 }
                 if (ImGui::MenuItem("Copy", "Ctrl+C")) {
-                    ImGui::SetClipboardText(activeTab->CodeBuffer.c_str());
+                    activeTab->WantCopy = true;
                 }
                 if (ImGui::MenuItem("Paste", "Ctrl+V")) {
-                    const char* clipboard = ImGui::GetClipboardText();
-                    if (clipboard) {
-                        activeTab->CodeBuffer += clipboard;
-                        activeTab->UnsavedChanges = true;
-                    }
+                    activeTab->WantPasteFromMenu = true;
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Select All", "Ctrl+A")) {
-                    // TODO: Implement select all
-                }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Undo", "Ctrl+Z")) {
-                    // TODO: Implement undo
-                }
-                if (ImGui::MenuItem("Redo", "Ctrl+Y")) {
-                    // TODO: Implement redo
+                    activeTab->WantSelectAll = true;
                 }
                 ImGui::EndPopup();
             }
 
-            char* buffer = activeTab->CodeBuffer.data();
-            size_t bufferSize = activeTab->CodeBuffer.size() + 1024; // Add extra space
-            activeTab->CodeBuffer.resize(bufferSize);
+            if (activeTab->UndoSentinel.empty()) {
+                activeTab->UndoSentinel = activeTab->CodeBuffer;
+            }
+            if (activeTab->CodeBuffer.capacity() < activeTab->CodeBuffer.size() + 2) {
+                activeTab->CodeBuffer.reserve(activeTab->CodeBuffer.size() + 4096);
+            }
+            SharponImGuiStrUserData cbData;
+            cbData.TabPtr = activeTab;
+            ImGuiInputTextFlags flags = ImGuiInputTextFlags_AllowTabInput | ImGuiInputTextFlags_CallbackResize
+                | ImGuiInputTextFlags_CallbackEdit | ImGuiInputTextFlags_CallbackAlways | ImGuiInputTextFlags_NoUndoRedo;
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::InputTextMultiline("##editor_input", activeTab->CodeBuffer.data(), activeTab->CodeBuffer.capacity() + 1,
+                ImVec2(-1, -1), flags, SharponCodeBufferCallback, &cbData);
 
-        ImGuiInputTextFlags flags = ImGuiInputTextFlags_AllowTabInput;
-            if (LibUI::Widgets::InputTextMultiline("##editor_input", activeTab->CodeBuffer.data(), bufferSize, ImVec2(-1, -1), flags)) {
-                activeTab->UnsavedChanges = true;
-            // Trim buffer to actual size
-                size_t len = strlen(activeTab->CodeBuffer.data());
-                activeTab->CodeBuffer.resize(len);
+            if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
+                if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z) && !ImGui::GetIO().KeyShift) {
+                    SharponApplyUndo(state);
+                } else if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y)
+                    || (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z) && ImGui::GetIO().KeyShift)) {
+                    SharponApplyRedo(state);
+                }
             }
 
             ImGui::EndChild();
@@ -1155,6 +1813,7 @@ int main(int argc, char* argv[]) {
         SDL_Quit();
         return -1;
     }
+    g_SharponSdlWindow = window;
 
     // Create OpenGL context
     SDL_GLContext glContext = SDL_GL_CreateContext(window);
@@ -1205,9 +1864,12 @@ int main(int argc, char* argv[]) {
     bool engineLoaded = LoadSolsticeEngine();
     if (engineLoaded) {
         std::cout << "Solstice engine loaded successfully" << std::endl;
+        SharponProfiler_BindFromEngineModule(g_SolsticeDLL);
     } else {
         std::cout << "Warning: Solstice engine not loaded (editor will still work)" << std::endl;
     }
+
+    SharponPlugins_LoadDefault();
 
     // Editor state
     EditorState editorState;
@@ -1223,11 +1885,45 @@ int main(int argc, char* argv[]) {
     Tab initialTab(editorState.NextTabId++, "");
     initialTab.CodeBuffer = "-- Sharpon Script Editor\n-- Start typing your script here...\n\n@Entry {\n    print(\"Hello, Moonwalk!\");\n}\n";
     editorState.Tabs.push_back(initialTab);
+    editorState.Tabs.back().ResetEditorHistory();
     editorState.ActiveTabId = initialTab.Id;
+
+    editorState.NarrativeJSONBuffer = R"({
+  "format": "solstice.narrative.v1",
+  "startNodeId": "start",
+  "nodes": [
+    {
+      "nodeId": "start",
+      "speakerName": "Narrator",
+      "text": "Hello from Sharpon narrative tools.",
+      "nextNodeId": "",
+      "choices": []
+    }
+  ],
+  "provenance": { "source": "json" }
+})";
+
+    {
+        std::string ws = LoadSharponWorkspaceFile();
+        std::error_code ec;
+        if (!ws.empty() && std::filesystem::is_directory(ws, ec)) {
+            editorState.FileBrowserRootPath = ws;
+        }
+    }
+
+    editorState.CutsceneJSONBuffer = R"({
+  "id": "sample_intro",
+  "durationSeconds": 2.0,
+  "events": [
+    { "timeSeconds": 0.0, "type": "log", "payload": "Cutscene sample" }
+  ]
+})";
 
     // Main loop
     bool running = true;
     while (running) {
+        DrainSharponPendingQueues(editorState);
+
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             LibUI::Core::ProcessEvent(&event);
@@ -1249,9 +1945,23 @@ int main(int argc, char* argv[]) {
 
         // New frame
         LibUI::Core::NewFrame();
+        SharponProfiler_TickAutoFrame();
 
         // Render UI (single fullscreen window)
         RenderEditor(editorState);
+        RenderNarrativePanel(editorState);
+        RenderCutscenePanel(editorState);
+        if (editorState.ShowConsolePanel) {
+            Sharpon_DrawConsolePanel(editorState.ConsoleScrollback, editorState.ConsoleInputBuf,
+                                     sizeof(editorState.ConsoleInputBuf), OnConsoleLine, &editorState,
+                                     &editorState.ShowConsolePanel);
+        }
+        if (editorState.ShowProfilerPanel) {
+            SharponProfiler_DrawPanel(&editorState.ShowProfilerPanel);
+        }
+        if (editorState.ShowPluginsPanel) {
+            SharponPlugins_DrawPanel(&editorState.ShowPluginsPanel);
+        }
 
         // Render file operation dialogs
         RenderFileOperationDialogs(editorState);
@@ -1269,6 +1979,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Cleanup
+    SharponPlugins_UnloadAll();
     UnloadSolsticeEngine();
     LibUI::Core::Shutdown();
     SDL_GL_DestroyContext(glContext);

@@ -37,7 +37,7 @@ RELIC is Solstice's native asset packaging format for slow-drive friendliness, s
 
 ## Compression
 
-- **LZ4** — Streaming assets; in-house implementation in `Core/LZ4.cxx`. Block format (no frame).
+- **LZ4** — Streaming assets; in-house implementation in `Core/System/LZ4.cxx`. Block format (no frame).
 - **Zstd** — One-shot assets (UI, global audio, cutscenes); external lib (decompress only).
 
 ## Delta / variant assets

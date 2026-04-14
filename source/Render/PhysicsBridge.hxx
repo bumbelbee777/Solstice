@@ -2,7 +2,7 @@
 
 #include <Entity/Registry.hxx>
 #include <Render/Scene/Scene.hxx>
-#include <Physics/RigidBody.hxx>
+#include <Physics/Dynamics/RigidBody.hxx>
 
 namespace Solstice::Render {
 

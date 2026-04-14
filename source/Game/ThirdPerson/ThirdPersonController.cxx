@@ -1,5 +1,5 @@
 #include "ThirdPersonController.hxx"
-#include "../../Core/Debug.hxx"
+#include "../../Core/Debug/Debug.hxx"
 #include <cmath>
 
 namespace Solstice::Game {

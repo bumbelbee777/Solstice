@@ -2,7 +2,7 @@
 #include <Solstice.hxx>  // Ensure SOLSTICE_EXPORTS is defined
 #include <Render/Assets/Mesh.hxx>
 #include "Camera.hxx"
-#include <Core/Debug.hxx>
+#include <Core/Debug/Debug.hxx>
 #include <bgfx/bgfx.h>
 
 #include <Arzachel/MeshFactory.hxx>

@@ -1,6 +1,6 @@
 #include <Render/Context/RenderPipeline.hxx>
 #include <Render/PhysicsBridge.hxx>
-#include <Core/Debug.hxx>
+#include <Core/Debug/Debug.hxx>
 #include <chrono>
 
 namespace Solstice::Render {

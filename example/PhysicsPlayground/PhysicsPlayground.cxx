@@ -3,26 +3,26 @@
 #include "SelectionSystem.hxx"
 #include "UIManager.hxx"
 #include "TerminalHub.hxx"
-#include <UI/UISystem.hxx>
+#include <UI/Core/UISystem.hxx>
 #include <Render/Assets/Mesh.hxx>
-#include <Core/Material.hxx>
+#include <Material/Material.hxx>
 #include <Render/PhysicsBridge.hxx>
 #include <Render/Scene/Skybox.hxx>
 #include <Arzachel/ProceduralTexture.hxx>
 #include <Solstice.hxx>
 #include <Render/Particle/ParticlePresets.hxx>
-#include <Physics/PhysicsSystem.hxx>
-#include <Physics/RigidBody.hxx>
-#include <Physics/ConvexHullFactory.hxx>
-#include <Physics/LightSource.hxx>
-#include <Physics/Fluid.hxx>
-#include <Game/InputManager.hxx>
-#include <Game/ScriptManager.hxx>
-#include <Core/Async.hxx>
-#include <Core/Audio.hxx>
-#include <Scripting/BytecodeVM.hxx>
-#include <Scripting/Compiler.hxx>
-#include <Scripting/ScriptBindings.hxx>
+#include <Physics/Integration/PhysicsSystem.hxx>
+#include <Physics/Dynamics/RigidBody.hxx>
+#include <Physics/Content/ConvexHullFactory.hxx>
+#include <Physics/Lighting/LightSource.hxx>
+#include <Physics/Fluid/Fluid.hxx>
+#include <Game/App/InputManager.hxx>
+#include <Game/Integration/ScriptManager.hxx>
+#include <Core/System/Async.hxx>
+#include <Core/Audio/Audio.hxx>
+#include <Scripting/VM/BytecodeVM.hxx>
+#include <Scripting/Compiler/Compiler.hxx>
+#include <Scripting/Bindings/ScriptBindings.hxx>
 #include <imgui.h>
 #include <iostream>
 #include <algorithm>
@@ -864,10 +864,10 @@ void PhysicsPlayground::Render() {
     // Render TerminalHub with world-space UI support
     if (m_TerminalHub && window && m_Renderer) {
         auto fbSize = window->GetFramebufferSize();
-        bgfx::ProgramHandle sceneProgram = m_Renderer->GetSceneProgram();
-        bgfx::ViewId sceneViewId = m_Renderer->GetSceneViewId();
-        bgfx::FrameBufferHandle sceneFB = m_Renderer->GetSceneFramebuffer();
-        m_TerminalHub->Render(m_Camera, fbSize.first, fbSize.second, sceneProgram, sceneViewId, sceneFB);
+        bgfx::ProgramHandle billboardProgram = BGFX_INVALID_HANDLE;
+        bgfx::ViewId worldUiView = Render::SoftwareRenderer::VIEW_WORLD_UI;
+        bgfx::FrameBufferHandle backbuffer = BGFX_INVALID_HANDLE;
+        m_TerminalHub->Render(m_Camera, fbSize.first, fbSize.second, billboardProgram, worldUiView, backbuffer);
     }
 
     // Render UI via UIManager

@@ -1,5 +1,5 @@
 #include <Render/Assets/ShaderUniforms.hxx>
-#include <Core/Debug.hxx>
+#include <Core/Debug/Debug.hxx>
 
 namespace Solstice::Render {
 

@@ -1,8 +1,8 @@
 #include "ParticleSystem.hxx"
 #include <Render/Assets/ShaderLoader.hxx>
-#include <Core/Debug.hxx>
-#include <Core/ScopeTimer.hxx>
-#include <Core/Profiler.hxx>
+#include <Core/Debug/Debug.hxx>
+#include <Core/Profiling/ScopeTimer.hxx>
+#include <Core/Profiling/Profiler.hxx>
 #include <algorithm>
 #include <cmath>
 

@@ -1,7 +1,7 @@
 #include <Render/Post/PostProcessing.hxx>
 #include <Render/Assets/ShaderLoader.hxx>
-#include <Core/Debug.hxx>
-#include <Core/ScopeTimer.hxx>
+#include <Core/Debug/Debug.hxx>
+#include <Core/Profiling/ScopeTimer.hxx>
 #include <array>
 #include <fstream>
 #include <vector>
@@ -24,6 +24,10 @@ PostProcessing::PostProcessing() {
     u_MotionBlurParams = bgfx::createUniform("u_MotionBlurParams", bgfx::UniformType::Vec4);
     u_PrevViewProj = bgfx::createUniform("u_PrevViewProj", bgfx::UniformType::Mat4);
     s_TexDepth = bgfx::createUniform("s_TexDepth", bgfx::UniformType::Sampler);
+    s_TexVelocity = bgfx::createUniform("s_texVelocity", bgfx::UniformType::Sampler);
+    s_TexHistory = bgfx::createUniform("s_texHistory", bgfx::UniformType::Sampler);
+    u_TAAParams = bgfx::createUniform("u_taaParams", bgfx::UniformType::Vec4);
+    u_TAAJitter = bgfx::createUniform("u_taaJitter", bgfx::UniformType::Vec4);
 
     // Bloom uniforms
     u_BloomParams = bgfx::createUniform("u_BloomParams", bgfx::UniformType::Vec4);
@@ -55,6 +59,18 @@ PostProcessing::~PostProcessing() {
     }
     if (bgfx::isValid(s_TexDepth)) {
         bgfx::destroy(s_TexDepth);
+    }
+    if (bgfx::isValid(s_TexVelocity)) {
+        bgfx::destroy(s_TexVelocity);
+    }
+    if (bgfx::isValid(s_TexHistory)) {
+        bgfx::destroy(s_TexHistory);
+    }
+    if (bgfx::isValid(u_TAAParams)) {
+        bgfx::destroy(u_TAAParams);
+    }
+    if (bgfx::isValid(u_TAAJitter)) {
+        bgfx::destroy(u_TAAJitter);
     }
     if (bgfx::isValid(u_BloomParams)) {
         bgfx::destroy(u_BloomParams);
@@ -141,6 +157,16 @@ void PostProcessing::CreateResources() {
     m_VelocityFB = bgfx::createFrameBuffer(1, &m_VelocityBuffer, true);
 
     if (!bgfx::isValid(m_VelocityFB)) SIMPLE_LOG("PostProcessing: Failed to create Velocity FB");
+
+    // 4. TAA history ping-pong textures
+    uint64_t historyFlags = BGFX_TEXTURE_RT | BGFX_TEXTURE_BLIT_DST | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
+    m_TAAHistoryColor[0] = bgfx::createTexture2D(m_Width, m_Height, false, 1, bgfx::TextureFormat::RGBA16F, historyFlags);
+    m_TAAHistoryColor[1] = bgfx::createTexture2D(m_Width, m_Height, false, 1, bgfx::TextureFormat::RGBA16F, historyFlags);
+    m_TAAHistoryReadIndex = 0;
+    m_TAAHistoryValid = false;
+    if (!bgfx::isValid(m_TAAHistoryColor[0]) || !bgfx::isValid(m_TAAHistoryColor[1])) {
+        SIMPLE_LOG("PostProcessing: Failed to create TAA history textures");
+    }
 }
 
 void PostProcessing::DestroyResources() {
@@ -151,6 +177,8 @@ void PostProcessing::DestroyResources() {
     if (bgfx::isValid(m_SceneDepth)) bgfx::destroy(m_SceneDepth);
     if (bgfx::isValid(m_VelocityFB)) bgfx::destroy(m_VelocityFB);
     if (bgfx::isValid(m_VelocityBuffer)) bgfx::destroy(m_VelocityBuffer);
+    if (bgfx::isValid(m_TAAHistoryColor[0])) bgfx::destroy(m_TAAHistoryColor[0]);
+    if (bgfx::isValid(m_TAAHistoryColor[1])) bgfx::destroy(m_TAAHistoryColor[1]);
 
     m_ShadowFB = BGFX_INVALID_HANDLE;
     m_ShadowMap = BGFX_INVALID_HANDLE;
@@ -159,6 +187,10 @@ void PostProcessing::DestroyResources() {
     m_SceneDepth = BGFX_INVALID_HANDLE;
     m_VelocityFB = BGFX_INVALID_HANDLE;
     m_VelocityBuffer = BGFX_INVALID_HANDLE;
+    m_TAAHistoryColor[0] = BGFX_INVALID_HANDLE;
+    m_TAAHistoryColor[1] = BGFX_INVALID_HANDLE;
+    m_TAAHistoryReadIndex = 0;
+    m_TAAHistoryValid = false;
 }
 
 void PostProcessing::BeginShadowPass() {
@@ -265,16 +297,17 @@ void PostProcessing::Apply(bgfx::ViewId viewId) {
     }
     bgfx::setTexture(0, s_TexColor, m_SceneColor);
 
-    // Bind depth texture (used by SSR/motion blur)
+    // Bind depth texture (used by SSR/motion blur/TAA)
     if (bgfx::isValid(m_SceneDepth)) {
         bgfx::setTexture(1, s_TexDepth, m_SceneDepth);
 
-        // Bind velocity buffer if available
-        if (m_MotionBlurSettings.Enabled && bgfx::isValid(m_VelocityBuffer)) {
-            static bgfx::UniformHandle s_texVelocity = bgfx::createUniform("s_texVelocity", bgfx::UniformType::Sampler);
-            bgfx::setTexture(2, s_texVelocity, m_VelocityBuffer);
+        // Bind velocity buffer if available.
+        if (bgfx::isValid(s_TexVelocity) && bgfx::isValid(m_VelocityBuffer)) {
+            bgfx::setTexture(2, s_TexVelocity, m_VelocityBuffer);
         }
-
+    }
+    if (bgfx::isValid(s_TexHistory) && bgfx::isValid(m_TAAHistoryColor[m_TAAHistoryReadIndex])) {
+        bgfx::setTexture(5, s_TexHistory, m_TAAHistoryColor[m_TAAHistoryReadIndex]);
     }
 
     // Set motion blur parameters
@@ -292,6 +325,22 @@ void PostProcessing::Apply(bgfx::ViewId viewId) {
     if (bgfx::isValid(u_PrevViewProj)) {
         Math::Matrix4 prevViewProjT = m_PreviousViewProj.Transposed();
         bgfx::setUniform(u_PrevViewProj, &prevViewProjT.M[0][0]);
+    }
+    if (bgfx::isValid(u_TAAParams)) {
+        float taaParams[4] = {
+            m_TAASettings.Enabled ? m_TAASettings.BlendFactor : 0.0f,
+            m_TAASettings.ClampStrength,
+            m_TAASettings.Sharpen,
+            (m_TAASettings.Enabled && m_TAAHistoryValid) ? 1.0f : 0.0f
+        };
+        bgfx::setUniform(u_TAAParams, taaParams);
+    }
+    if (bgfx::isValid(u_TAAJitter)) {
+        float taaJitter[4] = {
+            m_CurrentJitterNdc.x, m_CurrentJitterNdc.y,
+            m_PreviousJitterNdc.x, m_PreviousJitterNdc.y
+        };
+        bgfx::setUniform(u_TAAJitter, taaJitter);
     }
 
     // Set viewport size
@@ -423,24 +472,46 @@ void PostProcessing::Apply(bgfx::ViewId viewId) {
     } else {
         SIMPLE_LOG("PostProcessing: Failed to allocate transient buffers");
     }
+
+    // Copy scene color to TAA history for next frame.
+    const bgfx::Caps* caps = bgfx::getCaps();
+    const uint8_t writeIndex = static_cast<uint8_t>(1u - m_TAAHistoryReadIndex);
+    if (m_TAASettings.Enabled && caps && (caps->supported & BGFX_CAPS_TEXTURE_BLIT) != 0
+        && bgfx::isValid(m_SceneColor) && bgfx::isValid(m_TAAHistoryColor[writeIndex])) {
+        bgfx::blit(viewId, m_TAAHistoryColor[writeIndex], 0, 0, m_SceneColor);
+        m_TAAHistoryReadIndex = writeIndex;
+        m_TAAHistoryValid = true;
+    } else if (!m_TAASettings.Enabled) {
+        m_TAAHistoryValid = false;
+    }
 }
 
-void PostProcessing::SetCameraMatrices(const Math::Matrix4& view, const Math::Matrix4& proj, const Math::Vec3& cameraPos) {
-    // Store previous view-projection before updating (for motion blur)
-    // Check if this is the first frame by checking if view-proj is identity/uninitialized
+void PostProcessing::SetCameraMatrices(const Math::Matrix4& view, const Math::Matrix4& jitteredProj,
+                                       const Math::Matrix4& unjitteredProj, const Math::Vec3& cameraPos,
+                                       const Math::Vec2& jitterNdc) {
     static bool firstFrame = true;
     if (firstFrame) {
-        // First frame - initialize both to current
-        m_ViewProj = proj * view;
+        m_ViewProj = jitteredProj * view;
         m_PreviousViewProj = m_ViewProj;
+        m_ViewProjUnjittered = unjitteredProj * view;
+        m_PreviousViewProjUnjittered = m_ViewProjUnjittered;
+        m_CurrentJitterNdc = jitterNdc;
+        m_PreviousJitterNdc = jitterNdc;
         firstFrame = false;
     } else {
-        // Subsequent frames - store previous before updating
         m_PreviousViewProj = m_ViewProj;
-        m_ViewProj = proj * view;
+        m_PreviousViewProjUnjittered = m_ViewProjUnjittered;
+        m_PreviousJitterNdc = m_CurrentJitterNdc;
+        m_ViewProj = jitteredProj * view;
+        m_ViewProjUnjittered = unjitteredProj * view;
+        m_CurrentJitterNdc = jitterNdc;
     }
     m_InvViewProj = m_ViewProj.Inverse();
     m_CameraPosWorld = cameraPos;
+}
+
+void PostProcessing::InvalidateTAAHistory() {
+    m_TAAHistoryValid = false;
 }
 
 void PostProcessing::SetRaytracingTextures(bgfx::TextureHandle shadowTexture, bgfx::TextureHandle aoTexture) {

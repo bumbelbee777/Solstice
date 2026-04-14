@@ -1,9 +1,9 @@
 #include "ObjectSpawner.hxx"
 #include <Render/Assets/Mesh.hxx>
-#include <Core/Material.hxx>
-#include <Physics/RigidBody.hxx>
-#include <Physics/ConvexHullFactory.hxx>
-#include <Core/Debug.hxx>
+#include <Material/Material.hxx>
+#include <Physics/Dynamics/RigidBody.hxx>
+#include <Physics/Content/ConvexHullFactory.hxx>
+#include <Core/Debug/Debug.hxx>
 #include <Solstice.hxx>
 #include <map>
 #include <cmath>

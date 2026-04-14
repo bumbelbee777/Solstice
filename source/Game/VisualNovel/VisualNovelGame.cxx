@@ -1,6 +1,9 @@
 #include "VisualNovelGame.hxx"
-#include "../../Core/Debug.hxx"
-#include "../../UI/UISystem.hxx"
+#include "../../Core/Debug/Debug.hxx"
+#include "../../UI/Core/UISystem.hxx"
+#include "Dialogue/NarrativeBridge.hxx"
+#include "Dialogue/NarrativeDocument.hxx"
+#include "Gameplay/SFXManager.hxx"
 #include <bgfx/bgfx.h>
 
 namespace Solstice::Game {
@@ -9,6 +12,7 @@ VisualNovelGame::VisualNovelGame() {
     m_InputManager = std::make_unique<InputManager>();
     m_DialoguePresenter = std::make_unique<DialoguePresenter>(VisualNovelPresets::GetClassicPreset());
     m_DialogueTree = std::make_unique<DialogueTree>();
+    m_Preferences = std::make_unique<GamePreferences>();
 }
 
 void VisualNovelGame::Initialize() {
@@ -23,9 +27,21 @@ void VisualNovelGame::Initialize() {
         }
     }
 
+    m_Preferences->Load();
+    SFXManager::Instance().Initialize();
+    m_Preferences->ApplyAudioSettings();
+
     InitializeDialogueTree();
 
+    m_NarrativeRuntime.SetTree(m_DialogueTree.get());
+    m_NarrativeRuntime.SetGameplaySettings(&m_Preferences->GetGameplaySettings());
+    m_NarrativeRuntime.SetAudioSettings(&m_Preferences->GetAudioSettings());
+    NarrativeBridge::SetDialogueTree(m_DialogueTree.get());
+    NarrativeBridge::SetNarrativeRuntime(&m_NarrativeRuntime);
+    NarrativeBridge::SetCutscenePlayer(&m_CutscenePlayer);
+
     if (m_DialogueTree && m_DialoguePresenter) {
+        m_DialoguePresenter->SetNarrativeRuntime(&m_NarrativeRuntime);
         m_DialoguePresenter->SetTree(m_DialogueTree.get());
         m_DialoguePresenter->Start();
     }
@@ -36,6 +52,27 @@ void VisualNovelGame::Initialize() {
 void VisualNovelGame::InitializeDialogueTree() {
     if (!m_DialogueTree) {
         return;
+    }
+
+    static const char* CandidatePaths[] = {
+        "example/VisualNovel/assets/sample_narrative.json",
+        "../example/VisualNovel/assets/sample_narrative.json",
+        "../../example/VisualNovel/assets/sample_narrative.json",
+        "assets/visual_novel/sample_narrative.json",
+    };
+    for (const char* P : CandidatePaths) {
+        NarrativeDocumentV1 Doc;
+        std::string Err;
+        if (NarrativeDocumentLoadFile(P, Doc, Err)) {
+            std::vector<std::string> ValErr;
+            Doc.ToDialogueTree(*m_DialogueTree);
+            m_DialogueTree->Validate(ValErr);
+            if (!ValErr.empty()) {
+                SIMPLE_LOG("VisualNovelGame: narrative validation: " + ValErr[0]);
+            }
+            SIMPLE_LOG(std::string("VisualNovelGame: loaded narrative from ") + P);
+            return;
+        }
     }
 
     DialogueNode StartNode;
@@ -89,6 +126,7 @@ void VisualNovelGame::Update(float DeltaTime) {
     if (m_DialoguePresenter) {
         m_DialoguePresenter->Update(DeltaTime);
     }
+    m_CutscenePlayer.Update(DeltaTime);
 }
 
 void VisualNovelGame::Render() {

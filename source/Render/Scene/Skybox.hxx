@@ -8,7 +8,7 @@
 #include <vector>
 #include "Camera.hxx"
 #include <Render/Assets/Mesh.hxx>
-#include <Core/Debug.hxx>
+#include <Core/Debug/Debug.hxx>
 
 namespace Solstice::Render {
 

@@ -1,5 +1,5 @@
 #include "TextureRegistry.hxx"
-#include <Core/Debug.hxx>
+#include <Core/Debug/Debug.hxx>
 
 namespace Solstice::Render {
 

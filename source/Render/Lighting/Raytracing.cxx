@@ -1,8 +1,8 @@
 #include "Raytracing.hxx"
 #include <Render/Scene/Scene.hxx>
-#include <Core/Material.hxx>
-#include <Core/Debug.hxx>
-#include <Core/Async.hxx>
+#include <Material/Material.hxx>
+#include <Core/Debug/Debug.hxx>
+#include <Core/System/Async.hxx>
 #include <algorithm>
 #include <cmath>
 #include <cstring>

@@ -1,6 +1,6 @@
 #include "HDRProcessor.hxx"
 #include <Solstice.hxx>
-#include <Core/Debug.hxx>
+#include <Core/Debug/Debug.hxx>
 #include <bgfx/bgfx.h>
 #include <cmath>
 #include <algorithm>

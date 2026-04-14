@@ -1,5 +1,5 @@
 #include "VirtualTable.hxx"
-#include "../Debug.hxx"
+#include "Core/Debug/Debug.hxx"
 #include "Bootstrap.hxx"
 #include "Reader.hxx"
 #include <algorithm>

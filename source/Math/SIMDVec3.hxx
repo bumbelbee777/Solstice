@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Vector.hxx"
-#include "../Core/SIMD.hxx"
+#include "../Core/ML/SIMD.hxx"
 
 namespace Solstice::Math {
 

@@ -1,5 +1,5 @@
 #include <Solstice.hxx>
-#include <UI/Window.hxx>
+#include <UI/Core/Window.hxx>
 #include "DiscoGame.hxx"
 
 using namespace Solstice;

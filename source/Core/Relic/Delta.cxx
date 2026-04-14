@@ -1,5 +1,5 @@
 #include "Delta.hxx"
-#include "../Debug.hxx"
+#include "Core/Debug/Debug.hxx"
 #include <cstring>
 
 namespace Solstice::Core::Relic {

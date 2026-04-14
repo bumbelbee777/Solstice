@@ -1,10 +1,10 @@
 #pragma once
-#include "BytecodeVM.hxx"
+#include "../VM/BytecodeVM.hxx"
 #include <string>
 #include <unordered_map>
 #include <vector>
 #include <filesystem>
-#include "../Solstice.hxx"
+#include "../../Solstice.hxx"
 
 namespace Solstice::Scripting {
 

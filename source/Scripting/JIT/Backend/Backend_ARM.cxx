@@ -1,5 +1,5 @@
 #include "Backend_ARM.hxx"
-#include "../../Core/Debug.hxx"
+#include "../../../Core/Debug/Debug.hxx"
 #include <cstring>
 
 #if defined(_WIN32) || defined(_WIN64)
@@ -28,9 +28,11 @@ bool Backend_ARM::IsSupported() const {
 
 IBackend::CompiledFunction Backend_ARM::CompileFunction(const Program& program, size_t functionStartIP, BytecodeVM* vm) {
     (void)program;
-    (void)functionStartIP;
-    (void)vm;
-    return nullptr;
+    if (!vm) return nullptr;
+    // Architecture-parity fallback while native ARM64 codegen is developed.
+    return [vm, functionStartIP](const std::vector<Value>& args) -> Value {
+        return vm->RunFunctionSlice(functionStartIP, args);
+    };
 }
 
 void* Backend_ARM::AllocateCodeMemory(size_t size) {

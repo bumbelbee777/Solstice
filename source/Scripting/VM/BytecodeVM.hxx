@@ -10,16 +10,17 @@
 #include <unordered_set>
 #include <memory>
 #include <optional>
-#include "../Solstice.hxx"
-#include "../Core/Async.hxx"
-#include "../Math/Vector.hxx"
-#include "../Math/Matrix.hxx"
-#include "../Math/Quaternion.hxx"
+#include "../../Solstice.hxx"
+#include "../../Core/System/Async.hxx"
+#include "../../Math/Vector.hxx"
+#include "../../Math/Matrix.hxx"
+#include "../../Math/Quaternion.hxx"
 #include "VMError.hxx"
 
 // Forward declarations
 namespace Solstice::ECS { class Registry; }
 namespace Solstice::Scripting { class JIT; }
+namespace Solstice::Scripting { struct JITStats; }
 
 namespace Solstice::Scripting {
 
@@ -186,6 +187,11 @@ namespace Solstice::Scripting {
         // Function arity for JIT and CALL_VALUE (entry IP -> number of parameters)
         std::unordered_map<size_t, size_t> FunctionArity;
 
+        // Compile-time type hints (register index -> type string, e.g. Ptr.Player)
+        std::unordered_map<uint8_t, std::string> RegisterTypes;
+        // Ptr.* lowered ops: instruction index -> register that supplied the pointer (best-effort)
+        std::unordered_map<size_t, uint8_t> PtrOperandRegs;
+
         // Helper to add instruction
         void Add(OpCode op, Value operand = 0) {
             Instructions.push_back({op, 0, operand});
@@ -326,6 +332,7 @@ namespace Solstice::Scripting {
         void EnableJIT();
         void DisableJIT();
         bool IsJITEnabled() const;
+        JITStats GetJITStats() const;
         
         // Destructor management
         void CallDestructors(const std::shared_ptr<Dictionary>& obj);

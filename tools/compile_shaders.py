@@ -2,6 +2,11 @@
 """
 Cross-platform BGFX shader compiler for Solstice.
 Compiles .sc shader files to platform-specific binaries.
+
+CMake lists each expected `bin/*.bin` as an OUTPUT with sources + varying defs as
+inputs, so the driver only runs when something is stale or missing. When it does
+run, each shader is compiled only if its outputs are older than its inputs
+(`--force` rebuilds everything).
 """
 
 import sys
@@ -10,6 +15,42 @@ import argparse
 import platform
 import shutil
 from pathlib import Path
+
+
+def _newest_mtime(paths: list[Path]) -> float | None:
+    """Latest modification time among paths that exist; None if none exist."""
+    mtimes: list[float] = []
+    for p in paths:
+        try:
+            mtimes.append(p.stat().st_mtime)
+        except OSError:
+            continue
+    return max(mtimes) if mtimes else None
+
+
+def shader_outputs_need_rebuild(
+    sc_file: Path,
+    out_file: Path,
+    varying_def: Path,
+    shaderc: Path | None,
+    force: bool,
+) -> bool:
+    """True if shaderc should run for this unit (CMake already skips the step when nothing changed)."""
+    if force:
+        return True
+    if not out_file.exists():
+        return True
+    try:
+        out_m = out_file.stat().st_mtime
+    except OSError:
+        return True
+    inputs: list[Path] = [sc_file, varying_def]
+    if shaderc is not None:
+        inputs.append(shaderc)
+    newest_in = _newest_mtime(inputs)
+    if newest_in is None:
+        return True
+    return out_m < newest_in
 
 
 def get_platform_info():
@@ -126,6 +167,7 @@ def compile_shaders(args):
         return 0
 
     compiled_count = 0
+    skipped_uptodate = 0
     for sc_file in sc_files:
         stem = sc_file.stem
         stem_lower = stem.lower()
@@ -167,6 +209,10 @@ def compile_shaders(args):
         if not varying_def.exists():
             print(f"WARNING: Varying definition not found: {varying_def}")
             varying_def = shader_dir / "varying.def.sc"
+
+        if not shader_outputs_need_rebuild(sc_file, out_file, varying_def, shaderc, args.force):
+            skipped_uptodate += 1
+            continue
 
         print(f"Compiling {sc_file.name} -> {out_file.name} ({shader_type})")
 
@@ -218,7 +264,8 @@ def compile_shaders(args):
 
     print(f"\n========================================")
     print(f"Shader compilation complete!")
-    print(f"Compiled {compiled_count} shader(s) to {output_dir}")
+    print(f"Compiled {compiled_count} shader(s); skipped (already up to date): {skipped_uptodate}")
+    print(f"Output directory: {output_dir}")
     print("========================================\n")
     return 0
 
@@ -264,6 +311,11 @@ Examples:
     parser.add_argument(
         "--copy-dir",
         help="Directory to copy compiled shader binaries to (creates shaders/ subdirectory)"
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Recompile every shader even if outputs look newer than inputs (ignore incremental skip)",
     )
 
     args = parser.parse_args()

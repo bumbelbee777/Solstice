@@ -2,8 +2,8 @@
 #include "Constraints.hxx"
 #include "TerrainGenerator.hxx"
 #include "ProceduralTexture.hxx"
-#include <Core/BSP.hxx>
-#include <Core/Octree.hxx>
+#include <Core/Spatial/BSP.hxx>
+#include <Core/Spatial/Octree.hxx>
 #include <algorithm>
 #include <cmath>
 #include <map>

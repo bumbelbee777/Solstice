@@ -850,3 +850,23 @@ UISystem::Instance().Render();
     - Use delta time for frame-independent updates
     - Update systems in appropriate order
 
+## Modular Folder Layout
+
+The game layer is now organized by responsibility:
+
+- `source/Game/App` - lifecycle, state, input, preferences, autosave
+- `source/Game/UI` - HUD, menus, presenters
+- `source/Game/Gameplay` - gameplay components/systems
+- `source/Game/AI` - AI and ML-connected logic
+- `source/Game/World` - scene/content/preset tooling
+- `source/Game/Integration` - script and engine bridge services
+- `source/Game/Dialogue` - `DialogueTree`, JSON/YAML `solstice.narrative.v1`, `NarrativeRuntime`, script bindings; see `docs/Narrative.md`
+- `source/Game/Cutscene` - `CutscenePlayer` (JSON timelines, dialogue jump hooks)
+- mode packages remain under `source/Game/FPS`, `source/Game/ThirdPerson`, `source/Game/Strategy`, `source/Game/VisualNovel`
+
+`source/Game/CMakeLists.txt` now reflects this structure directly, and include paths are hard-cut to the new subfolder names.
+
+## ECS Phase Execution in Game Modes
+
+`FPSGame` and `ThirdPersonGame` now use `ECS::PhaseScheduler` to run deterministic ECS phases. `FPSGame` also ensures the active physics world is bound to its registry before simulation updates.
+

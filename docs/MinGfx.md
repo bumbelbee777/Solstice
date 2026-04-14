@@ -16,11 +16,11 @@ Headers: `MinGfx/EasingFunction.hxx`, implementation in `MinGfx/EasingFunction.c
 
 - **InterpolationMode**: LINEAR, STEP, CUBIC.
 - **Keyframe<T>**: Time, Value, Mode (InterpolationMode), Easing (EasingType; used when Mode is LINEAR).
-- **KeyframeTrack<T>**: AddKeyframe, Evaluate(Time), GetKeyframes, GetDuration. Supports Vec3 and Quaternion (Lerp/Slerp specializations).
+- **KeyframeTrack<T>**: `AddKeyframe`, `Evaluate(Time)`, `GetKeyframes`, `GetDuration`. Supports `Vec3` and `Quaternion` (Lerp/Slerp specializations).
 
 Header: `MinGfx/Keyframe.hxx` (header-only for Keyframe/KeyframeTrack).
 
 ## Consumers
 
-- **Arzachel**: Uses MinGfx::Keyframe, MinGfx::KeyframeTrack, MinGfx::InterpolationMode for bone animation tracks (Translation, Rotation, Scale). See [Arzachel.md](Arzachel.md).
-- **UI**: Uses MinGfx::EasingType, MinGfx::Ease, MinGfx::EaseBezier; UI::Animation exposes type aliases and wrappers. UI keeps its own Keyframe/AnimationTrack for ImGui types (ImVec2, ImVec4, ShadowParams). See [MotionGraphics.md](MotionGraphics.md).
+- **Arzachel**: Uses `MinGfx::Keyframe`, `MinGfx::KeyframeTrack`, `MinGfx::InterpolationMode` for bone animation tracks (Translation, Rotation, Scale). See [Arzachel.md](Arzachel.md).
+- **UI**: Uses `MinGfx::EasingType`, `MinGfx::Ease`, `MinGfx::EaseBezier`; `UI::Animation` exposes type aliases and wrappers. UI keeps its own Keyframe/AnimationTrack for ImGui types (ImVec2, ImVec4, ShadowParams). See [MotionGraphics.md](MotionGraphics.md).

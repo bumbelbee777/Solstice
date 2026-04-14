@@ -3,9 +3,11 @@
 #include <Render/Scene/Skybox.hxx>
 #include <Render/Assets/TextureRegistry.hxx>
 #include <Render/Assets/Mesh.hxx>
-#include <Core/Material.hxx>
-#include <Core/Debug.hxx>
-#include <Core/ScopeTimer.hxx>
+#include <Render/Assets/ShaderLoader.hxx>
+#include <Material/Material.hxx>
+#include <Core/Debug/Debug.hxx>
+#include <Core/Profiling/ScopeTimer.hxx>
+#include <cmath>
 #include <cstring>
 
 // File-scope uniforms (shared between RenderScene and RenderObjectOutline)
@@ -29,8 +31,32 @@ static bgfx::UniformHandle u_NumPointLights = BGFX_INVALID_HANDLE;
 namespace Solstice::Render {
 namespace Math = Solstice::Math;
 
+namespace {
+float Halton(uint32_t index, uint32_t base) {
+    float result = 0.0f;
+    float f = 1.0f / static_cast<float>(base);
+    uint32_t i = index;
+    while (i > 0) {
+        result += f * static_cast<float>(i % base);
+        i /= base;
+        f /= static_cast<float>(base);
+    }
+    return result;
+}
+}
+
 SceneRenderer::SceneRenderer() = default;
-SceneRenderer::~SceneRenderer() = default;
+SceneRenderer::~SceneRenderer() {
+    if (bgfx::isValid(m_VelocityProgram)) {
+        bgfx::destroy(m_VelocityProgram);
+    }
+    if (bgfx::isValid(m_uVelocityCurrViewProj)) {
+        bgfx::destroy(m_uVelocityCurrViewProj);
+    }
+    if (bgfx::isValid(m_uVelocityPrevViewProj)) {
+        bgfx::destroy(m_uVelocityPrevViewProj);
+    }
+}
 
 void SceneRenderer::Initialize(bgfx::ProgramHandle sceneProgram, bgfx::VertexLayout vertexLayout,
                                PostProcessing* postProcessing, TextureRegistry* textureRegistry,
@@ -48,6 +74,17 @@ void SceneRenderer::Initialize(bgfx::ProgramHandle sceneProgram, bgfx::VertexLay
     m_SkyboxProgram = skyboxProgram; // Can be invalid, will be checked before use
     m_Width = width;
     m_Height = height;
+    bgfx::ShaderHandle vshVelocity = ShaderLoader::LoadShader("vs_velocity.bin");
+    bgfx::ShaderHandle fshVelocity = ShaderLoader::LoadShader("fs_velocity.bin");
+    if (bgfx::isValid(vshVelocity) && bgfx::isValid(fshVelocity)) {
+        m_VelocityProgram = bgfx::createProgram(vshVelocity, fshVelocity, true);
+    }
+    if (!bgfx::isValid(m_uVelocityCurrViewProj)) {
+        m_uVelocityCurrViewProj = bgfx::createUniform("u_currViewProj", bgfx::UniformType::Mat4);
+    }
+    if (!bgfx::isValid(m_uVelocityPrevViewProj)) {
+        m_uVelocityPrevViewProj = bgfx::createUniform("u_prevViewProjVelocity", bgfx::UniformType::Mat4);
+    }
 }
 
 void SceneRenderer::CullObjects(Scene& scene, const Camera& camera, std::vector<SceneObjectID>& visibleObjects) {
@@ -137,9 +174,6 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
     Math::Vec3 camPos = camera.GetPosition();
     m_PostProcessing->SetCameraPosition(camPos);
 
-    // Begin scene pass
-    m_PostProcessing->BeginScenePass();
-
     // Update debug flags
     uint32_t debugFlags = m_ShowDebugOverlay ? BGFX_DEBUG_TEXT : 0;
     if (m_WireframeEnabled) debugFlags |= BGFX_DEBUG_WIREFRAME;
@@ -159,12 +193,39 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
     }
     // Phase 8: Extended far plane to 2000.0f for distant landmark visibility
     float aspectRatio = static_cast<float>(m_Width) / static_cast<float>(m_Height);
-    Math::Matrix4 Proj = camera.GetProjectionMatrix(aspectRatio, 0.1f, 2000.0f);
+    Math::Matrix4 ProjUnjittered = camera.GetProjectionMatrix(aspectRatio, 0.1f, 2000.0f);
+    Math::Matrix4 Proj = ProjUnjittered;
 
-    m_PostProcessing->SetCameraMatrices(View, Proj, camPos);
+    // Halton 2,3 jitter for TAA (in NDC space).
+    const uint32_t jitterIndex = (m_JitterFrame % 8u) + 1u;
+    const float jitterX = Halton(jitterIndex, 2u) - 0.5f;
+    const float jitterY = Halton(jitterIndex, 3u) - 0.5f;
+    const Math::Vec2 jitterNdc(
+        (2.0f * jitterX) / static_cast<float>(m_Width),
+        (2.0f * jitterY) / static_cast<float>(m_Height)
+    );
+    Proj.M[0][2] += jitterNdc.x;
+    Proj.M[1][2] += jitterNdc.y;
+    ++m_JitterFrame;
+
+    m_PostProcessing->SetCameraMatrices(View, Proj, ProjUnjittered, camPos, jitterNdc);
+
+    // Begin velocity pass before main scene submission.
+    m_PostProcessing->BeginVelocityPass();
+    Math::Matrix4 ViewT = View.Transposed();
+    Math::Matrix4 ProjUnjitteredT = ProjUnjittered.Transposed();
+    bgfx::setViewTransform(PostProcessing::VIEW_VELOCITY, &ViewT.M[0][0], &ProjUnjitteredT.M[0][0]);
+    if (bgfx::isValid(m_uVelocityCurrViewProj) && bgfx::isValid(m_uVelocityPrevViewProj)) {
+        Math::Matrix4 currUnjitteredViewProjT = m_PostProcessing->GetCurrentUnjitteredViewProj().Transposed();
+        Math::Matrix4 prevUnjitteredViewProjT = m_PostProcessing->GetPreviousUnjitteredViewProj().Transposed();
+        bgfx::setUniform(m_uVelocityCurrViewProj, &currUnjitteredViewProjT.M[0][0]);
+        bgfx::setUniform(m_uVelocityPrevViewProj, &prevUnjitteredViewProjT.M[0][0]);
+    }
+
+    // Begin scene pass
+    m_PostProcessing->BeginScenePass();
 
     // Set View Transform for scene (skybox will override this temporarily)
-    Math::Matrix4 ViewT = View.Transposed();
     Math::Matrix4 ProjT = Proj.Transposed();
     bgfx::setViewTransform(PostProcessing::VIEW_SCENE, &ViewT.M[0][0], &ProjT.M[0][0]);
 
@@ -494,6 +555,12 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
             }
             bgfx::setState(state);
             bgfx::submit(PostProcessing::VIEW_SCENE, m_SceneProgram);
+            if (bgfx::isValid(m_VelocityProgram)) {
+                uint64_t velocityState = BGFX_STATE_WRITE_R | BGFX_STATE_WRITE_G
+                                       | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS;
+                bgfx::setState(velocityState);
+                bgfx::submit(PostProcessing::VIEW_VELOCITY, m_VelocityProgram);
+            }
             trianglesSubmitted += static_cast<uint32_t>(MeshPtr->Indices.size() / 3);
         } else {
             // Static buffers - render each submesh separately with index offsets
@@ -644,6 +711,12 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
                     SubMesh.IndexCount
                 );
         bgfx::submit(PostProcessing::VIEW_SCENE, m_SceneProgram);
+                if (bgfx::isValid(m_VelocityProgram)) {
+                    uint64_t velocityState = BGFX_STATE_WRITE_R | BGFX_STATE_WRITE_G
+                                           | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS;
+                    bgfx::setState(velocityState);
+                    bgfx::submit(PostProcessing::VIEW_VELOCITY, m_VelocityProgram);
+                }
 
                 trianglesSubmitted += static_cast<uint32_t>(SubMesh.IndexCount / 3);
             }
@@ -664,6 +737,7 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
         }
     }
 
+    m_PostProcessing->EndVelocityPass();
     Core::Profiler::Instance().SetCounter("TrianglesSubmitted", trianglesSubmitted);
     Core::Profiler::Instance().SetCounter("VisibleObjects", static_cast<int64_t>(visibleObjects.size()));
 }

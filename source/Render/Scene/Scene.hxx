@@ -6,10 +6,10 @@
 #include <Math/Quaternion.hxx>
 #include <Math/Matrix.hxx>
 #include <Render/Assets/Mesh.hxx>
-#include <Core/Material.hxx>
+#include <Material/Material.hxx>
 #include <Render/Scene/Camera.hxx>
-#include <Core/BSP.hxx>
-#include <Core/Octree.hxx>
+#include <Core/Spatial/BSP.hxx>
+#include <Core/Spatial/Octree.hxx>
 
 namespace Solstice::Render {
 

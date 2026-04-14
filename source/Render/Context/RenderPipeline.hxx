@@ -5,8 +5,8 @@
 #include <Render/Scene/Camera.hxx>
 #include <Render/Post/PostProcessing.hxx>
 #include <Render/Lighting/Raytracing.hxx>
-#include <Core/Allocator.hxx>
-#include <Core/Async.hxx>
+#include <Core/System/Allocator.hxx>
+#include <Core/System/Async.hxx>
 #include <Math/Matrix.hxx>
 #include <Math/Vector.hxx>
 #include <memory>
@@ -54,7 +54,8 @@ public:
 
     // Configuration
     void Resize(uint32_t width, uint32_t height);
-    void SetPhysicsRegistry(ECS::Registry* registry) { m_PhysicsRegistry = registry; }
+    void BindECSRegistry(ECS::Registry* registry) { m_PhysicsRegistry = registry; }
+    void SetPhysicsRegistry(ECS::Registry* registry) { BindECSRegistry(registry); }
     void SetSkybox(Skybox* skybox) { m_Skybox = skybox; }
 
     // Access to subsystems

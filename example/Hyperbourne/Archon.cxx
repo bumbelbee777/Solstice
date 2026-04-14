@@ -1,7 +1,7 @@
 #include "Archon.hxx"
-#include <Game/Enemy.hxx>
-#include <Game/Health.hxx>
-#include <Core/Debug.hxx>
+#include <Game/Gameplay/Enemy.hxx>
+#include <Game/Gameplay/Health.hxx>
+#include <Core/Debug/Debug.hxx>
 #include <cmath>
 #include <algorithm>
 

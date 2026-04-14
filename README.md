@@ -45,6 +45,8 @@ Rough budgets people aim for in-tree: on the order of tens of thousands of visib
 | [docs/Scripting.md](docs/Scripting.md) | Moonwalk VM and bindings |
 | [docs/GameLayer.md](docs/GameLayer.md) | Gameplay and menus |
 | [docs/Arzachel.md](docs/Arzachel.md) | Procedural generation |
+| [docs/SolsticeAPI.md](docs/SolsticeAPI.md) | SolsticeEngine C API (V1) |
+| [docs/Utilities.md](docs/Utilities.md) | Sharpon, Jackhammer (LevelEditor), SMM (MovieMaker); LibUI, LibSmf, LibParallax |
 
 ## Examples
 

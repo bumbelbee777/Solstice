@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../Solstice.hxx"
+#include "Solstice.hxx"
 #include <cstdint>
 #include <cstddef>
 #include <string>
@@ -44,6 +44,7 @@ enum class AssetTypeTag : uint16_t {
     Audio = 4,
     Script = 5,
     Lightmap = 6,
+    ParallaxScene = 7,
     Count
 };
 

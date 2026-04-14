@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Solstice.hxx"
+#include "../../Solstice.hxx"
 #include <string>
 #include <vector>
 #include <stdexcept>

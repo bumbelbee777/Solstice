@@ -1,12 +1,13 @@
 #include <atomic>
+#include <mutex>
 #include <Render/SoftwareRenderer.hxx>
 #include <Render/Assets/Mesh.hxx>
 #include <Render/Assets/ShaderLoader.hxx>
 #include <Math/Vector.hxx>
-#include <Core/Debug.hxx>
-#include <Core/SIMD.hxx>
+#include <Core/Debug/Debug.hxx>
+#include <Core/ML/SIMD.hxx>
 #include <Solstice.hxx>
-#include <UI/UISystem.hxx>
+#include <UI/Core/UISystem.hxx>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -18,7 +19,8 @@
 #include <bgfx/platform.h>
 #include <fstream>
 #include <Render/PhysicsBridge.hxx>
-#include <Physics/PhysicsSystem.hxx>
+#include <Physics/Integration/PhysicsSystem.hxx>
+#include <Plugin/SubsystemHooks.hxx>
 #include <reactphysics3d/engine/PhysicsWorld.h>
 #include <reactphysics3d/utils/DebugRenderer.h>
 
@@ -31,6 +33,14 @@ namespace Math = Solstice::Math;
 
 // Static instance counter for BGFX management
 static std::atomic<int> s_RendererInstanceCount{0};
+
+namespace {
+std::mutex g_FrameCaptureMutex;
+std::vector<std::byte> g_FrameCaptureRgba;
+int g_FrameCaptureW = 0;
+int g_FrameCaptureH = 0;
+std::atomic<bool> g_FrameCaptureReady{false};
+} // namespace
 
 // Implement BGFX callback methods
 void BgfxCallback::fatal(const char* _filePath, uint16_t _line, bgfx::Fatal::Enum _code, const char* _str) {
@@ -47,6 +57,56 @@ void BgfxCallback::traceVargs(const char* _filePath, uint16_t _line, const char*
     SIMPLE_LOG("BGFX TRACE: " + std::string(buffer));
 }
 
+void BgfxCallback::screenShot(const char* _filePath, uint32_t _width, uint32_t _height, uint32_t _pitch,
+    bgfx::TextureFormat::Enum _format, const void* _data, uint32_t _size, bool _yflip) {
+    (void)_filePath;
+    (void)_size;
+    if (!_data || _width == 0 || _height == 0 || _pitch == 0) {
+        return;
+    }
+    if (_format != bgfx::TextureFormat::BGRA8 && _format != bgfx::TextureFormat::RGBA8) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(g_FrameCaptureMutex);
+    g_FrameCaptureW = static_cast<int>(_width);
+    g_FrameCaptureH = static_cast<int>(_height);
+    g_FrameCaptureRgba.resize(static_cast<size_t>(_width) * static_cast<size_t>(_height) * 4);
+    const auto* src = static_cast<const uint8_t*>(_data);
+    auto* dstBase = reinterpret_cast<uint8_t*>(g_FrameCaptureRgba.data());
+    for (uint32_t y = 0; y < _height; ++y) {
+        const uint32_t srcY = _yflip ? (_height - 1u - y) : y;
+        const uint8_t* row = src + srcY * _pitch;
+        uint8_t* dst = dstBase + static_cast<size_t>(y) * static_cast<size_t>(_width) * 4;
+        for (uint32_t x = 0; x < _width; ++x) {
+            if (_format == bgfx::TextureFormat::BGRA8) {
+                dst[x * 4 + 0] = row[x * 4 + 2];
+                dst[x * 4 + 1] = row[x * 4 + 1];
+                dst[x * 4 + 2] = row[x * 4 + 0];
+                dst[x * 4 + 3] = row[x * 4 + 3];
+            } else {
+                std::memcpy(dst + x * 4, row + x * 4, 4);
+            }
+        }
+    }
+    g_FrameCaptureReady.store(true, std::memory_order_release);
+}
+
+void SoftwareRenderer::QueueFramebufferCapture() {
+    g_FrameCaptureReady.store(false, std::memory_order_release);
+    bgfx::requestScreenShot(BGFX_INVALID_HANDLE, "editor_cap");
+}
+
+bool SoftwareRenderer::TryGetLastFramebufferCaptureRGBA8(std::vector<std::byte>& outRgbaTopDown, int& outW, int& outH) {
+    if (!g_FrameCaptureReady.load(std::memory_order_acquire)) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(g_FrameCaptureMutex);
+    outRgbaTopDown = g_FrameCaptureRgba;
+    outW = g_FrameCaptureW;
+    outH = g_FrameCaptureH;
+    g_FrameCaptureReady.store(false, std::memory_order_release);
+    return !outRgbaTopDown.empty();
+}
 
 SoftwareRenderer::SoftwareRenderer(int Width, int Height, int TileSize, SDL_Window* Window)
     : m_Width(Width)
@@ -470,6 +530,13 @@ void SoftwareRenderer::Present() {
 
 void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam) {
     if (!m_Initialized) return;
+    Solstice::Plugin::SubsystemHooks::Instance().Invoke(Solstice::Plugin::SubsystemHookKind::RendererPreFrame, 0.f);
+    struct RendererPostFrameHooks {
+        ~RendererPostFrameHooks() {
+            Solstice::Plugin::SubsystemHooks::Instance().Invoke(
+                Solstice::Plugin::SubsystemHookKind::RendererPostFrame, 0.f);
+        }
+    } rendererPostFrameHooks;
     auto t0 = std::chrono::high_resolution_clock::now();
 
     // Optional: sync physics to scene before building view/culling
@@ -554,15 +621,16 @@ void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam) {
     // UI needs to be drawn AFTER PostProcess (View 0).
     // Need to set view order.
     // Default is 0, 1, 2...
-    // We want 1->2->0->3->255 (ImGui)
+    // We want 1->3(velocity)->2->0->5(world UI)->255 (ImGui)
     bgfx::ViewId viewOrder[] = {
         PostProcessing::VIEW_SHADOW,
+        PostProcessing::VIEW_VELOCITY,
         PostProcessing::VIEW_SCENE,
         0,
-        3,
+        SoftwareRenderer::VIEW_WORLD_UI,
         Solstice::UI::UISystem::Instance().GetViewId()
     };
-    bgfx::setViewOrder(0, 5, viewOrder);
+    bgfx::setViewOrder(0, 6, viewOrder);
 
     // Simple UI crosshair overlay submitted on view 3 (UI)
     // DISABLED: HUD has its own crosshair

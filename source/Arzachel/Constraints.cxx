@@ -1,6 +1,6 @@
 #include "Constraints.hxx"
 #include "TerrainGenerator.hxx"
-#include <Core/Debug.hxx>
+#include <Core/Debug/Debug.hxx>
 #include <cmath>
 #include <algorithm>
 

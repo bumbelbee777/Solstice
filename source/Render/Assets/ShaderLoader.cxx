@@ -1,5 +1,5 @@
 #include "ShaderLoader.hxx"
-#include <Core/Debug.hxx>
+#include <Core/Debug/Debug.hxx>
 #include <fstream>
 #include <vector>
 

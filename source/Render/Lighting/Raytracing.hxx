@@ -4,8 +4,8 @@
 #include <Math/Matrix.hxx>
 #include <Math/Vector.hxx>
 #include <Math/Quaternion.hxx>
-#include <Physics/LightSource.hxx>
-#include <Core/SIMD.hxx>
+#include <Physics/Lighting/LightSource.hxx>
+#include <Core/ML/SIMD.hxx>
 #include <vector>
 #include <cstdint>
 #include <memory>

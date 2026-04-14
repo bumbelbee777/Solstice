@@ -1,0 +1,1 @@
+MotionFusion assets directory.

@@ -4,7 +4,7 @@
 #include "AssetBuilder.hxx"
 #include "MeshData.hxx"
 #include <memory>
-#include <Core/Debug.hxx>
+#include <Core/Debug/Debug.hxx>
 #include <string>
 #include <map>
 #include <array>

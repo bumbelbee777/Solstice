@@ -1,14 +1,28 @@
 #include "MapSerializer.hxx"
-#include "../Core/JSON.hxx"
-#include "../Core/Material.hxx"
+#include "../Core/Serialization/JSON.hxx"
+#include "../Material/Material.hxx"
 #include "../Math/Vector.hxx"
 #include "../Math/Quaternion.hxx"
-#include "../Physics/LightSource.hxx"
+#include "../Physics/Lighting/LightSource.hxx"
+#include "../Core/Audio/Audio.hxx"
 #include <fstream>
 #include <sstream>
 #include <filesystem>
 
 namespace Solstice::Arzachel {
+
+namespace {
+
+Core::Audio::ReverbPresetType ReverbPresetFromString(const std::string& preset) {
+    if (preset == "Room") return Core::Audio::ReverbPresetType::Room;
+    if (preset == "Cave") return Core::Audio::ReverbPresetType::Cave;
+    if (preset == "Hallway") return Core::Audio::ReverbPresetType::Hallway;
+    if (preset == "Sewer") return Core::Audio::ReverbPresetType::Sewer;
+    if (preset == "Industrial") return Core::Audio::ReverbPresetType::Industrial;
+    return Core::Audio::ReverbPresetType::None;
+}
+
+} // namespace
 
 Core::JSONValue MapSerializer::Serialize(const MapData& Map) {
     Core::JSONObject Root;
@@ -62,6 +76,23 @@ Core::JSONValue MapSerializer::Serialize(const MapData& Map) {
         LightsArray.push_back(Core::JSONValue(std::move(LightJSON)));
     }
     Root["Lights"] = Core::JSONValue(std::move(LightsArray));
+
+    // Acoustic zones
+    Core::JSONArray ZonesArray;
+    for (const auto& zone : Map.AcousticZones) {
+        Core::JSONObject ZoneJSON;
+        ZoneJSON["Name"] = zone.Name;
+        ZoneJSON["Center"] = Core::JSONArray{zone.Center.x, zone.Center.y, zone.Center.z};
+        ZoneJSON["Extents"] = Core::JSONArray{zone.Extents.x, zone.Extents.y, zone.Extents.z};
+        ZoneJSON["ReverbPreset"] = zone.ReverbPreset;
+        ZoneJSON["Wetness"] = zone.Wetness;
+        ZoneJSON["ObstructionMultiplier"] = zone.ObstructionMultiplier;
+        ZoneJSON["Priority"] = static_cast<double>(zone.Priority);
+        ZoneJSON["IsSpherical"] = zone.IsSpherical;
+        ZoneJSON["Enabled"] = zone.Enabled;
+        ZonesArray.push_back(Core::JSONValue(std::move(ZoneJSON)));
+    }
+    Root["AcousticZones"] = Core::JSONValue(std::move(ZonesArray));
 
     // Metadata
     Core::JSONObject MetaJSON;
@@ -190,6 +221,52 @@ MapData MapSerializer::Deserialize(const Core::JSONValue& JSON) {
         }
     }
 
+    // Acoustic zones
+    if (JSON.HasKey("AcousticZones") && JSON["AcousticZones"].IsArray()) {
+        const auto& ZonesArray = JSON["AcousticZones"].AsArray();
+        for (const auto& ZoneVal : ZonesArray) {
+            if (!ZoneVal.IsObject()) {
+                continue;
+            }
+            MapData::AcousticZoneData zone;
+            const auto& ZoneJSON = ZoneVal.AsObject();
+            if (ZoneJSON.find("Name") != ZoneJSON.end()) {
+                zone.Name = ZoneJSON.at("Name").AsString();
+            }
+            if (ZoneJSON.find("Center") != ZoneJSON.end() && ZoneJSON.at("Center").IsArray()) {
+                const auto& center = ZoneJSON.at("Center").AsArray();
+                if (center.size() >= 3) {
+                    zone.Center = Math::Vec3(center[0].AsDouble(), center[1].AsDouble(), center[2].AsDouble());
+                }
+            }
+            if (ZoneJSON.find("Extents") != ZoneJSON.end() && ZoneJSON.at("Extents").IsArray()) {
+                const auto& extents = ZoneJSON.at("Extents").AsArray();
+                if (extents.size() >= 3) {
+                    zone.Extents = Math::Vec3(extents[0].AsDouble(), extents[1].AsDouble(), extents[2].AsDouble());
+                }
+            }
+            if (ZoneJSON.find("ReverbPreset") != ZoneJSON.end()) {
+                zone.ReverbPreset = ZoneJSON.at("ReverbPreset").AsString();
+            }
+            if (ZoneJSON.find("Wetness") != ZoneJSON.end()) {
+                zone.Wetness = static_cast<float>(ZoneJSON.at("Wetness").AsDouble());
+            }
+            if (ZoneJSON.find("ObstructionMultiplier") != ZoneJSON.end()) {
+                zone.ObstructionMultiplier = static_cast<float>(ZoneJSON.at("ObstructionMultiplier").AsDouble());
+            }
+            if (ZoneJSON.find("Priority") != ZoneJSON.end()) {
+                zone.Priority = static_cast<int>(ZoneJSON.at("Priority").AsDouble());
+            }
+            if (ZoneJSON.find("IsSpherical") != ZoneJSON.end()) {
+                zone.IsSpherical = ZoneJSON.at("IsSpherical").AsBool();
+            }
+            if (ZoneJSON.find("Enabled") != ZoneJSON.end()) {
+                zone.Enabled = ZoneJSON.at("Enabled").AsBool();
+            }
+            Map.AcousticZones.push_back(zone);
+        }
+    }
+
     // Metadata
     if (JSON.HasKey("Metadata") && JSON["Metadata"].IsObject()) {
         const auto& MetaJSON = JSON["Metadata"].AsObject();
@@ -253,6 +330,22 @@ bool MapSerializer::LoadFromFile(const std::string& FilePath, MapData& OutMap) {
         }
 
         OutMap = Deserialize(JSON);
+        std::vector<Core::Audio::AcousticZone> runtimeZones;
+        runtimeZones.reserve(OutMap.AcousticZones.size());
+        for (const auto& zone : OutMap.AcousticZones) {
+            Core::Audio::AcousticZone runtimeZone;
+            runtimeZone.Name = zone.Name;
+            runtimeZone.Center = zone.Center;
+            runtimeZone.Extents = zone.Extents;
+            runtimeZone.Preset = ReverbPresetFromString(zone.ReverbPreset);
+            runtimeZone.Wetness = zone.Wetness;
+            runtimeZone.ObstructionMultiplier = zone.ObstructionMultiplier;
+            runtimeZone.Priority = zone.Priority;
+            runtimeZone.IsSpherical = zone.IsSpherical;
+            runtimeZone.Enabled = zone.Enabled;
+            runtimeZones.push_back(runtimeZone);
+        }
+        Core::Audio::AudioManager::Instance().SetAcousticZones(runtimeZones);
         return true;
     } catch (...) {
         return false;
@@ -260,8 +353,7 @@ bool MapSerializer::LoadFromFile(const std::string& FilePath, MapData& OutMap) {
 }
 
 bool MapSerializer::IsCompatibleVersion(const std::string& Version) {
-    // For now, only version 1.0 is supported
-    return Version == "1.0";
+    return Version == "1.0" || Version == "1.1";
 }
 
 } // namespace Solstice::Arzachel

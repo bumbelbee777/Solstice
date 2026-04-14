@@ -1,5 +1,5 @@
 #include "GLTFImport.hxx"
-#include <Core/AssetLoader.hxx>
+#include <Asset/Loading/AssetLoader.hxx>
 #include <Render/Assets/Mesh.hxx>
 #include <Skeleton/Skeleton.hxx>
 #include <fstream>

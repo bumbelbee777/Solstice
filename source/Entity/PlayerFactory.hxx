@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Registry.hxx"
-#include "IEntity.hxx"
 #include "PlayerTag.hxx"
 #include "CurrentPlayer.hxx"
 #include "Transform.hxx"
@@ -12,9 +11,7 @@ namespace Solstice::ECS {
 
 inline EntityId CreateDefaultPlayer(Registry& R) {
     const EntityId e = R.Create();
-    auto entity = std::make_shared<IEntity>();
-    R.Add<std::shared_ptr<IEntity>>(e, entity);
-    
+
     R.Add<Transform>(e, Transform{ {0.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 1.0f} });
     R.Add<Name>(e, Name{ "Player" });
     R.Add<Kind>(e, Kind{ EntityKind::Player });

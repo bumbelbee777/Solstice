@@ -1,10 +1,13 @@
 #pragma once
 
-#include "../GameBase.hxx"
-#include "../DialoguePresenter.hxx"
-#include "../DialogueTree.hxx"
-#include "../InputManager.hxx"
-#include "../VisualNovelPresets.hxx"
+#include "../App/GameBase.hxx"
+#include "../App/GamePreferences.hxx"
+#include "../Cutscene/CutscenePlayer.hxx"
+#include "../Dialogue/NarrativeRuntime.hxx"
+#include "../UI/DialoguePresenter.hxx"
+#include "../Dialogue/DialogueTree.hxx"
+#include "../App/InputManager.hxx"
+#include "../Dialogue/VisualNovelPresets.hxx"
 #include <memory>
 
 namespace Solstice::Game {
@@ -28,6 +31,9 @@ private:
     std::unique_ptr<DialoguePresenter> m_DialoguePresenter;
     std::unique_ptr<DialogueTree> m_DialogueTree;
     std::unique_ptr<InputManager> m_InputManager;
+    std::unique_ptr<GamePreferences> m_Preferences;
+    NarrativeRuntime m_NarrativeRuntime;
+    CutscenePlayer m_CutscenePlayer;
 };
 
 } // namespace Solstice::Game

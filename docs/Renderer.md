@@ -364,11 +364,23 @@ void SetMotionBlurSettings(const MotionBlurSettings& settings);
 void SetMotionBlurQuality(MotionBlurQuality quality);
 void SetPreviousViewProj(const Math::Matrix4& prevViewProj);
 
+// Temporal AA
+struct TAASettings {
+    bool Enabled;
+    float BlendFactor;
+    float ClampStrength;
+    float Sharpen;
+};
+void SetTAASettings(const TAASettings& settings);
+const TAASettings& GetTAASettings() const;
+void InvalidateTAAHistory();
+
 // Velocity Buffer
 void BeginVelocityPass();
 void EndVelocityPass();
 bgfx::FrameBufferHandle GetVelocityFramebuffer() const;
 bgfx::TextureHandle GetVelocityBuffer() const;
+bgfx::TextureHandle GetTAAHistoryTexture() const;
 
 // Per-object velocity tracking
 void UpdateObjectVelocity(uint32_t objectId, const Math::Matrix4& currentTransform);
