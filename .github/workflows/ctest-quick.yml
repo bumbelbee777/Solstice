@@ -27,6 +27,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libx11-dev libxext-dev libxrandr-dev libxfixes-dev libxcursor-dev libxi-dev \
+            libxss-dev libxinerama-dev libxxf86vm-dev libxtst-dev \
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            libdrm-dev libgbm-dev libegl1-mesa-dev libgl1-mesa-dev \
+            libdecor-0-dev \
             ffmpeg \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
           cmake -B build -DCMAKE_BUILD_TYPE=Release

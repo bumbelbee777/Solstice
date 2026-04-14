@@ -546,24 +546,34 @@ function(cpm_add_patches)
     return()
   endif()
 
-  # Find the patch program.
-  find_program(PATCH_EXECUTABLE patch)
-  if(CMAKE_HOST_WIN32 AND NOT PATCH_EXECUTABLE)
-    # The Windows git executable is distributed with patch.exe. Find the path to the executable, if
-    # it exists, then search `../usr/bin` and `../../usr/bin` for patch.exe.
-    find_package(Git QUIET)
-    if(GIT_EXECUTABLE)
-      get_filename_component(extra_search_path ${GIT_EXECUTABLE} DIRECTORY)
-      get_filename_component(extra_search_path_1up ${extra_search_path} DIRECTORY)
-      get_filename_component(extra_search_path_2up ${extra_search_path_1up} DIRECTORY)
-      find_program(
-        PATCH_EXECUTABLE patch HINTS "${extra_search_path_1up}/usr/bin"
-                                     "${extra_search_path_2up}/usr/bin"
-      )
-    endif()
+  # Prefer `git apply` when Git is available: on Windows, `find_program(patch)` often resolves to
+  # Strawberry Perl's patch.exe, which can assert/crash on valid unified diffs; `git apply` matches
+  # Git's patch rules and is already required for GIT_REPOSITORY fetches.
+  find_package(Git QUIET)
+  set(_cpm_use_git_apply FALSE)
+  if(GIT_EXECUTABLE)
+    set(_cpm_use_git_apply TRUE)
   endif()
-  if(NOT PATCH_EXECUTABLE)
-    message(FATAL_ERROR "Couldn't find `patch` executable to use with PATCHES keyword.")
+
+  if(NOT _cpm_use_git_apply)
+    find_program(PATCH_EXECUTABLE patch)
+    if(CMAKE_HOST_WIN32 AND NOT PATCH_EXECUTABLE)
+      # The Windows git executable is distributed with patch.exe. Find the path to the executable, if
+      # it exists, then search `../usr/bin` and `../../usr/bin` for patch.exe.
+      find_package(Git QUIET)
+      if(GIT_EXECUTABLE)
+        get_filename_component(extra_search_path ${GIT_EXECUTABLE} DIRECTORY)
+        get_filename_component(extra_search_path_1up ${extra_search_path} DIRECTORY)
+        get_filename_component(extra_search_path_2up ${extra_search_path_1up} DIRECTORY)
+        find_program(
+          PATCH_EXECUTABLE patch HINTS "${extra_search_path_1up}/usr/bin"
+                                       "${extra_search_path_2up}/usr/bin"
+        )
+      endif()
+    endif()
+    if(NOT PATCH_EXECUTABLE)
+      message(FATAL_ERROR "Couldn't find `patch` executable to use with PATCHES keyword.")
+    endif()
   endif()
 
   # Create a temporary
@@ -592,7 +602,11 @@ function(cpm_add_patches)
       list(APPEND temp_list "&&")
     endif()
     # Add the patch command to the list
-    list(APPEND temp_list "${PATCH_EXECUTABLE}" "-p1" "<" "${PATCH_FILE}")
+    if(_cpm_use_git_apply)
+      list(APPEND temp_list "${GIT_EXECUTABLE}" "apply" "--ignore-space-change" "${PATCH_FILE}")
+    else()
+      list(APPEND temp_list "${PATCH_EXECUTABLE}" "-p1" "<" "${PATCH_FILE}")
+    endif()
   endforeach()
 
   # Move temp out into parent scope.

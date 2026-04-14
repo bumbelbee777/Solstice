@@ -36,7 +36,7 @@
  	struct ThreadInternal
  	{
  #if BX_CRT_NONE
-@@ -248,33 +277,8 @@ void Thread::setThreadName(const StringView& _name)
+@@ -248,32 +277,7 @@ void Thread::setThreadName(const StringView& _name)
  		else
  		{
  #	if BX_COMPILER_MSVC
