@@ -1,6 +1,29 @@
-# Patches for CPM-fetched dependencies
+# Patches for vendored and CPM-fetched code
 
-Applied at configure time when dependencies are fetched via CPM.
+- **CPM packages:** listed `PATCHES` in `CMakeLists.txt` are applied when dependencies are fetched.
+- **Vendored CMake glue** (e.g. `3rdparty/cmake/bimg/`): keep the tree aligned with upstream, record Solstice deltas as unified diffs here, and apply with `git apply -p1 patches/<name>.patch` after updating the file from upstream (or commit the post-patch result and keep the `.patch` as the audit trail).
+
+## bimg-cmake-miniz-include-dirs.patch
+
+**Path:** `3rdparty/cmake/bimg/3rdparty/miniz.cmake` (bgfx/bimg CMake integration bundled in this repo)
+
+**Issue:** Newer bimg `tinyexr.h` uses `#include <miniz/miniz.h>`, which only resolves if the compile include root includes `3rdparty/tinyexr/deps` (not only `deps/miniz/`). Older snapshots used `#include <miniz.h>`.
+
+**Fix:** Set `MINIZ_INCLUDE_DIR` to both `.../deps` and `.../deps/miniz`.
+
+**Apply / refresh:**
+
+```bash
+git apply -p1 patches/bimg-cmake-miniz-include-dirs.patch
+```
+
+**Regenerating** after editing `miniz.cmake`:
+
+```bash
+git diff 3rdparty/cmake/bimg/3rdparty/miniz.cmake > patches/bimg-cmake-miniz-include-dirs.patch
+```
+
+(Use an unpatched upstream `miniz.cmake` as the left side if you want a clean forward-only patch.)
 
 ## bx-thread-msvc-setThreadName.patch
 

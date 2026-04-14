@@ -1,0 +1,19 @@
+diff --git a/3rdparty/cmake/bimg/3rdparty/miniz.cmake b/3rdparty/cmake/bimg/3rdparty/miniz.cmake
+--- a/3rdparty/cmake/bimg/3rdparty/miniz.cmake
++++ b/3rdparty/cmake/bimg/3rdparty/miniz.cmake
+@@ -28,8 +28,13 @@ if(NOT MINIZ_LIBRARIES)
+ 	)
+ 	list(APPEND MINIZ_SOURCES ${MINIZ_SOURCES_LEGACY})
+ 	list(REMOVE_DUPLICATES MINIZ_SOURCES)
+-	# tinyexr.h uses #include <miniz.h>; headers live under deps/miniz/, not deps/.
+-	set(MINIZ_INCLUDE_DIR ${BIMG_DIR}/3rdparty/tinyexr/deps/miniz)
++	# tinyexr.h may use <miniz.h> (older) or <miniz/miniz.h> (newer bimg master). The latter needs the
++	# deps/ root so "miniz/miniz.h" resolves to deps/miniz/miniz.h; the former needs deps/miniz/.
++	# (Solstice: see patches/bimg-cmake-miniz-include-dirs.patch - do not edit this block by hand.)
++	set(MINIZ_INCLUDE_DIR
++		${BIMG_DIR}/3rdparty/tinyexr/deps
++		${BIMG_DIR}/3rdparty/tinyexr/deps/miniz
++	)
+ 
+ 	# Vendored C only: silence #pragma message and other third-party noise (one TU, low risk).
+ 	if(MINIZ_SOURCES AND CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")

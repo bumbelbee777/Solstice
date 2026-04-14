@@ -18,6 +18,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Linux: ccache location + glibc allocator tuning (fewer arenas → lower RSS on parallel GCC).
+      - name: Linux build environment (ccache, memory)
+        if: runner.os == 'Linux'
+        run: |
+          echo "CCACHE_DIR=${{ github.workspace }}/.ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPRESS=1" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPRESSLEVEL=6" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=500M" >> "$GITHUB_ENV"
+          echo "CCACHE_SLOPPINESS=include_file_ctime,include_file_mtime" >> "$GITHUB_ENV"
+          echo "MALLOC_ARENA_MAX=2" >> "$GITHUB_ENV"
+
+      - name: Cache ccache (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-linux-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt', '3rdparty/cmake/**/*.cmake') }}
+          restore-keys: |
+            ccache-linux-
+
       - name: Configure (Windows)
         if: runner.os == 'Windows'
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
@@ -27,6 +47,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
+            ccache \
+            ninja-build \
             pkg-config \
             libx11-dev libxext-dev libxrandr-dev libxfixes-dev libxcursor-dev libxi-dev \
             libxss-dev libxinerama-dev libxxf86vm-dev libxtst-dev \
@@ -35,8 +57,10 @@ jobs:
             libdecor-0-dev \
             ffmpeg \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
-          # Skip example games on CI: lowers peak RAM vs building deps + engine + tests + examples at once.
-          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+          ccache --zero-stats
+          # Ninja: faster incremental graphs than Make; often a bit lighter than make -j on huge DAGs.
+          # ccache is picked up automatically (see root CMakeLists.txt) when on PATH before project().
+          cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release \
             -DSOLSTICE_BUILD_EXAMPLES=OFF \
             -DSOLSTICE_BUILD_UTILITIES=ON
 
@@ -51,7 +75,7 @@ jobs:
           set -euo pipefail
           JOBS=$(nproc)
           JOBS=$(( JOBS < 2 ? 1 : JOBS / 2 ))
-          cmake --build build --config Release --parallel "$JOBS" --target solstice_deps
+          cmake --build build --parallel "$JOBS" --target solstice_deps
 
       - name: Build engine (Linux)
         if: runner.os == 'Linux'
@@ -59,7 +83,7 @@ jobs:
           set -euo pipefail
           JOBS=$(nproc)
           JOBS=$(( JOBS < 2 ? 1 : JOBS / 2 ))
-          cmake --build build --config Release --parallel "$JOBS" --target SolsticeEngine
+          cmake --build build --parallel "$JOBS" --target SolsticeEngine
 
       - name: Build tests (quick) (Linux)
         if: runner.os == 'Linux'
@@ -67,7 +91,7 @@ jobs:
           set -euo pipefail
           JOBS=$(nproc)
           JOBS=$(( JOBS < 2 ? 1 : JOBS / 2 ))
-          cmake --build build --config Release --parallel "$JOBS" --target solstice_quick_tests
+          cmake --build build --parallel "$JOBS" --target solstice_quick_tests
 
       - name: Build utilities (Linux)
         if: runner.os == 'Linux'
@@ -75,7 +99,11 @@ jobs:
           set -euo pipefail
           JOBS=$(nproc)
           JOBS=$(( JOBS < 2 ? 1 : JOBS / 2 ))
-          cmake --build build --config Release --parallel "$JOBS" --target solstice_utilities
+          cmake --build build --parallel "$JOBS" --target solstice_utilities
+
+      - name: ccache statistics (Linux)
+        if: runner.os == 'Linux'
+        run: ccache --show-stats
 
       - name: CTest quick
         run: ctest --test-dir build -C Release -L quick --output-on-failure
