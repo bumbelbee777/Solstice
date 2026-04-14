@@ -48,6 +48,8 @@ compile_commands.json
 x64/
 x86/
 Debug/
+!source/Core/Debug/
+!source/Core/Debug/**
 Release/
 RelWithDebInfo/
 MinSizeRel/

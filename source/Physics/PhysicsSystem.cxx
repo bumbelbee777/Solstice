@@ -9,9 +9,9 @@
 #include "ShapeHelpers.hxx"
 #include "../Core/SIMD.hxx"
 #include "../Math/SIMDVec3.hxx"
-#include "../Core/Debug.hxx"
-#include "../Core/ScopeTimer.hxx"
-#include "../Core/Profiler.hxx"
+#include "../Core/Debug/Debug.hxx"
+#include "../Core/Profiling/ScopeTimer.hxx"
+#include "../Core/Profiling/Profiler.hxx"
 #include <algorithm>
 #include <cmath>
 #include <future>
