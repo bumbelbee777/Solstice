@@ -267,6 +267,43 @@ set(BGFX_DIR "${bgfx_SOURCE_DIR}" CACHE STRING "Location of bgfx" FORCE)
 # BGFX + ImGui glue (uses BX_DIR, BIMG_DIR, BGFX_DIR, imgui_SOURCE_DIR)
 add_subdirectory(3rdparty)
 
+# Phased CI builds: cmake --build build --target solstice_deps (then SolsticeEngine, tests, utilities).
+# Splits heavy third-party compiles from the engine to lower peak RAM on memory-constrained Linux runners.
+add_custom_target(solstice_deps COMMENT "Third-party libraries (build first in CI)")
+foreach(
+    _sd IN
+    ITEMS bx
+          bimg
+          bimg_decode
+          bgfx
+          shaderc
+          imgui
+          SDL3-shared
+          libzstd_static
+)
+    if(TARGET ${_sd})
+        add_dependencies(solstice_deps ${_sd})
+    endif()
+endforeach()
+if(TARGET ReactPhysics3D::reactphysics3d)
+    add_dependencies(solstice_deps ReactPhysics3D::reactphysics3d)
+elseif(TARGET reactphysics3d)
+    add_dependencies(solstice_deps reactphysics3d)
+endif()
+if(TARGET GameNetworkingSockets::static)
+    add_dependencies(solstice_deps GameNetworkingSockets::static)
+endif()
+if(TARGET SDL3_mixer-static)
+    add_dependencies(solstice_deps SDL3_mixer-static)
+elseif(TARGET SDL3_mixer::SDL3_mixer-static)
+    add_dependencies(solstice_deps SDL3_mixer::SDL3_mixer-static)
+endif()
+if(TARGET protobuf::libprotobuf)
+    add_dependencies(solstice_deps protobuf::libprotobuf)
+elseif(TARGET libprotobuf)
+    add_dependencies(solstice_deps libprotobuf)
+endif()
+
 # LibSmf — Solstice Map Format (.smf) v1 I/O (SolsticeEngine V1 validate API; LibParallax uses shared wire codec)
 add_subdirectory(SDK/LibSmf)
 
@@ -397,15 +434,25 @@ if(SOLSTICE_BUILD_UTILITIES)
     add_subdirectory(utilities/Sharpon)
     add_subdirectory(utilities/MovieMaker)
     add_subdirectory(utilities/LevelEditor)
+
+    add_custom_target(solstice_utilities COMMENT "Utilities (LibUI, editor tools, …)")
+    foreach(_su IN ITEMS LibUI EditorEnginePreview Sharpon MovieMaker LevelEditor)
+        if(TARGET ${_su})
+            add_dependencies(solstice_utilities ${_su})
+        endif()
+    endforeach()
 endif()
 
 # ============================================================================
 # Examples
 # ============================================================================
-add_subdirectory(example/PhysicsPlayground)
-add_subdirectory(example/Blizzard)
-add_subdirectory(example/Hyperbourne)
-add_subdirectory(example/Avalanche)
-add_subdirectory(example/Disco)
-add_subdirectory(example/ThermalPlume)
-add_subdirectory(example/MotionFusion)
+option(SOLSTICE_BUILD_EXAMPLES "Build example games under example/" ON)
+if(SOLSTICE_BUILD_EXAMPLES)
+    add_subdirectory(example/PhysicsPlayground)
+    add_subdirectory(example/Blizzard)
+    add_subdirectory(example/Hyperbourne)
+    add_subdirectory(example/Avalanche)
+    add_subdirectory(example/Disco)
+    add_subdirectory(example/ThermalPlume)
+    add_subdirectory(example/MotionFusion)
+endif()

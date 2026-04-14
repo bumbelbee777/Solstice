@@ -298,3 +298,33 @@ if(TARGET MultimediaFfmpegTest)
     )
     set_tests_properties(MultimediaFfmpegTest PROPERTIES LABELS "quick")
 endif()
+
+# Aggregate target for phased CI: cmake --build build --target solstice_quick_tests
+# (depends on every executable used by ctest -L quick; omit GpuSmokeTest — label gpu only.)
+add_custom_target(solstice_quick_tests COMMENT "CTest quick-label test executables")
+set(_solstice_quick_test_targets
+    CAPISmokeTest
+    ThreadSafetyTest
+    MathSafetyTest
+    NSSolverTest
+    NetworkingTest
+    ECSRegistryTest
+    ProfilerTest
+    MoonwalkInteropTest
+    NarrativeDocumentTest
+    ECSStressTest
+    PhysicsStressTest
+    AssetPipelineTest
+    ScriptStressTest
+    EngineLifecycleTest
+    ParallaxFormatTest
+    SmfFormatTest
+)
+foreach(_qt IN LISTS _solstice_quick_test_targets)
+    if(TARGET ${_qt})
+        add_dependencies(solstice_quick_tests ${_qt})
+    endif()
+endforeach()
+if(TARGET MultimediaFfmpegTest)
+    add_dependencies(solstice_quick_tests MultimediaFfmpegTest)
+endif()

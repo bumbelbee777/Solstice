@@ -35,10 +35,47 @@ jobs:
             libdecor-0-dev \
             ffmpeg \
             libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          # Skip example games on CI: lowers peak RAM vs building deps + engine + tests + examples at once.
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+            -DSOLSTICE_BUILD_EXAMPLES=OFF \
+            -DSOLSTICE_BUILD_UTILITIES=ON
 
-      - name: Build
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
         run: cmake --build build --config Release --parallel
+
+      # Linux: phased targets + bounded parallelism (half of nproc) to avoid OOM on shared runners.
+      - name: Build third-party deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          JOBS=$(nproc)
+          JOBS=$(( JOBS < 2 ? 1 : JOBS / 2 ))
+          cmake --build build --config Release --parallel "$JOBS" --target solstice_deps
+
+      - name: Build engine (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          JOBS=$(nproc)
+          JOBS=$(( JOBS < 2 ? 1 : JOBS / 2 ))
+          cmake --build build --config Release --parallel "$JOBS" --target SolsticeEngine
+
+      - name: Build tests (quick) (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          JOBS=$(nproc)
+          JOBS=$(( JOBS < 2 ? 1 : JOBS / 2 ))
+          cmake --build build --config Release --parallel "$JOBS" --target solstice_quick_tests
+
+      - name: Build utilities (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          JOBS=$(nproc)
+          JOBS=$(( JOBS < 2 ? 1 : JOBS / 2 ))
+          cmake --build build --config Release --parallel "$JOBS" --target solstice_utilities
 
       - name: CTest quick
         run: ctest --test-dir build -C Release -L quick --output-on-failure
