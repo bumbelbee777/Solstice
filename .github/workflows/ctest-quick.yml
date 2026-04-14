@@ -40,7 +40,7 @@ jobs:
 
       - name: Configure (Windows)
         if: runner.os == 'Windows'
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DSOLSTICE_BUILD_EXAMPLES=OFF -DSOLSTICE_BUILD_UTILITIES=ON
 
       - name: Configure (Linux)
         if: runner.os == 'Linux'
@@ -64,9 +64,22 @@ jobs:
             -DSOLSTICE_BUILD_EXAMPLES=OFF \
             -DSOLSTICE_BUILD_UTILITIES=ON
 
-      - name: Build (Windows)
+      # Windows: phased targets + low parallelism — full parallel MSBuild often OOMs after shader step on hosted runners.
+      - name: Build third-party deps (Windows)
         if: runner.os == 'Windows'
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release --parallel 2 --target solstice_deps
+
+      - name: Build engine (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release --parallel 2 --target SolsticeEngine
+
+      - name: Build tests (quick) (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release --parallel 2 --target solstice_quick_tests
+
+      - name: Build utilities (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release --parallel 2 --target solstice_utilities
 
       # Linux: phased targets + bounded parallelism (half of nproc) to avoid OOM on shared runners.
       - name: Build third-party deps (Linux)
