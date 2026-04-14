@@ -23,6 +23,7 @@ Makefile
 !CMakeLists.txt
 !CMakePresets.json
 !3rdparty/cmake/**
+!cmake/CPM.cmake
 compile_commands.json
 .cpm-cache/
 
