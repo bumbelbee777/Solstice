@@ -1,5 +1,6 @@
 #include <Physics/Content/ConvexHullFactory.hxx>
 #include <Core/Debug/Debug.hxx>
+#include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
 #include <cmath>

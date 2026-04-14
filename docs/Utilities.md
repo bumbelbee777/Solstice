@@ -4,9 +4,9 @@ Solstice ships three **desktop authoring utilities** under [`utilities/`](../uti
 
 | Name | CMake target | Executable (typical) | Libraries |
 | --- | --- | --- | --- |
-| **Sharpon** | `Sharpon` | `Sharpon` | LibUI; optional **SolsticeEngine** DLL for Moonwalk and JSON APIs |
-| **Jackhammer** | `LevelEditor` | `LevelEditor` | LibUI + [LibSmf](../SDK/LibSmf/) (`.smf`) |
-| **SMM** (Solstice Movie Maker) | `MovieMaker` | `MovieMaker` | LibUI + [LibParallax](../SDK/LibParallax/) + `UI` module; optional **ffmpeg** CLI |
+| **Sharpon** | `Sharpon` | `Sharpon` | LibUI + [UtilityPluginHost](../utilities/UtilityPluginHost/); optional **SolsticeEngine** DLL for Moonwalk and JSON APIs |
+| **Jackhammer** | `LevelEditor` | `LevelEditor` | LibUI + [LibSmf](../SDK/LibSmf/) (`.smf`) + UtilityPluginHost |
+| **SMM** (Solstice Movie Maker) | `MovieMaker` | `MovieMaker` | LibUI + [LibParallax](../SDK/LibParallax/) + `UI` module + UtilityPluginHost; optional **ffmpeg** CLI |
 
 **CMake names:** *Jackhammer* is the product name for the **LevelEditor** target. *SMM* is the product name for the **MovieMaker** target (project files use `.smm.json`).
 
@@ -29,7 +29,21 @@ flowchart LR
   SMM --> LibUI
   SMM --> LibParallax
   Sharpon -. optional .-> Engine
+  UPH[UtilityPluginHost]
+  Sharpon --> UPH
+  Jackhammer --> UPH
+  SMM --> UPH
 ```
+
+## UtilityPluginHost (shared native plugins)
+
+**Location:** [`utilities/UtilityPluginHost/`](../utilities/UtilityPluginHost/). Small **static** library: UTF-8 `DynamicLibrary` load, a **`UtilityPluginHost`** registry (load/unload, optional **hot-reload** session with a **different replacement file path** — on Windows do not replace the same path while the DLL is loaded; copy to a new name first).
+
+All three authoring tools load optional **`plugins/`** next to the executable (`.dll` / `.so` / `.dylib`). C symbol names are documented in [`UtilityPluginAbi.hxx`](../utilities/UtilityPluginHost/UtilityPluginAbi.hxx) (`SharponPlugin_*`, `LevelEditorPlugin_*`, `MovieMakerPlugin_*`). The host calls optional `OnLoad` / `OnUnload` around module lifetime.
+
+## Technology Preview 1 (utilities)
+
+Early-adopter scope for **Jackhammer** and **SMM**: unsaved-change prompts where applicable, **Undo/Redo** for discrete map edits in Jackhammer, **LibSmf** structural checks surfaced in the validate path, minimal **Parallax channel/keyframe** authoring in SMM, clearer **.prlx** vs **`.smm.json`** copy, and **About** / **Plugins** entry points. Not a full BSP editor or DAW-style timeline.
 
 ## Build flag
 
@@ -55,13 +69,15 @@ Exports are documented in [SolsticeAPI.md](SolsticeAPI.md).
 
 ### Sharpon plugins (optional)
 
-Native plugins are loaded from a **`plugins/`** directory next to the Sharpon executable. Export from the module (see [`utilities/Sharpon/Plugin.hxx`](../utilities/Sharpon/Plugin.hxx)):
+Native plugins are loaded from a **`plugins/`** directory next to the Sharpon executable. Export from the module (see [`utilities/Sharpon/Plugin.hxx`](../utilities/Sharpon/Plugin.hxx) and [`UtilityPluginAbi.hxx`](../utilities/UtilityPluginHost/UtilityPluginAbi.hxx)):
 
-- **`extern "C" const char* SharponPlugin_GetName(void)`** — display name (required for a friendly label).
+- **`extern "C" const char* SharponPlugin_GetName(void)`** — display name (recommended for a friendly label).
 - **`extern "C" void SharponPlugin_OnLoad(void)`** — optional; called after load.
 - **`extern "C" void SharponPlugin_OnUnload(void)`** — optional; called before unload.
 
-The host resolves these after `LoadLibrary` / `dlopen`. Keep plugins small and side-effect free.
+The **UtilityPluginHost** loader resolves these after `LoadLibrary` / `dlopen`. Keep plugins small and side-effect free.
+
+**Authoring a minimal plugin (CMake sketch):** add a shared library target that links only what it needs, output name `MyPlugin.dll` (or `.so`), and export the symbols above. Install or copy the artifact into **`plugins/`** beside the tool executable. Avoid linking **LibSmf** / **LibParallax** in the same plugin as the host unless you understand ODR and ABI stability; prefer a narrow C API or host-provided callbacks for deep integration.
 
 ## Jackhammer (LevelEditor, `.smf`)
 
@@ -70,8 +86,13 @@ The host resolves these after `LoadLibrary` / `dlopen`. Keep plugins small and s
 **Windows:** **`LibUI.dll`** and **`SDL3.dll`** are copied next to **`LevelEditor.exe`** (see [utilities/LevelEditor/CMakeLists.txt](../utilities/LevelEditor/CMakeLists.txt)). LibSmf is static; no extra DLL for maps.
 
 - Open/save **`.smf`** via LibSmf (`Solstice::Smf::LoadSmfFromFile` / `SaveSmfToFile` — see **LibSmf** below). Optional **ZSTD** compression: uncompressed `SmfFileHeader` first, then compressed tail (`Flags` bit 0); Jackhammer exposes **ZSTD compress** on save.
-- **Validate map** checks the in-memory map against the binary codec (and can cross-check with **`SolsticeV1_SmfValidateBinary`** when the engine DLL is available — same validation surface as [SolsticeAPI.md](SolsticeAPI.md) / [`Smf.h`](../SDK/SolsticeAPI/V1/Smf.h)).
+- **Validate map** checks the in-memory map against the binary codec (and can cross-check with **`SolsticeV1_SmfValidateBinary`** when the engine DLL is available — same validation surface as [SolsticeAPI.md](SolsticeAPI.md) / [`Smf.h`](../SDK/SolsticeAPI/V1/Smf.h)). Additional **in-memory structure** messages (duplicate entity names, empty class, duplicate property keys) come from [`SmfMapEditor.hxx`](../SDK/LibSmf/include/Smf/SmfMapEditor.hxx) and appear after validation when relevant.
 - **New map** templates provide a minimal valid map to start from.
+- **Technology Preview 1:** window title and **Help → About**; **Edit → Undo/Redo** for discrete operations (entities, path table, template, viewport placement); unsaved prompts on **New**, **Open**, and quit when the map is dirty; **View → Plugins** uses the same `plugins/` folder with **`LevelEditorPlugin_*`** exports (see `UtilityPluginAbi.hxx`).
+
+### Jackhammer plugins (optional)
+
+Same `plugins/` directory as other tools; export **`LevelEditorPlugin_GetName`**, optional **`OnLoad`** / **`OnUnload`** (see `UtilityPluginAbi.hxx`).
 
 ## SMM — Solstice Movie Maker (`MovieMaker`, `.prlx`)
 
@@ -84,6 +105,11 @@ The host resolves these after `LoadLibrary` / `dlopen`. Keep plugins small and s
 - **Workflow code** lives under [`utilities/MovieMaker/Workflow/`](../utilities/MovieMaker/Workflow/) (timeline helpers, keyframe nudges); UI calls these APIs instead of duplicating logic.
 - **Project file** (`.smm.json`): remembers last paths, import roots, optional ffmpeg path hints, and `compressPrlx`.
 - **ffmpeg**: optional CLI; the UI shows whether encoding is available and can copy a diagnostic command.
+- **Technology Preview 1:** title bar reflects the preview; **New scene** clears the Parallax document (with unsaved prompt when needed); **Import PARALLAX** / quit similarly guard unsaved scene edits; **Add keyframe at playhead** for the selected element uses `AddChannel` / `AddKeyframe` ([`ParallaxScene.hxx`](../SDK/LibParallax/include/Parallax/ParallaxScene.hxx)); scene summary and light validation come from [`ParallaxEditorHelpers.hxx`](../SDK/LibParallax/include/Parallax/ParallaxEditorHelpers.hxx). **Export .prlx** marks the scene saved for dirty tracking. Arrow / Home / End nudge the playhead when ImGui is not capturing text.
+
+### SMM plugins (optional)
+
+Export **`MovieMakerPlugin_GetName`**, optional **`OnLoad`** / **`OnUnload`** (see `UtilityPluginAbi.hxx`). Same `plugins/` folder next to `MovieMaker`.
 
 Authoring and format details: [MotionGraphics.md](MotionGraphics.md).
 
@@ -123,6 +149,7 @@ Authoring and format details: [MotionGraphics.md](MotionGraphics.md).
 - **`Solstice::Smf::SmfMap`** — entities, properties, path table.
 - **`LoadSmfFromFile`**, **`SaveSmfToFile`**, **`LoadSmfFromBytes`**, **`SaveSmfToBytes`**.
 - **`SmfTypes.hxx`** — attribute types and values; **`SmfWire.hxx`** — low-level buffer helpers for the codec.
+- **`SmfMapEditor.hxx`** — editor helpers: entity/property lookup by name, **`ValidateMapStructure`** for duplicate names / class / property-key issues (tooling only; not a substitute for codec validation).
 
 **Validation:** For parity with the engine, use **`SolsticeV1_SmfValidateBinary`** on the serialized bytes when the SolsticeEngine DLL is available ([SolsticeAPI.md](SolsticeAPI.md)).
 
@@ -139,6 +166,7 @@ Authoring and format details: [MotionGraphics.md](MotionGraphics.md).
 - **File/bytes:** `LoadScene`, `SaveScene`, `LoadSceneFromBytes`, `SaveSceneToBytes`, `CreateScene`.
 - **Editing:** `RegisterBuiltinSchemas`, `AddElement`, `SetAttribute`, channels and keyframes, MG elements/tracks (`AddMGElement`, `AddMGTrack`, `AddMGKeyframe`, …).
 - **Evaluation:** `EvaluateScene`, `EvaluateChannel`, `EvaluateMG`; **`ParallaxStreamReader`** in [`ParallaxStream.hxx`](../SDK/LibParallax/include/Parallax/ParallaxStream.hxx) opens a file and evaluates by tick.
+- **Authoring helpers:** [`ParallaxEditorHelpers.hxx`](../SDK/LibParallax/include/Parallax/ParallaxEditorHelpers.hxx) — **`GetParallaxSceneSummary`**, **`ValidateParallaxSceneEditing`** (timeline/MG index sanity) for tools and previews.
 
 **Assets:** Implementations may use **`IAssetResolver`** ([`IAssetResolver.hxx`](../SDK/LibParallax/include/Parallax/IAssetResolver.hxx)) with Relic or dev-session resolvers for packaged vs local assets.
 

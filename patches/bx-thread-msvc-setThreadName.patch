@@ -1,9 +1,11 @@
 --- a/src/thread.cpp
 +++ b/src/thread.cpp
-@@ -35,6 +35,35 @@ namespace bx
+@@ -33,10 +33,38 @@ namespace bx
+ 	static AllocatorI* getAllocator()
+ 	{
+ 		static DefaultAllocator s_allocator;
  		return &s_allocator;
  	}
- 
 +#if BX_PLATFORM_WINDOWS && BX_COMPILER_MSVC
 +	// Helper to set thread name via RaiseException; in separate function to avoid
 +	// MSVC C2712 (__try in function that requires object unwinding).
@@ -32,11 +34,14 @@
 +		}
 +	}
 +#endif // BX_PLATFORM_WINDOWS && BX_COMPILER_MSVC
-+
+ 
  	struct ThreadInternal
  	{
  #if BX_CRT_NONE
-@@ -248,32 +277,7 @@ void Thread::setThreadName(const StringView& _name)
+ 		static int32_t threadFunc(void* _arg);
+@@ -247,36 +275,11 @@ namespace bx
+ 			setThreadDescription(ti->m_handle, name);
+ 		}
  		else
  		{
  #	if BX_COMPILER_MSVC
@@ -70,3 +75,5 @@
  #	endif // BX_COMPILER_MSVC
  		}
  #endif // BX_PLATFORM_
+ 	}
+ 

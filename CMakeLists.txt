@@ -118,7 +118,8 @@ set(CPM_SOURCE_CACHE "${_solstice_cpm_source_cache}" CACHE PATH "CPM dependency 
 include(${CMAKE_SOURCE_DIR}/cmake/CPM.cmake)
 
 # BGFX stack: fetch sources only; 3rdparty/cmake builds them
-CPMAddPackage(NAME bx GITHUB_REPOSITORY bkaradzic/bx GIT_TAG master DOWNLOAD_ONLY YES
+# Pin bx (not floating master) so MSVC thread-name patch stays byte-stable across upstream edits.
+CPMAddPackage(NAME bx GITHUB_REPOSITORY bkaradzic/bx GIT_TAG c6131ec6761abf4b5b8e83a9fd0348023c86028e DOWNLOAD_ONLY YES
     PATCHES ${CMAKE_SOURCE_DIR}/patches/bx-thread-msvc-setThreadName.patch
 )
 CPMAddPackage(NAME bimg GITHUB_REPOSITORY bkaradzic/bimg GIT_TAG master DOWNLOAD_ONLY YES)
@@ -245,7 +246,10 @@ endif()
 
 # ReactPhysics3D: library only (patch adds missing #include <chrono> for MSVC)
 # Pin to v0.9.0 commit SHA so all platforms get the same source (avoids API mismatch on Linux)
+# CUSTOM_CACHE_KEY: bump when the PATCHES file changes so CPM re-fetches/applies (otherwise a hit
+# in CPM_SOURCE_CACHE skips PATCH_COMMAND and leaves stale unpatched sources).
 CPMAddPackage(NAME reactphysics3d GITHUB_REPOSITORY DanielChappuis/reactphysics3d GIT_TAG 4bbbaa7c6e92942734eec696e23a2fad1f1cb8a1
+    CUSTOM_CACHE_KEY chrono-includes-v2
     PATCHES ${CMAKE_SOURCE_DIR}/patches/reactphysics3d-DefaultLogger-chrono.patch
     OPTIONS
         "RP3D_COMPILE_LIBRARY ON"
@@ -431,12 +435,13 @@ add_subdirectory(tests)
 if(SOLSTICE_BUILD_UTILITIES)
     add_subdirectory(utilities/LibUI)
     add_subdirectory(utilities/EditorEnginePreview)
+    add_subdirectory(utilities/UtilityPluginHost)
     add_subdirectory(utilities/Sharpon)
     add_subdirectory(utilities/MovieMaker)
     add_subdirectory(utilities/LevelEditor)
 
     add_custom_target(solstice_utilities COMMENT "Utilities (LibUI, editor tools, …)")
-    foreach(_su IN ITEMS LibUI EditorEnginePreview Sharpon MovieMaker LevelEditor)
+    foreach(_su IN ITEMS LibUI EditorEnginePreview UtilityPluginHost Sharpon MovieMaker LevelEditor)
         if(TARGET ${_su})
             add_dependencies(solstice_utilities ${_su})
         endif()

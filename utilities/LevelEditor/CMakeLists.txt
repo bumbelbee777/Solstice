@@ -12,7 +12,7 @@ target_include_directories(LevelEditor PRIVATE
     "${CMAKE_SOURCE_DIR}/utilities/MovieMaker"
 )
 
-target_link_libraries(LevelEditor PRIVATE LibUI LibSmf EditorEnginePreview)
+target_link_libraries(LevelEditor PRIVATE LibUI LibSmf EditorEnginePreview UtilityPluginHost)
 
 if(MSVC)
     target_compile_definitions(LevelEditor PRIVATE SOLSTICE_STATIC_LINK)

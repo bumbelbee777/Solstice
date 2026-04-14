@@ -16,7 +16,11 @@
 
 #include <Parallax/MGRaster.hxx>
 #include <Parallax/Parallax.hxx>
+#include <Parallax/ParallaxEditorHelpers.hxx>
 #include <Parallax/ParallaxScene.hxx>
+
+#include "UtilityPluginAbi.hxx"
+#include "UtilityPluginHost.hxx"
 
 #include <Math/Vector.hxx>
 #include <Physics/Lighting/LightSource.hxx>
@@ -68,6 +72,64 @@ void DrainImports(Solstice::Parallax::DevSessionAssetResolver& resolver, std::ve
             browser.push_back(std::move(e));
         }
     }
+}
+
+Solstice::UtilityPluginHost::UtilityPluginHost g_MovieMakerPlugins;
+std::vector<std::pair<std::string, std::string>> g_MovieMakerPluginLoadErrors;
+
+void LoadMovieMakerPlugins() {
+    g_MovieMakerPlugins.UnloadAll();
+    g_MovieMakerPluginLoadErrors.clear();
+    const char* base = SDL_GetBasePath();
+    std::filesystem::path dir = base ? std::filesystem::path(base) / "plugins" : std::filesystem::path("plugins");
+    if (base) {
+        SDL_free((void*)base);
+    }
+    Solstice::UtilityPluginHost::PluginAbiSymbols abi{};
+    abi.GetName = SOLSTICE_UTILITY_ABI_MOVIE_MAKER_GETNAME;
+    abi.OnLoad = SOLSTICE_UTILITY_ABI_MOVIE_MAKER_ONLOAD;
+    abi.OnUnload = SOLSTICE_UTILITY_ABI_MOVIE_MAKER_ONUNLOAD;
+    g_MovieMakerPlugins.LoadAllFromDirectory(dir.string(), abi, g_MovieMakerPluginLoadErrors);
+}
+
+void MovieMakerPluginsDrawPanel(bool* pOpen) {
+    if (pOpen && !*pOpen) {
+        return;
+    }
+    ImGui::SetNextWindowSize(ImVec2(440, 240), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Plugins##SMM", pOpen)) {
+        ImGui::TextUnformatted("Native plugins: ./plugins next to MovieMaker");
+        if (ImGui::Button("Reload##mmplug")) {
+            LoadMovieMakerPlugins();
+        }
+        ImGui::Separator();
+        if (!g_MovieMakerPluginLoadErrors.empty()) {
+            for (const auto& fe : g_MovieMakerPluginLoadErrors) {
+                ImGui::BulletText("%s\n  %s", fe.first.c_str(), fe.second.c_str());
+            }
+            ImGui::Separator();
+        }
+        std::vector<Solstice::UtilityPluginHost::ModuleSummary> mods;
+        g_MovieMakerPlugins.EnumerateModules(mods);
+        if (mods.empty()) {
+            ImGui::TextUnformatted("No plugins loaded.");
+        }
+        for (const auto& m : mods) {
+            ImGui::BulletText("%s — %s", m.DisplayName.c_str(), m.PathUtf8.c_str());
+        }
+    }
+    ImGui::End();
+}
+
+Solstice::Parallax::ChannelIndex FindChannelForAttribute(Solstice::Parallax::ParallaxScene& scene,
+    Solstice::Parallax::ElementIndex element, std::string_view attribute, Solstice::Parallax::AttributeType type) {
+    const auto& channels = scene.GetChannels();
+    for (size_t i = 0; i < channels.size(); ++i) {
+        if (channels[i].Element == element && channels[i].AttributeName == attribute && channels[i].ValueType == type) {
+            return static_cast<Solstice::Parallax::ChannelIndex>(i);
+        }
+    }
+    return PARALLAX_INVALID_INDEX;
 }
 
 void PushRecentPath(std::vector<std::string>& recent, const std::string& p, size_t maxN = 8) {
@@ -411,8 +473,8 @@ int main(int argc, char* argv[]) {
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
 
-    SDL_Window* window =
-        SDL_CreateWindow("Solstice MovieMaker (SMM)", 1280, 720, SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL);
+    SDL_Window* window = SDL_CreateWindow("Solstice Movie Maker — Technology Preview 1", 1280, 720,
+        SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL);
     if (!window) {
         std::cerr << "SDL_CreateWindow failed: " << SDL_GetError() << std::endl;
         return 1;
@@ -433,6 +495,8 @@ int main(int argc, char* argv[]) {
         std::cerr << "LibUI::Core::Initialize failed" << std::endl;
         return 1;
     }
+
+    LoadMovieMakerPlugins();
 
     Solstice::Parallax::DevSessionAssetResolver resolver;
     std::vector<LibUI::AssetBrowser::Entry> assetEntries;
@@ -457,6 +521,14 @@ int main(int argc, char* argv[]) {
     Solstice::MovieMaker::PreviewTextureRgba smmScene3dPreviewTex{};
     std::vector<std::string> recentPrlxPaths;
     int elementSelected = -1;
+    bool sceneDirty = false;
+    bool showMmPluginsPanel = false;
+    bool showMmAboutPanel = false;
+    enum class MmUnsavedKind { None, QuitApp, NewScene, ImportPrlx };
+    MmUnsavedKind mmUnsavedPrompt = MmUnsavedKind::None;
+    std::optional<std::string> mmPendingImportPath;
+    char channelAttrBuf[128] = "Intensity";
+    int channelValueTypeCombo = 0;
     std::filesystem::path activeProjectPath = MovieMakerDefaultProjectPath();
     std::string lastFfmpegShellCommand;
 
@@ -470,13 +542,66 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    auto persistMovieMakerProjectFields = [&]() {
+        MovieMakerProjectState pst;
+        pst.exportPath = exportPathBuf;
+        pst.importPath = importPathBuf;
+        pst.folderPath = folderPathBuf;
+        pst.ffmpegExe = ffmpegExeBuf;
+        pst.videoExportPath = videoExportPathBuf;
+        pst.videoWidth = videoW;
+        pst.videoHeight = videoH;
+        pst.videoFps = videoFps;
+        pst.videoMp4 = videoMp4;
+        pst.videoStartTick = videoStartTick;
+        pst.videoEndTick = videoEndTick;
+        pst.compressPrlx = compressPrlx;
+        pst.recentPrlx = recentPrlxPaths;
+        SaveMovieMakerProjectToPath(activeProjectPath, pst);
+    };
+
+    auto performPrlxImportFromBuffers = [&]() -> bool {
+        Solstice::Parallax::ParallaxError err = Solstice::Parallax::ParallaxError::None;
+        auto loaded = Solstice::Parallax::LoadScene(importPathBuf, &resolver, &err);
+        if (!loaded) {
+            return false;
+        }
+        scene = std::move(loaded);
+        PushRecentPath(recentPrlxPaths, std::string(importPathBuf));
+        persistMovieMakerProjectFields();
+        sceneDirty = false;
+        elementSelected = scene->GetElements().empty() ? -1 : 0;
+        timeTicks = Solstice::MovieMaker::Workflow::ClampPlayhead(timeTicks, scene->GetTimelineDurationTicks());
+        return true;
+    };
+
+    auto commitNewParallaxScene = [&]() {
+        scene = Solstice::Parallax::CreateScene(6000);
+        timeTicks = 0;
+        elementSelected = scene->GetElements().empty() ? -1 : 0;
+        sceneDirty = false;
+        ffmpegLog = "New Parallax scene.\n" + ffmpegLog;
+    };
+
+    auto requestNewParallaxScene = [&]() {
+        if (sceneDirty) {
+            mmUnsavedPrompt = MmUnsavedKind::NewScene;
+        } else {
+            commitNewParallaxScene();
+        }
+    };
+
     bool running = true;
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             LibUI::Core::ProcessEvent(&e);
             if (e.type == SDL_EVENT_QUIT) {
-                running = false;
+                if (sceneDirty) {
+                    mmUnsavedPrompt = MmUnsavedKind::QuitApp;
+                } else {
+                    running = false;
+                }
             }
         }
 
@@ -487,13 +612,69 @@ int main(int argc, char* argv[]) {
 
         LibUI::Core::NewFrame();
 
+        ImGuiIO& io_mm = ImGui::GetIO();
+
         ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(vp->Pos);
         ImGui::SetNextWindowSize(vp->Size);
         ImGui::Begin("SMMRoot", nullptr,
                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
 
-        ImGui::TextUnformatted("Solstice Movie Maker (SMM) — Parallax authoring");
+        if (mmUnsavedPrompt != MmUnsavedKind::None) {
+            ImGui::OpenPopup("MM_Unsaved");
+        }
+        if (ImGui::BeginPopupModal("MM_Unsaved", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            const char* line = "Discard unsaved Parallax scene edits?";
+            if (mmUnsavedPrompt == MmUnsavedKind::QuitApp) {
+                line = "Quit with unsaved Parallax scene edits?";
+            } else if (mmUnsavedPrompt == MmUnsavedKind::NewScene) {
+                line = "Discard edits and create a new scene?";
+            } else if (mmUnsavedPrompt == MmUnsavedKind::ImportPrlx) {
+                line = "Discard edits and import the selected .prlx?";
+            }
+            ImGui::TextUnformatted(line);
+            if (ImGui::Button("Discard", ImVec2(120, 0))) {
+                const MmUnsavedKind k = mmUnsavedPrompt;
+                mmUnsavedPrompt = MmUnsavedKind::None;
+                ImGui::CloseCurrentPopup();
+                if (k == MmUnsavedKind::QuitApp) {
+                    running = false;
+                } else if (k == MmUnsavedKind::NewScene) {
+                    commitNewParallaxScene();
+                } else if (k == MmUnsavedKind::ImportPrlx) {
+                    if (mmPendingImportPath) {
+                        std::snprintf(importPathBuf, sizeof(importPathBuf), "%s", mmPendingImportPath->c_str());
+                        mmPendingImportPath.reset();
+                        performPrlxImportFromBuffers();
+                    }
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                mmUnsavedPrompt = MmUnsavedKind::None;
+                mmPendingImportPath.reset();
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+
+        ImGui::TextUnformatted("Solstice Movie Maker (SMM) — Parallax — Technology Preview 1");
+        ImGui::SameLine();
+        if (sceneDirty) {
+            ImGui::TextColored(ImVec4(1.f, 0.85f, 0.35f, 1.f), "(scene modified)");
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("New scene")) {
+            requestNewParallaxScene();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Plugins")) {
+            showMmPluginsPanel = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("About")) {
+            showMmAboutPanel = true;
+        }
         ImGui::Separator();
 
         if (ImGui::Button("Save project")) {
@@ -562,7 +743,20 @@ int main(int argc, char* argv[]) {
         assetSelected = sel;
 
         ImGui::Separator();
-        ImGui::Text("Scene: %zu elements", scene->GetElements().size());
+        {
+            Solstice::Parallax::ParallaxSceneSummary sum{};
+            Solstice::Parallax::GetParallaxSceneSummary(*scene, sum);
+            ImGui::Text("Scene: %zu elements, %zu channels, %zu MG elements | %u tps, %llu ticks duration", sum.ElementCount,
+                sum.ChannelCount, sum.MGElementCount, sum.TicksPerSecond,
+                static_cast<unsigned long long>(sum.TimelineDurationTicks));
+            std::vector<Solstice::Parallax::ParallaxValidationMessage> val;
+            Solstice::Parallax::ValidateParallaxSceneEditing(*scene, val);
+            if (!val.empty() && ImGui::CollapsingHeader("Scene checks")) {
+                for (const auto& m : val) {
+                    ImGui::BulletText("%s", m.Text.c_str());
+                }
+            }
+        }
         if (ImGui::BeginListBox("Elements", ImVec2(-1, 100))) {
             for (size_t i = 0; i < scene->GetElements().size(); ++i) {
                 const auto& el = scene->GetElements()[i];
@@ -581,6 +775,32 @@ int main(int argc, char* argv[]) {
             std::string typeName =
                 el.SchemaIndex < schemas.size() ? schemas[el.SchemaIndex].TypeName : std::string("LightElement");
             Solstice::Parallax::AddElement(*scene, typeName, el.Name + " Copy", el.Parent);
+            sceneDirty = true;
+        }
+        if (elementSelected >= 0 && static_cast<size_t>(elementSelected) < scene->GetElements().size()) {
+            ImGui::Separator();
+            ImGui::TextUnformatted("Keyframes (selected element)");
+            ImGui::InputText("Channel attribute", channelAttrBuf, sizeof(channelAttrBuf));
+            ImGui::Combo("Channel value type", &channelValueTypeCombo, "float\0vec3\0\0");
+            if (ImGui::Button("Add keyframe at playhead")) {
+                const Solstice::Parallax::ElementIndex el = static_cast<Solstice::Parallax::ElementIndex>(elementSelected);
+                const Solstice::Parallax::AttributeType at = channelValueTypeCombo == 0
+                    ? Solstice::Parallax::AttributeType::Float
+                    : Solstice::Parallax::AttributeType::Vec3;
+                Solstice::Parallax::ChannelIndex ch = FindChannelForAttribute(*scene, el, channelAttrBuf, at);
+                if (ch == PARALLAX_INVALID_INDEX) {
+                    ch = Solstice::Parallax::AddChannel(*scene, el, channelAttrBuf, at);
+                }
+                if (ch != PARALLAX_INVALID_INDEX) {
+                    if (at == Solstice::Parallax::AttributeType::Float) {
+                        Solstice::Parallax::AddKeyframe(*scene, ch, timeTicks, Solstice::Parallax::AttributeValue{1.0f});
+                    } else {
+                        Solstice::Parallax::AddKeyframe(*scene, ch, timeTicks,
+                            Solstice::Parallax::AttributeValue{Solstice::Math::Vec3(0.f, 0.f, 0.f)});
+                    }
+                    sceneDirty = true;
+                }
+            }
         }
         ImGui::Separator();
         if (!recentPrlxPaths.empty()) {
@@ -595,20 +815,25 @@ int main(int argc, char* argv[]) {
             ImGui::Separator();
         }
         uint64_t dur = scene->GetTimelineDurationTicks();
-        ImGui::InputScalar("Duration (ticks)", ImGuiDataType_U64, &dur);
-        scene->SetTimelineDurationTicks(dur);
+        if (ImGui::InputScalar("Duration (ticks)", ImGuiDataType_U64, &dur)) {
+            scene->SetTimelineDurationTicks(dur);
+            sceneDirty = true;
+        }
         timeTicks = Solstice::MovieMaker::Workflow::ClampPlayhead(timeTicks, scene->GetTimelineDurationTicks());
         uint32_t tps = scene->GetTicksPerSecond();
         if (ImGui::InputScalar("Ticks/sec", ImGuiDataType_U32, &tps)) {
             scene->SetTicksPerSecond(tps);
+            sceneDirty = true;
         }
 
         if (ImGui::Button("Add Light")) {
             Solstice::Parallax::AddElement(*scene, "LightElement", "Light", 0);
+            sceneDirty = true;
         }
         ImGui::SameLine();
         if (ImGui::Button("Add Camera")) {
             Solstice::Parallax::AddElement(*scene, "CameraElement", "Camera", 0);
+            sceneDirty = true;
         }
 
         uint64_t maxT = scene->GetTimelineDurationTicks() > 0 ? scene->GetTimelineDurationTicks() : 1;
@@ -656,11 +881,29 @@ int main(int argc, char* argv[]) {
         if (ImGui::SmallButton("KF -1s")) {
             Solstice::MovieMaker::Workflow::ShiftSceneKeyframes(*scene,
                 -static_cast<int64_t>(scene->GetTicksPerSecond()));
+            sceneDirty = true;
         }
         ImGui::SameLine();
         if (ImGui::SmallButton("KF +1s")) {
             Solstice::MovieMaker::Workflow::ShiftSceneKeyframes(*scene,
                 static_cast<int64_t>(scene->GetTicksPerSecond()));
+            sceneDirty = true;
+        }
+
+        if (!io_mm.WantTextInput) {
+            const uint64_t maxTk = scene->GetTimelineDurationTicks() > 0 ? scene->GetTimelineDurationTicks() : 1;
+            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false)) {
+                timeTicks = (timeTicks > 0) ? (timeTicks - 1) : 0;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) {
+                timeTicks = std::min(maxTk, timeTicks + 1);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_Home, false)) {
+                Solstice::MovieMaker::Workflow::JumpPlayheadToStart(timeTicks, scene->GetTimelineDurationTicks());
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_End, false)) {
+                Solstice::MovieMaker::Workflow::JumpPlayheadToEnd(timeTicks, scene->GetTimelineDurationTicks());
+            }
         }
 
         ImGui::Separator();
@@ -789,6 +1032,7 @@ int main(int argc, char* argv[]) {
             LibUI::Viewport::EndHost();
         }
 
+        ImGui::TextDisabled("Parallax scene file: Export writes .prlx; Import loads a scene (separate from .smm.json project).");
         ImGui::InputText("Export .prlx path", exportPathBuf, sizeof(exportPathBuf));
         ImGui::SameLine();
         ImGui::Checkbox("ZSTD compress", &compressPrlx);
@@ -798,6 +1042,7 @@ int main(int argc, char* argv[]) {
             if (!Solstice::Parallax::SaveScene(*scene, exportPathBuf, compressPrlx, &err)) {
                 ImGui::TextColored(ImVec4(1, 0.3f, 0.3f, 1), "Export failed");
             } else {
+                sceneDirty = false;
                 PushRecentPath(recentPrlxPaths, std::string(exportPathBuf));
                 MovieMakerProjectState pst;
                 pst.exportPath = exportPathBuf;
@@ -820,26 +1065,11 @@ int main(int argc, char* argv[]) {
         ImGui::InputText("Import .prlx path", importPathBuf, sizeof(importPathBuf));
         ImGui::SameLine();
         if (LibUI::Icons::ToolbarButton(LibUI::Icons::Id::Open, "Import PARALLAX")) {
-            Solstice::Parallax::ParallaxError err = Solstice::Parallax::ParallaxError::None;
-            auto loaded = Solstice::Parallax::LoadScene(importPathBuf, &resolver, &err);
-            if (loaded) {
-                scene = std::move(loaded);
-                PushRecentPath(recentPrlxPaths, std::string(importPathBuf));
-                MovieMakerProjectState pst;
-                pst.exportPath = exportPathBuf;
-                pst.importPath = importPathBuf;
-                pst.folderPath = folderPathBuf;
-                pst.ffmpegExe = ffmpegExeBuf;
-                pst.videoExportPath = videoExportPathBuf;
-                pst.videoWidth = videoW;
-                pst.videoHeight = videoH;
-                pst.videoFps = videoFps;
-                pst.videoMp4 = videoMp4;
-                pst.videoStartTick = videoStartTick;
-                pst.videoEndTick = videoEndTick;
-                pst.compressPrlx = compressPrlx;
-                pst.recentPrlx = recentPrlxPaths;
-                SaveMovieMakerProjectToPath(activeProjectPath, pst);
+            if (sceneDirty) {
+                mmPendingImportPath = std::string(importPathBuf);
+                mmUnsavedPrompt = MmUnsavedKind::ImportPrlx;
+            } else {
+                performPrlxImportFromBuffers();
             }
         }
 
@@ -957,6 +1187,19 @@ int main(int argc, char* argv[]) {
         LibUI::Widgets::InputTextMultiline("##ffmpeglog", ffmpegLog, ImVec2(-1, 96), ImGuiInputTextFlags_ReadOnly);
 
         ImGui::End();
+
+        MovieMakerPluginsDrawPanel(&showMmPluginsPanel);
+        if (showMmAboutPanel) {
+            ImGui::SetNextWindowSize(ImVec2(440, 200), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("About Solstice Movie Maker", &showMmAboutPanel)) {
+                ImGui::TextUnformatted("Technology Preview 1");
+                ImGui::Separator();
+                ImGui::TextWrapped(
+                    "Authoring tool for Parallax (.prlx): timeline, motion graphics preview, optional ffmpeg export. "
+                    "Project settings live in .smm.json; the Parallax scene is imported/exported separately.");
+            }
+            ImGui::End();
+        }
 
         glClearColor(0.1f, 0.1f, 0.12f, 1.f);
         glClear(GL_COLOR_BUFFER_BIT);

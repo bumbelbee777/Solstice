@@ -35,7 +35,7 @@ add_executable(MovieMaker
 # LibParallax pulls engine static libs (Core, Math, …) for PARALLAX I/O.
 # ffmpeg: optional CLI — runtime probe/test encode / video pipe; no linked libav.
 # UI: MotionGraphics compositor (ImGui MGDisplayList; ImTextureID textures).
-target_link_libraries(MovieMaker PRIVATE LibUI LibParallax UI EditorEnginePreview)
+target_link_libraries(MovieMaker PRIVATE LibUI LibParallax UI EditorEnginePreview UtilityPluginHost)
 if(SOLSTICE_FFMPEG_EXECUTABLE)
     target_compile_definitions(MovieMaker PRIVATE SOLSTICE_HAVE_FFMPEG_CLI=1)
 endif()

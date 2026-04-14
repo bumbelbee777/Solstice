@@ -15,7 +15,11 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_opengl.h>
 #include <Smf/SmfBinary.hxx>
+#include <Smf/SmfMapEditor.hxx>
 #include <Smf/SmfUtil.hxx>
+
+#include "UtilityPluginAbi.hxx"
+#include "UtilityPluginHost.hxx"
 #include <SolsticeAPI/V1/Common.h>
 #include <SolsticeAPI/V1/Smf.h>
 
@@ -27,6 +31,7 @@
 #include <filesystem>
 #include <iostream>
 #include <mutex>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -56,6 +61,102 @@ using Solstice::Smf::SmfValue;
 std::mutex g_FileOpMutex;
 std::optional<std::string> g_PendingOpenPath;
 std::optional<std::string> g_PendingSavePath;
+
+constexpr std::size_t kMaxMapUndo = 48;
+std::vector<SmfMap> g_MapUndoStack;
+std::vector<SmfMap> g_MapRedoStack;
+
+void PushMapUndoSnapshot(const SmfMap& m) {
+    g_MapUndoStack.push_back(m);
+    if (g_MapUndoStack.size() > kMaxMapUndo) {
+        g_MapUndoStack.erase(g_MapUndoStack.begin());
+    }
+    g_MapRedoStack.clear();
+}
+
+void UndoMap(SmfMap& map, int& selectedEntity, bool& dirty) {
+    if (g_MapUndoStack.empty()) {
+        return;
+    }
+    g_MapRedoStack.push_back(map);
+    map = std::move(g_MapUndoStack.back());
+    g_MapUndoStack.pop_back();
+    dirty = true;
+    if (map.Entities.empty()) {
+        selectedEntity = -1;
+    } else {
+        selectedEntity = std::min(selectedEntity, static_cast<int>(map.Entities.size()) - 1);
+        if (selectedEntity < 0) {
+            selectedEntity = 0;
+        }
+    }
+}
+
+void RedoMap(SmfMap& map, int& selectedEntity, bool& dirty) {
+    if (g_MapRedoStack.empty()) {
+        return;
+    }
+    g_MapUndoStack.push_back(map);
+    map = std::move(g_MapRedoStack.back());
+    g_MapRedoStack.pop_back();
+    dirty = true;
+    if (map.Entities.empty()) {
+        selectedEntity = -1;
+    } else {
+        selectedEntity = std::min(selectedEntity, static_cast<int>(map.Entities.size()) - 1);
+        if (selectedEntity < 0) {
+            selectedEntity = 0;
+        }
+    }
+}
+
+Solstice::UtilityPluginHost::UtilityPluginHost g_LevelPlugins;
+std::vector<std::pair<std::string, std::string>> g_LevelPluginLoadErrors;
+
+void LoadLevelEditorPlugins() {
+    g_LevelPlugins.UnloadAll();
+    g_LevelPluginLoadErrors.clear();
+    const char* base = SDL_GetBasePath();
+    std::filesystem::path dir = base ? std::filesystem::path(base) / "plugins" : std::filesystem::path("plugins");
+    if (base) {
+        SDL_free((void*)base);
+    }
+    Solstice::UtilityPluginHost::PluginAbiSymbols abi{};
+    abi.GetName = SOLSTICE_UTILITY_ABI_LEVEL_EDITOR_GETNAME;
+    abi.OnLoad = SOLSTICE_UTILITY_ABI_LEVEL_EDITOR_ONLOAD;
+    abi.OnUnload = SOLSTICE_UTILITY_ABI_LEVEL_EDITOR_ONUNLOAD;
+    g_LevelPlugins.LoadAllFromDirectory(dir.string(), abi, g_LevelPluginLoadErrors);
+}
+
+void LevelEditorPluginsDrawPanel(bool* pOpen) {
+    if (pOpen && !*pOpen) {
+        return;
+    }
+    ImGui::SetNextWindowSize(ImVec2(420, 220), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Plugins##Jackhammer", pOpen)) {
+        ImGui::TextUnformatted("Native plugins: ./plugins next to LevelEditor");
+        if (ImGui::Button("Reload##jhplug")) {
+            LoadLevelEditorPlugins();
+        }
+        ImGui::Separator();
+        if (!g_LevelPluginLoadErrors.empty()) {
+            ImGui::TextUnformatted("Failed to load:");
+            for (const auto& fe : g_LevelPluginLoadErrors) {
+                ImGui::BulletText("%s\n  %s", fe.first.c_str(), fe.second.c_str());
+            }
+            ImGui::Separator();
+        }
+        std::vector<Solstice::UtilityPluginHost::ModuleSummary> mods;
+        g_LevelPlugins.EnumerateModules(mods);
+        if (mods.empty()) {
+            ImGui::TextUnformatted("No plugins loaded.");
+        }
+        for (const auto& m : mods) {
+            ImGui::BulletText("%s — %s", m.DisplayName.c_str(), m.PathUtf8.c_str());
+        }
+    }
+    ImGui::End();
+}
 
 void QueueOpenPath(std::string p) {
     std::lock_guard<std::mutex> lock(g_FileOpMutex);
@@ -101,6 +202,7 @@ static std::string EngineDllSmfValidateSummary(const std::vector<std::byte>&) {
 
 static void ApplyNewMapTemplate(SmfMap& map, std::optional<std::string>& currentPath, SmfFileHeader& lastHeader, int& selectedEntity,
     bool& dirty, std::string& status) {
+    PushMapUndoSnapshot(map);
     map.Clear();
     SmfEntity ws = SmfMakeEntity("worldspawn", "WorldSettings");
     ws.Properties.push_back({"gravity", SmfAttributeType::Float, SmfValue{9.81f}});
@@ -117,7 +219,7 @@ static void ApplyNewMapTemplate(SmfMap& map, std::optional<std::string>& current
 }
 
 void UpdateWindowTitle(SDL_Window* window, const std::optional<std::string>& currentPath, bool dirty) {
-    std::string title = "Jackhammer — Solstice Level Editor";
+    std::string title = "Jackhammer — Solstice Level Editor — Technology Preview 1";
     if (currentPath) {
         title += " — ";
         title += *currentPath;
@@ -148,6 +250,8 @@ void DrainPendingFileOps(SmfMap& map, std::optional<std::string>& currentPath, S
             dirty = false;
             status = "Loaded " + *openPath;
             LibUI::Core::RecentPathPush(openPath->c_str());
+            g_MapUndoStack.clear();
+            g_MapRedoStack.clear();
         }
     }
 
@@ -360,8 +464,8 @@ int main(int argc, char** argv) {
         return -1;
     }
 
-    SDL_Window* window =
-        SDL_CreateWindow("Jackhammer — Solstice Level Editor", 1280, 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
+    SDL_Window* window = SDL_CreateWindow("Jackhammer — Solstice Level Editor — Technology Preview 1", 1280, 720,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
     if (!window) {
         std::cerr << "SDL_CreateWindow failed" << std::endl;
         SDL_Quit();
@@ -379,6 +483,8 @@ int main(int argc, char** argv) {
         return -1;
     }
     SDL_GL_SetSwapInterval(1);
+
+    LoadLevelEditorPlugins();
 
     if (!LibUI::Core::Initialize(window)) {
         std::cerr << "LibUI init failed" << std::endl;
@@ -398,8 +504,15 @@ int main(int argc, char** argv) {
     int selectedEntity = -1;
     std::string lastValidateCodec = "(not run yet)";
     std::string lastValidateEngine = "(not run yet)";
+    std::vector<std::string> lastValidateStructure;
     char entityNameFilter[256] = "";
     bool compressSmf = false;
+    bool showPluginsPanel = false;
+    bool showAboutPanel = false;
+
+    enum class UnsavedPromptKind { None, QuitApp, NewMap, OpenMap };
+    UnsavedPromptKind unsavedPrompt = UnsavedPromptKind::None;
+    std::optional<std::string> unsavedOpenPathPending;
 
     if (argc >= 2) {
         Solstice::Smf::SmfError err = Solstice::Smf::SmfError::None;
@@ -409,18 +522,34 @@ int main(int argc, char** argv) {
             selectedEntity = map.Entities.empty() ? -1 : 0;
             status = "Loaded " + currentPath.value();
             LibUI::Core::RecentPathPush(p.string().c_str());
+            g_MapUndoStack.clear();
+            g_MapRedoStack.clear();
         } else {
             status = std::string("Failed to open argument: ") + SmfErrorMessage(err);
         }
     }
 
-    auto doNew = [&]() {
+    auto doNewCommit = [&]() {
         map.Clear();
         currentPath.reset();
         lastHeader = {};
         selectedEntity = -1;
         dirty = false;
         status = "New map.";
+        g_MapUndoStack.clear();
+        g_MapRedoStack.clear();
+    };
+
+    auto doNew = [&]() {
+        PushMapUndoSnapshot(map);
+        map.Clear();
+        currentPath.reset();
+        lastHeader = {};
+        selectedEntity = -1;
+        dirty = false;
+        status = "New map.";
+        g_MapUndoStack.clear();
+        g_MapRedoStack.clear();
     };
 
     auto doSaveToDisk = [&](const std::string& pathStr) -> bool {
@@ -460,7 +589,38 @@ int main(int argc, char** argv) {
         }
         lastValidateCodec = "LibSmf codec: OK (serialize → parse round-trip).";
         lastValidateEngine = EngineDllSmfValidateSummary(bytes);
+        {
+            std::vector<Solstice::Smf::SmfMapValidationMessage> sv;
+            Solstice::Smf::ValidateMapStructure(map, sv);
+            lastValidateStructure.clear();
+            lastValidateStructure.reserve(sv.size());
+            for (const auto& msg : sv) {
+                const char* tag = (msg.Level == Solstice::Smf::SmfMapValidationMessage::Severity::Error) ? "[error] "
+                                                                                                          : "[warn] ";
+                lastValidateStructure.push_back(tag + msg.Text);
+            }
+        }
         status = lastValidateCodec + " " + lastValidateEngine;
+    };
+
+    auto requestNew = [&]() {
+        if (dirty) {
+            unsavedPrompt = UnsavedPromptKind::NewMap;
+        } else {
+            doNew();
+        }
+    };
+
+    auto requestOpen = [&](std::optional<std::string> path) {
+        if (!path) {
+            return;
+        }
+        if (dirty) {
+            unsavedOpenPathPending = std::move(*path);
+            unsavedPrompt = UnsavedPromptKind::OpenMap;
+        } else {
+            QueueOpenPath(std::move(*path));
+        }
     };
 
     bool running = true;
@@ -469,7 +629,11 @@ int main(int argc, char** argv) {
         while (SDL_PollEvent(&event)) {
             LibUI::Core::ProcessEvent(&event);
             if (event.type == SDL_EVENT_QUIT) {
-                running = false;
+                if (dirty) {
+                    unsavedPrompt = UnsavedPromptKind::QuitApp;
+                } else {
+                    running = false;
+                }
             }
         }
 
@@ -483,15 +647,18 @@ int main(int argc, char** argv) {
         const bool allowShortcuts = !io.WantTextInput;
         if (allowShortcuts) {
             if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_N)) {
-                doNew();
+                requestNew();
+            }
+            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Z) && !io.KeyShift) {
+                UndoMap(map, selectedEntity, dirty);
+            }
+            if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_Y)
+                || ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Z)) {
+                RedoMap(map, selectedEntity, dirty);
             }
             if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_O)) {
                 LibUI::FileDialogs::ShowOpenFile(
-                    window, "Open map", [](std::optional<std::string> path) {
-                        if (path) {
-                            QueueOpenPath(std::move(*path));
-                        }
-                    },
+                    window, "Open map", [&](std::optional<std::string> path) { requestOpen(std::move(path)); },
                     kSmfFilters);
             }
             if (ImGui::IsKeyChordPressed(ImGuiMod_Ctrl | ImGuiKey_S)) {
@@ -526,18 +693,14 @@ int main(int argc, char** argv) {
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("New", "Ctrl+N")) {
-                    doNew();
+                    requestNew();
                 }
                 if (ImGui::MenuItem("New from template")) {
                     ApplyNewMapTemplate(map, currentPath, lastHeader, selectedEntity, dirty, status);
                 }
                 if (ImGui::MenuItem("Open…", "Ctrl+O")) {
                     LibUI::FileDialogs::ShowOpenFile(
-                        window, "Open map", [](std::optional<std::string> path) {
-                            if (path) {
-                                QueueOpenPath(std::move(*path));
-                            }
-                        },
+                        window, "Open map", [&](std::optional<std::string> path) { requestOpen(std::move(path)); },
                         kSmfFilters);
                 }
                 if (ImGui::MenuItem("Save", "Ctrl+S")) {
@@ -564,14 +727,95 @@ int main(int argc, char** argv) {
                 }
                 ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("Edit")) {
+                if (ImGui::MenuItem("Undo", "Ctrl+Z", false, !g_MapUndoStack.empty())) {
+                    UndoMap(map, selectedEntity, dirty);
+                }
+                if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !g_MapRedoStack.empty())) {
+                    RedoMap(map, selectedEntity, dirty);
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("View")) {
+                if (ImGui::MenuItem("Plugins")) {
+                    showPluginsPanel = true;
+                }
+                ImGui::EndMenu();
+            }
+            if (ImGui::BeginMenu("Help")) {
+                if (ImGui::MenuItem("About Jackhammer")) {
+                    showAboutPanel = true;
+                }
+                ImGui::EndMenu();
+            }
             ImGui::EndMenuBar();
+        }
+
+        if (unsavedPrompt != UnsavedPromptKind::None) {
+            ImGui::OpenPopup("JH_Unsaved");
+        }
+        if (ImGui::BeginPopupModal("JH_Unsaved", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            const char* msg = "Save changes before continuing?";
+            if (unsavedPrompt == UnsavedPromptKind::QuitApp) {
+                msg = "Save changes before quitting?";
+            } else if (unsavedPrompt == UnsavedPromptKind::NewMap) {
+                msg = "Save changes before creating a new map?";
+            } else if (unsavedPrompt == UnsavedPromptKind::OpenMap) {
+                msg = "Save changes before opening another file?";
+            }
+            ImGui::TextUnformatted(msg);
+            auto finishUnsaved = [&](UnsavedPromptKind kind) {
+                unsavedPrompt = UnsavedPromptKind::None;
+                ImGui::CloseCurrentPopup();
+                if (kind == UnsavedPromptKind::QuitApp) {
+                    running = false;
+                } else if (kind == UnsavedPromptKind::NewMap) {
+                    doNewCommit();
+                } else if (kind == UnsavedPromptKind::OpenMap) {
+                    if (unsavedOpenPathPending) {
+                        QueueOpenPath(std::move(*unsavedOpenPathPending));
+                        unsavedOpenPathPending.reset();
+                    }
+                }
+            };
+            if (ImGui::Button("Save", ImVec2(120, 0))) {
+                const UnsavedPromptKind kind = unsavedPrompt;
+                if (currentPath) {
+                    if (doSaveToDisk(*currentPath)) {
+                        finishUnsaved(kind);
+                    }
+                } else {
+                    LibUI::FileDialogs::ShowSaveFile(
+                        window, "Save map as",
+                        [&](std::optional<std::string> path) {
+                            if (!path) {
+                                return;
+                            }
+                            if (doSaveToDisk(*path)) {
+                                finishUnsaved(kind);
+                            }
+                        },
+                        kSmfFilters);
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Discard", ImVec2(120, 0))) {
+                const UnsavedPromptKind kind = unsavedPrompt;
+                finishUnsaved(kind);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                unsavedPrompt = UnsavedPromptKind::None;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
         }
 
         ImGui::TextUnformatted("Jackhammer — .smf v1");
         ImGui::Separator();
 
         if (ImGui::Button("New")) {
-            doNew();
+            requestNew();
         }
         ImGui::SameLine();
         if (ImGui::Button("Template")) {
@@ -580,12 +824,7 @@ int main(int argc, char** argv) {
         ImGui::SameLine();
         if (ImGui::Button("Open…")) {
             LibUI::FileDialogs::ShowOpenFile(
-                window, "Open map", [](std::optional<std::string> path) {
-                    if (path) {
-                        QueueOpenPath(std::move(*path));
-                    }
-                },
-                kSmfFilters);
+                window, "Open map", [&](std::optional<std::string> path) { requestOpen(std::move(path)); }, kSmfFilters);
         }
         ImGui::SameLine();
         if (ImGui::Button("Save")) {
@@ -629,6 +868,13 @@ int main(int argc, char** argv) {
         ImGui::Separator();
         ImGui::TextWrapped("LibSmf: %s", lastValidateCodec.c_str());
         ImGui::TextWrapped("Engine DLL: %s", lastValidateEngine.c_str());
+        if (!lastValidateStructure.empty()) {
+            if (ImGui::CollapsingHeader("Map structure (editor checks)")) {
+                for (const auto& line : lastValidateStructure) {
+                    ImGui::BulletText("%s", line.c_str());
+                }
+            }
+        }
 
         if (LibUI::Core::RecentPathGetCount() > 0) {
             if (ImGui::CollapsingHeader("Recent paths (LibUI)", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -657,6 +903,7 @@ int main(int argc, char** argv) {
         ImGui::TextUnformatted("Entities");
         ImGui::InputText("Filter by name", entityNameFilter, sizeof(entityNameFilter));
         if (ImGui::Button("Add")) {
+            PushMapUndoSnapshot(map);
             const int n = static_cast<int>(map.Entities.size());
             map.Entities.push_back(SmfMakeEntity("entity_" + std::to_string(n), "Entity"));
             selectedEntity = static_cast<int>(map.Entities.size()) - 1;
@@ -665,6 +912,7 @@ int main(int argc, char** argv) {
         ImGui::SameLine();
         if (ImGui::Button("Duplicate") && selectedEntity >= 0 &&
             selectedEntity < static_cast<int>(map.Entities.size())) {
+            PushMapUndoSnapshot(map);
             map.Entities.push_back(map.Entities[static_cast<size_t>(selectedEntity)]);
             selectedEntity = static_cast<int>(map.Entities.size()) - 1;
             dirty = true;
@@ -684,6 +932,7 @@ int main(int argc, char** argv) {
             }
             if (ImGui::Button("Delete", ImVec2(120, 0)) && selectedEntity >= 0
                 && selectedEntity < static_cast<int>(map.Entities.size())) {
+                PushMapUndoSnapshot(map);
                 map.Entities.erase(map.Entities.begin() + selectedEntity);
                 if (map.Entities.empty()) {
                     selectedEntity = -1;
@@ -755,6 +1004,7 @@ int main(int argc, char** argv) {
             ImGui::Separator();
             ImGui::TextUnformatted("Properties");
             if (ImGui::Button("Add property")) {
+                PushMapUndoSnapshot(map);
                 ent.Properties.push_back({"newKey", SmfAttributeType::Float, SmfDefaultValueForType(SmfAttributeType::Float)});
                 dirty = true;
             }
@@ -788,6 +1038,7 @@ int main(int argc, char** argv) {
 
                 ImGui::SameLine();
                 if (ImGui::SmallButton("Remove")) {
+                    PushMapUndoSnapshot(map);
                     ent.Properties.erase(ent.Properties.begin() + static_cast<ptrdiff_t>(pi));
                     dirty = true;
                     ImGui::PopID();
@@ -805,6 +1056,7 @@ int main(int argc, char** argv) {
         ImGui::Separator();
         ImGui::TextUnformatted("Path table (RELIC)");
         if (ImGui::Button("Add path")) {
+            PushMapUndoSnapshot(map);
             map.PathTable.push_back({"", 0});
             dirty = true;
         }
@@ -826,6 +1078,7 @@ int main(int argc, char** argv) {
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("Remove##pt")) {
+                PushMapUndoSnapshot(map);
                 map.PathTable.erase(map.PathTable.begin() + static_cast<ptrdiff_t>(pi));
                 dirty = true;
                 ImGui::PopID();
@@ -962,6 +1215,7 @@ int main(int argc, char** argv) {
                         float hitZ = 0.f;
                         if (LibUI::Viewport::ScreenToXZPlane(viewM, projM, engineVp.min, engineVp.max,
                                 ImGui::GetMousePos(), 0.f, hitX, hitZ)) {
+                            PushMapUndoSnapshot(map);
                             SmfEntity& ent = map.Entities[static_cast<size_t>(selectedEntity)];
                             const SmfVec3* cur = TryGetEntityOriginVec3(ent);
                             const float keepY = cur ? cur->y : 0.f;
@@ -1007,6 +1261,19 @@ int main(int argc, char** argv) {
             lastHeader.PathTableSize);
 
         ImGui::End();
+
+        LevelEditorPluginsDrawPanel(&showPluginsPanel);
+        if (showAboutPanel) {
+            ImGui::SetNextWindowSize(ImVec2(420, 180), ImGuiCond_FirstUseEver);
+            if (ImGui::Begin("About Jackhammer", &showAboutPanel)) {
+                ImGui::TextUnformatted("Technology Preview 1");
+                ImGui::Separator();
+                ImGui::TextWrapped(
+                    "Solstice Level Editor for .smf v1: entities, properties, RELIC path table, ZSTD, LibSmf codec "
+                    "validation, optional engine DLL checks. BSP / octree editing is out of scope for this preview.");
+            }
+            ImGui::End();
+        }
 
         int w, h;
         SDL_GetWindowSize(window, &w, &h);

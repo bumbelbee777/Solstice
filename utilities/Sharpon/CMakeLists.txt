@@ -17,7 +17,7 @@ add_executable(Sharpon
 target_include_directories(Sharpon PRIVATE "${CMAKE_SOURCE_DIR}/SDK")
 
 # Link against LibUI and OpenGL
-target_link_libraries(Sharpon PRIVATE LibUI)
+target_link_libraries(Sharpon PRIVATE LibUI UtilityPluginHost)
 
 # Link OpenGL on Windows
 if(WIN32)
