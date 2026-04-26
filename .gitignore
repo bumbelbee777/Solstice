@@ -105,7 +105,7 @@ node_modules/
 .cache/
 .ccache/
 
-# tools/fetch_ffmpeg.py output (local FFmpeg CLI)
+# tools/fetch_ffmpeg{,_libav}.py output (FFmpeg + libav; CLI may live in tools/_ffmpeg/…/bin)
 tools/_ffmpeg/
 
 !.gitkeep

@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(SOLSTICE_FFMPEG_CLI_ROOT "" CACHE PATH
-    "Directory whose bin/ contains ffmpeg (e.g. from python tools/fetch_ffmpeg.py, or tools/_ffmpeg/ffmpeg)")
+    "Directory whose bin/ contains ffmpeg (e.g. from tools/fetch_ffmpeg_libav.py, or tools/_ffmpeg/…)")
 if(SOLSTICE_FFMPEG_CLI_ROOT STREQUAL "" AND DEFINED ENV{SOLSTICE_FFMPEG_CLI_ROOT} AND NOT "$ENV{SOLSTICE_FFMPEG_CLI_ROOT}" STREQUAL "")
     set(SOLSTICE_FFMPEG_CLI_ROOT "$ENV{SOLSTICE_FFMPEG_CLI_ROOT}" CACHE PATH
         "Directory whose bin/ contains ffmpeg (also read from env SOLSTICE_FFMPEG_CLI_ROOT when unset)" FORCE)
@@ -21,7 +21,7 @@ mark_as_advanced(SOLSTICE_FFMPEG_EXECUTABLE)
 
 if(TARGET Python3::Interpreter)
     add_custom_target(solstice-fetch-ffmpeg
-        COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/fetch_ffmpeg.py
+        COMMAND Python3::Interpreter ${CMAKE_SOURCE_DIR}/tools/fetch_ffmpeg_libav.py
             --dest "${SOLSTICE_STAGING_DIR}/ffmpeg_cli"
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
         COMMENT "Download FFmpeg CLI into SOLSTICE_STAGING_DIR/ffmpeg_cli (optional)")
