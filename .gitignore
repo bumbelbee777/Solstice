@@ -23,7 +23,8 @@ Makefile
 !CMakeLists.txt
 !CMakePresets.json
 !3rdparty/cmake/**
-!cmake/CPM.cmake
+# First-party CMake modules under cmake/ (the global *.cmake rule above would ignore them otherwise).
+!cmake/*.cmake
 compile_commands.json
 .cpm-cache/
 
