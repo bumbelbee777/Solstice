@@ -178,7 +178,9 @@ struct ThreadJobQueue {
     }
 };
 
-class SOLSTICE_API JobSystem {
+// Not SOLSTICE_API: methods are defined inline in this header. Exporting the class from multiple TUs
+// (e.g. static Arzachel + SolsticeEngine import lib) caused MSVC LNK2005 duplicate JobSystem symbols.
+class JobSystem {
 public:
     static JobSystem& Instance() {
         static JobSystem instance;

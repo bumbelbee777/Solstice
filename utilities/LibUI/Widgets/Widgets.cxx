@@ -880,6 +880,49 @@ bool MenuItem(const char* label, const char* shortcut, bool* p_selected, bool en
     }
 }
 
+// Tabs
+bool BeginTabBar(const char* str_id, ImGuiTabBarFlags flags) {
+    if (!CheckInitialized() || !str_id) return false;
+    try {
+        return ImGui::BeginTabBar(str_id, flags);
+    } catch (...) {
+        return false;
+    }
+}
+
+void EndTabBar() {
+    if (!CheckInitialized()) return;
+    try {
+        ImGui::EndTabBar();
+    } catch (...) {
+    }
+}
+
+bool BeginTabItem(const char* label, bool* p_open, ImGuiTabItemFlags flags) {
+    if (!CheckInitialized() || !label) return false;
+    try {
+        return ImGui::BeginTabItem(label, p_open, flags);
+    } catch (...) {
+        return false;
+    }
+}
+
+void EndTabItem() {
+    if (!CheckInitialized()) return;
+    try {
+        ImGui::EndTabItem();
+    } catch (...) {
+    }
+}
+
+void SetTabItemClosed(const char* tab_or_docked_window_label) {
+    if (!CheckInitialized() || !tab_or_docked_window_label) return;
+    try {
+        ImGui::SetTabItemClosed(tab_or_docked_window_label);
+    } catch (...) {
+    }
+}
+
 // Popups
 void OpenPopup(const char* str_id, ImGuiPopupFlags popup_flags) {
     if (!CheckInitialized() || !str_id) return;

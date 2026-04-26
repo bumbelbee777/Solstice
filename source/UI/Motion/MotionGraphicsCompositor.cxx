@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <numeric>
 
 namespace Solstice::UI::MotionGraphics {
 
@@ -136,8 +137,13 @@ void Compositor::Render(ImDrawList* drawList) {
     }
     const float ga = std::clamp(m_List.GlobalAlpha, 0.0f, 1.0f);
     ImVec2 origin(16.f, 16.f);
-    for (const auto& e : m_List.Entries) {
-        drawEntry(drawList, e, origin, ga);
+    std::vector<size_t> order(m_List.Entries.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::stable_sort(order.begin(), order.end(), [this](size_t ai, size_t bi) {
+        return Parallax::MGEntryCompositeDepth(m_List.Entries[ai]) < Parallax::MGEntryCompositeDepth(m_List.Entries[bi]);
+    });
+    for (size_t idx : order) {
+        drawEntry(drawList, m_List.Entries[idx], origin, ga);
     }
 }
 

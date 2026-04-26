@@ -20,6 +20,8 @@ add_library(Arzachel STATIC
     AnimationTrack.cxx
     AnimationClip.cxx
     AnimationOps.cxx
+    FacialAnimation.cxx
+    TextLipSync.cxx
     GLTFImport.cxx
     GLTFExport.cxx
     TerrainGenerator.cxx
@@ -36,7 +38,7 @@ add_library(Arzachel STATIC
     Presets/LevelCompositions.cxx
 )
 target_include_directories(Arzachel PUBLIC ${SOURCE_DIR})
-target_link_libraries(Arzachel PUBLIC Math Core Skeleton MinGfx bgfx bimg bx)
+target_link_libraries(Arzachel PUBLIC Math Core Material Skeleton MinGfx bgfx bimg bx LibSmf Physics)
 if(MSVC)
     target_compile_options(Arzachel PRIVATE /Zc:preprocessor /W0)
     target_compile_definitions(Arzachel PRIVATE SOLSTICE_EXPORTS _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS _SILENCE_ALL_MS_EXT_DEPRECATION_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)

@@ -52,9 +52,15 @@ if(CMAKE_HOST_WIN32 AND CMAKE_GENERATOR MATCHES "Ninja")
     endif()
 endif()
 
-project(Solstice VERSION 0.1.0 LANGUAGES C CXX)
+project(Solstice VERSION 1.0.0 LANGUAGES C CXX)
 
-option(SOLSTICE_BUILD_UTILITIES "Build LibUI, Sharpon, LevelEditor, and MovieMaker" ON)
+include("${CMAKE_SOURCE_DIR}/cmake/SolsticeBuildOptions.cmake")
+
+option(SOLSTICE_BUILD_UTILITIES "Build LibUI, Sharpon, LevelEditor, MovieMaker, and Refulgent" ON)
+option(SOLSTICE_PACKAGE_UTILITIES_POSTBUILD "After each utility build, run tools/package_executables.py (zip in build/packages)" OFF)
+if(SOLSTICE_PACKAGE_UTILITIES_POSTBUILD)
+    message(STATUS "Utility post-build packaging: ON (zips: ${SOLSTICE_PACKAGES_DIR}/*-<Config>.zip)")
+endif()
 
 # enable_language() can re-resolve CMAKE_AR / CMAKE_LINKER from PATH after the pre-project() hints
 # above, so llvm-mingw ar/ld can win again. Re-pin MSVC lib.exe / link.exe once MSVC is known.
@@ -108,13 +114,16 @@ endif()
 # ============================================================================
 # Dependencies via CPM (fetch at configure time; no manual 3rdparty clone)
 # ============================================================================
-# Prefer CPM_SOURCE_CACHE from the environment (CI or a persistent user cache).
-# Example (bash): export CPM_SOURCE_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/solstice/cpm"
-set(_solstice_cpm_source_cache "${CMAKE_SOURCE_DIR}/.cpm-cache")
-if(DEFINED ENV{CPM_SOURCE_CACHE} AND NOT "$ENV{CPM_SOURCE_CACHE}" STREQUAL "")
-    set(_solstice_cpm_source_cache "$ENV{CPM_SOURCE_CACHE}")
+# CPM source cache: do not set if already in Cache (e.g. -D, CMake preset). Otherwise:
+#   ENV{CPM_SOURCE_CACHE} (CI / shared user cache) else <source tree>/.cpm-cache
+# Example: export CPM_SOURCE_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/solstice/cpm"
+if(NOT CPM_SOURCE_CACHE)
+    if(DEFINED ENV{CPM_SOURCE_CACHE} AND NOT "$ENV{CPM_SOURCE_CACHE}" STREQUAL "")
+        set(CPM_SOURCE_CACHE "$ENV{CPM_SOURCE_CACHE}" CACHE PATH "CPM dependency source cache")
+    else()
+        set(CPM_SOURCE_CACHE "${CMAKE_SOURCE_DIR}/.cpm-cache" CACHE PATH "CPM dependency source cache")
+    endif()
 endif()
-set(CPM_SOURCE_CACHE "${_solstice_cpm_source_cache}" CACHE PATH "CPM dependency source cache (override with env CPM_SOURCE_CACHE or -DCPM_SOURCE_CACHE=)")
 include(${CMAKE_SOURCE_DIR}/cmake/CPM.cmake)
 
 # BGFX stack: fetch sources only; 3rdparty/cmake builds them
@@ -162,7 +171,11 @@ CPMAddPackage(NAME SDL_mixer GITHUB_REPOSITORY libsdl-org/SDL_mixer GIT_TAG prer
 )
 
 # Protobuf: required by GameNetworkingSockets for generated protocol code
+# GIT_SUBMODULES "" avoids cloning third_party/googletest/benchmark; not used with BUILD_TESTS OFF
+# and fixes configure when GitHub is unreachable for submodule URLs.
 CPMAddPackage(NAME protobuf GITHUB_REPOSITORY protocolbuffers/protobuf GIT_TAG v3.21.12
+    GIT_SHALLOW TRUE
+    GIT_SUBMODULES ""
     OPTIONS
         "protobuf_BUILD_TESTS OFF"
         "protobuf_BUILD_CONFORMANCE OFF"
@@ -311,11 +324,20 @@ endif()
 # LibSmf — Solstice Map Format (.smf) v1 I/O (SolsticeEngine V1 validate API; LibParallax uses shared wire codec)
 add_subdirectory(SDK/LibSmf)
 
+# LibNativeLoad — UTF-8 native module load (shared by Plugin + UtilityPluginHost)
+add_subdirectory(SDK/LibNativeLoad)
+
+# LibFileWatch — debounced polling file watcher for authoring tools
+add_subdirectory(SDK/LibFileWatch)
+
+# LibSettingsStore — shared JSON settings files for authoring tools
+add_subdirectory(SDK/LibSettingsStore)
+
 # FFmpeg (optional): libav for file video decode in source/Multimedia (FindFFmpeg from SDL3 cmake tree).
 option(SOLSTICE_WITH_FFMPEG "Build FFmpeg-backed video decode (Multimedia)" ON)
 set(SOLSTICE_HAVE_FFMPEG 0)
 if(SOLSTICE_WITH_FFMPEG)
-    list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/3rdparty/sdl3/cmake")
+    list(APPEND CMAKE_MODULE_PATH "${SDL3_SOURCE_DIR}/cmake")
     set(_SolsticePrevFFmpegComponents "${FFmpeg_FIND_COMPONENTS}")
     set(FFmpeg_FIND_COMPONENTS AVCODEC AVFORMAT AVUTIL SWSCALE)
     find_package(FFmpeg QUIET)
@@ -331,6 +353,12 @@ endif()
 
 # Engine source: per-directory static libs + SolsticeEngine SHARED (see source/CMakeLists.txt)
 add_subdirectory(source)
+
+# Optional: small tools (e.g. regenerate example/JhSmfProject for Jackhammer)
+option(SOLSTICE_BUILD_JH_SMF_DEMO_GEN "Build JhSmfProjectGen (Jackhammer demo folder)" OFF)
+if(SOLSTICE_BUILD_JH_SMF_DEMO_GEN)
+    add_subdirectory(tools)
+endif()
 
 # Link third-party libraries to the engine (PUBLIC so consumers inherit them)
 target_link_libraries(SolsticeEngine PUBLIC
@@ -353,6 +381,8 @@ target_link_libraries(SolsticeEngine PUBLIC
 # Outputs are listed explicitly so CMake only runs the step when a .sc / varying / shaderc / script
 # is newer than a produced .bin, or a .bin is missing (add_custom_target alone always ran every build).
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+include("${CMAKE_SOURCE_DIR}/cmake/PackageUtilities.cmake")
 
 file(GLOB SOLSTICE_SHADER_SC CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/source/Shaders/*.sc")
 file(GLOB SOLSTICE_SHADER_VARYING CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/source/Shaders/varying*.def.sc")
@@ -404,6 +434,18 @@ add_dependencies(SolsticeEngine CompileShaders)
 # Usage: copy_shaders_to_target(<target_name>)
 # Copies compiled shaders from source/Shaders/bin/ to <target>'s output directory/shaders/
 function(copy_shaders_to_target target_name)
+    # Ensure shader compilation runs before any target that consumes copied shader binaries.
+    if(TARGET CompileShaders)
+        add_dependencies(${target_name} CompileShaders)
+    endif()
+
+    # copy_directory fails if the source path does not exist; create it first.
+    add_custom_command(TARGET ${target_name} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+        ${CMAKE_SOURCE_DIR}/source/Shaders/bin
+        COMMENT "Ensuring source shader directory exists for ${target_name}"
+    )
+
     add_custom_command(TARGET ${target_name} POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
         $<TARGET_FILE_DIR:${target_name}>/shaders
@@ -436,12 +478,14 @@ if(SOLSTICE_BUILD_UTILITIES)
     add_subdirectory(utilities/LibUI)
     add_subdirectory(utilities/EditorEnginePreview)
     add_subdirectory(utilities/UtilityPluginHost)
+    add_subdirectory(utilities/LibEditorAudio)
     add_subdirectory(utilities/Sharpon)
     add_subdirectory(utilities/MovieMaker)
     add_subdirectory(utilities/LevelEditor)
+    add_subdirectory(utilities/Refulgent)
 
     add_custom_target(solstice_utilities COMMENT "Utilities (LibUI, editor tools, …)")
-    foreach(_su IN ITEMS LibUI EditorEnginePreview UtilityPluginHost Sharpon MovieMaker LevelEditor)
+    foreach(_su IN ITEMS LibUI EditorEnginePreview UtilityPluginHost LibEditorAudio Sharpon MovieMaker LevelEditor Refulgent)
         if(TARGET ${_su})
             add_dependencies(solstice_utilities ${_su})
         endif()

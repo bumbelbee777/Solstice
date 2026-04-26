@@ -6,6 +6,7 @@
 #include "../Material/Material.hxx"
 #include "../Physics/Lighting/LightSource.hxx"
 #include "../Arzachel/Seed.hxx"
+#include <Smf/SmfMap.hxx>
 #include <string>
 #include <vector>
 #include <memory>
@@ -47,6 +48,8 @@ struct MapData {
         int Priority{0};
         bool IsSpherical{false};
         bool Enabled{true};
+        std::string MusicPath;
+        std::string AmbiencePath;
     };
     std::vector<AcousticZoneData> AcousticZones;
     
@@ -72,6 +75,10 @@ public:
     // Version management
     static bool IsCompatibleVersion(const std::string& Version);
     static std::string GetCurrentVersion() { return "1.1"; }
+
+    /// Push SMF **gameplay** extras into engine state: ``AudioManager`` acoustic zones; authoring lights cached for render.
+    static void ApplyGameplayFromSmfMap(const Solstice::Smf::SmfMap& Map);
+    static const std::vector<Physics::LightSource>& GetAuthoringLightsFromLastSmfApply();
 };
 
 } // namespace Solstice::Arzachel

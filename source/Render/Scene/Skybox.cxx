@@ -10,8 +10,66 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <string>
+
+#include <bx/allocator.h>
+#include <bx/file.h>
+#include <bimg/decode.h>
 
 using QuantizedVertex = Solstice::Render::QuantizedVertex;
+
+namespace {
+
+bool LoadImageFileToRgba8(const std::string& path, std::vector<uint8_t>& rgba, uint32_t& outW, uint32_t& outH, std::string* errOut) {
+    static bx::DefaultAllocator s_Alloc;
+    bx::FileReader reader;
+    bx::Error berr;
+    if (!reader.open(bx::FilePath(path.c_str()), &berr)) {
+        if (errOut) {
+            *errOut = "Skybox: cannot open image: " + path;
+        }
+        return false;
+    }
+    const uint32_t size = static_cast<uint32_t>(reader.seek(0, bx::Whence::End));
+    reader.seek(0, bx::Whence::Begin);
+    std::vector<uint8_t> fileData(size);
+    reader.read(fileData.data(), static_cast<int32_t>(size), &berr);
+    reader.close();
+
+    bx::Error parseErr;
+    bimg::ImageContainer* container =
+        bimg::imageParse(&s_Alloc, fileData.data(), size, bimg::TextureFormat::RGBA8, &parseErr);
+    if (!container || !parseErr.isOk()) {
+        if (errOut) {
+            *errOut = "Skybox: cannot decode image: " + path;
+        }
+        return false;
+    }
+    outW = container->m_width;
+    outH = container->m_height;
+    rgba.resize(static_cast<size_t>(container->m_size));
+    std::memcpy(rgba.data(), container->m_data, rgba.size());
+    bimg::imageFree(container);
+    return true;
+}
+
+void BlitResizeRgbaNearest(const uint8_t* src, int sw, int sh, std::vector<uint8_t>& out, int dw, int dh) {
+    out.resize(static_cast<size_t>(dw) * static_cast<size_t>(dh) * 4u);
+    for (int y = 0; y < dh; ++y) {
+        const int sy = std::min(sh - 1, std::max(0, y * sh / std::max(dh, 1)));
+        for (int x = 0; x < dw; ++x) {
+            const int sx = std::min(sw - 1, std::max(0, x * sw / std::max(dw, 1)));
+            const size_t si = (static_cast<size_t>(sy) * static_cast<size_t>(sw) + static_cast<size_t>(sx)) * 4u;
+            const size_t di = (static_cast<size_t>(y) * static_cast<size_t>(dw) + static_cast<size_t>(x)) * 4u;
+            out[di + 0] = src[si + 0];
+            out[di + 1] = src[si + 1];
+            out[di + 2] = src[si + 2];
+            out[di + 3] = src[si + 3];
+        }
+    }
+}
+
+} // namespace
 
 namespace Solstice::Render {
 
@@ -88,6 +146,7 @@ void Skybox::Shutdown() {
     }
     m_SkyboxMesh.reset();
     m_Initialized = false;
+    m_ImageCubemapActive = false;
 }
 
 Math::Vec3 Skybox::GenerateSkyColor(const Math::Vec3& direction) {
@@ -305,7 +364,7 @@ void Skybox::SetPreset(SkyPreset preset) {
 }
 
 void Skybox::Regenerate() {
-    if (!m_Initialized) {
+    if (!m_Initialized || m_ImageCubemapActive) {
         return;
     }
 
@@ -333,6 +392,87 @@ void Skybox::Regenerate() {
     }
 
     SIMPLE_LOG("Skybox: Regenerated cubemap with new parameters");
+}
+
+bool Skybox::LoadImageCubemapFromFacePaths(const std::array<std::string, 6>& paths, float brightness, std::string* errOut) {
+    for (const std::string& p : paths) {
+        if (p.empty()) {
+            if (errOut) {
+                *errOut = "Skybox: empty face path in cubemap set";
+            }
+            return false;
+        }
+    }
+
+    std::array<std::vector<uint8_t>, 6> faceRgba{};
+    std::array<uint32_t, 6> faceW{};
+    std::array<uint32_t, 6> faceH{};
+    int minSide = 4096;
+    for (int i = 0; i < 6; ++i) {
+        std::string err;
+        if (!LoadImageFileToRgba8(paths[static_cast<size_t>(i)], faceRgba[static_cast<size_t>(i)], faceW[static_cast<size_t>(i)],
+                faceH[static_cast<size_t>(i)], &err)) {
+            if (errOut) {
+                *errOut = err;
+            }
+            return false;
+        }
+        const int s = static_cast<int>(std::min(faceW[static_cast<size_t>(i)], faceH[static_cast<size_t>(i)]));
+        minSide = std::min(minSide, s);
+    }
+    uint32_t faceSize = static_cast<uint32_t>(std::clamp(minSide, 64, 512));
+    const float br = std::max(0.0f, brightness);
+
+    std::array<std::vector<uint8_t>, 6> resized{};
+    for (int i = 0; i < 6; ++i) {
+        BlitResizeRgbaNearest(faceRgba[static_cast<size_t>(i)].data(), static_cast<int>(faceW[static_cast<size_t>(i)]),
+            static_cast<int>(faceH[static_cast<size_t>(i)]), resized[static_cast<size_t>(i)], static_cast<int>(faceSize),
+            static_cast<int>(faceSize));
+        for (size_t j = 0; j + 3 < resized[static_cast<size_t>(i)].size(); j += 4) {
+            resized[static_cast<size_t>(i)][j + 0] =
+                static_cast<uint8_t>(std::clamp(std::round(static_cast<float>(resized[static_cast<size_t>(i)][j + 0]) * br), 0.0f, 255.0f));
+            resized[static_cast<size_t>(i)][j + 1] =
+                static_cast<uint8_t>(std::clamp(std::round(static_cast<float>(resized[static_cast<size_t>(i)][j + 1]) * br), 0.0f, 255.0f));
+            resized[static_cast<size_t>(i)][j + 2] =
+                static_cast<uint8_t>(std::clamp(std::round(static_cast<float>(resized[static_cast<size_t>(i)][j + 2]) * br), 0.0f, 255.0f));
+        }
+    }
+
+    if (bgfx::isValid(m_CubemapTexture)) {
+        bgfx::destroy(m_CubemapTexture);
+        m_CubemapTexture = BGFX_INVALID_HANDLE;
+    }
+
+    m_CubemapTexture = bgfx::createTextureCube(static_cast<uint16_t>(faceSize), false, 1, bgfx::TextureFormat::RGBA8, BGFX_TEXTURE_NONE, nullptr);
+    if (!bgfx::isValid(m_CubemapTexture)) {
+        if (errOut) {
+            *errOut = "Skybox: bgfx::createTextureCube failed";
+        }
+        return false;
+    }
+
+    for (uint32_t face = 0; face < 6; face++) {
+        const bgfx::Memory* mem = bgfx::copy(resized[face].data(), static_cast<uint32_t>(resized[face].size()));
+        bgfx::updateTextureCube(m_CubemapTexture, 0, static_cast<uint8_t>(face), 0, 0, 0,
+            static_cast<uint16_t>(faceSize), static_cast<uint16_t>(faceSize), mem);
+    }
+
+    if (!m_SkyboxMesh) {
+        CreateSkyboxMesh();
+    }
+
+    m_Resolution = faceSize;
+    m_ImageCubemapActive = true;
+    m_Initialized = true;
+    SIMPLE_LOG("Skybox: Loaded image cubemap " + std::to_string(faceSize) + "px");
+    return true;
+}
+
+void Skybox::ClearImageCubemapAndRegenerateProcedural(uint32_t proceduralResolution) {
+    m_ImageCubemapActive = false;
+    m_AuthoringImageYawDegrees = 0.f;
+    m_AppliedAuthoringRevision = 0;
+    Initialize(proceduralResolution);
 }
 
 } // namespace Solstice::Render

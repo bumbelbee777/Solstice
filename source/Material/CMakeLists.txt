@@ -2,6 +2,7 @@
 set(SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
 add_library(Material STATIC
     Material.cxx
+    SmatBinary.cxx
 )
 target_include_directories(Material PUBLIC ${SOURCE_DIR})
 target_link_libraries(Material PUBLIC Core Math)

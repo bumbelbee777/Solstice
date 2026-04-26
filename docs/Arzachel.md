@@ -116,3 +116,7 @@ auto UnionMesh = Union(MeshA, MeshB);
 auto DiffMesh = Difference(MeshA, MeshB);
 auto IntersectMesh = Intersection(MeshA, MeshB);
 ```
+
+## Facial animation (expressions & visemes)
+
+TP1 **data-first** facial layer in `Solstice::Arzachel`: `Expression` / `ExpressionStack`, `VisemeSet::Standard()`, `EvaluateFacialAtTime` / `EvaluateFacialAtTimeToMaps` (named bone deltas + `MorphNameHash` weights), deterministic **`BlinkClosedAmount`** / **`SaccadeOffset`**, and **`TextLipSync`** (`BuildVisemeKeyframesFromEnglishText`). Parallax samples timeline channels `FacialMoodName` / `FacialMoodWeight` / `FacialVisemeId` / `FacialVisemeWeight` and fills **`SceneEvaluationResult::ActorFacialPoses`**. Rigs should use documented bone names (`jaw`, `lip_corner_L`, …) or rely on morph hashes until blend shapes are wired in the renderer.

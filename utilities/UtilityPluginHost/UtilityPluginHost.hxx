@@ -1,6 +1,6 @@
 #pragma once
 
-#include "DynamicLibrary.hxx"
+#include <Solstice/NativeLoad/DynamicLibrary.hxx>
 
 #include <cstddef>
 #include <cstdint>
@@ -10,6 +10,8 @@
 #include <vector>
 
 namespace Solstice::UtilityPluginHost {
+
+using DynamicLibrary = NativeLoad::DynamicLibrary;
 
 struct ModuleSummary {
     std::uint32_t Id{0};

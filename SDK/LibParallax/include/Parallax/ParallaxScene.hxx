@@ -41,6 +41,10 @@ struct KeyframeRecord {
     uint64_t TimeTicks{0};
     uint8_t Easing{0};
     uint8_t Flags{0};
+    uint8_t EaseOut{0xFF}; ///< 0xFF: incoming segment to *next* key uses next key’s `Easing` for parametric part.
+    uint8_t Interp{0}; ///< `KeyframeInterpolation` (hold / linear / bezier / eased).
+    float TangentIn{0.333f}; ///< Bezier: weight on value delta toward previous side (0..2 typical).
+    float TangentOut{0.333f}; ///< Bezier: weight toward next side. Ignored for non-Bezier and non-float.
     AttributeValue Value;
 };
 
@@ -145,6 +149,8 @@ private:
 };
 
 void RegisterBuiltinSchemas(ParallaxScene& scene);
+/// Merges missing attribute definitions from the current built-in table into schemas loaded from disk (v1.2+ fields on older .prlx).
+void MergeBuiltinSchemaAttributes(ParallaxScene& scene);
 
 bool SaveSceneToBytes(const ParallaxScene& scene, std::vector<std::byte>& out, bool compressWhole, ParallaxError* err);
 bool LoadSceneFromBytes(ParallaxScene& scene, std::span<const std::byte> data, ParallaxError* err = nullptr);
@@ -180,6 +186,14 @@ void AddKeyframe(ParallaxScene& scene, ChannelIndex channel, uint64_t timeTicks,
 
 void RemoveKeyframe(ParallaxScene& scene, ChannelIndex channel, uint64_t timeTicks);
 
+void SetKeyframeEasing(ParallaxScene& scene, ChannelIndex channel, uint64_t timeTicks, EasingType easing);
+
+void SetKeyframeEaseOut(ParallaxScene& scene, ChannelIndex channel, uint64_t timeTicks, uint8_t easeOutOr0xFF);
+
+void SetKeyframeInterpolation(ParallaxScene& scene, ChannelIndex channel, uint64_t timeTicks, KeyframeInterpolation mode);
+
+void SetKeyframeBezierTangents(ParallaxScene& scene, ChannelIndex channel, uint64_t timeTicks, float tangentOut, float tangentIn);
+
 MGIndex AddMGElement(ParallaxScene& scene, std::string_view schemaType, std::string_view name,
                      MGIndex parent = PARALLAX_INVALID_INDEX);
 
@@ -188,6 +202,16 @@ uint32_t AddMGTrack(ParallaxScene& scene, MGIndex element, std::string_view prop
 
 void AddMGKeyframe(ParallaxScene& scene, uint32_t trackIndex, uint64_t timeTicks, const AttributeValue& value,
                    EasingType easing);
+
+void RemoveMGKeyframe(ParallaxScene& scene, uint32_t trackIndex, uint64_t timeTicks);
+
+void SetMGKeyframeEasing(ParallaxScene& scene, uint32_t trackIndex, uint64_t timeTicks, EasingType easing);
+
+void SetMGKeyframeEaseOut(ParallaxScene& scene, uint32_t trackIndex, uint64_t timeTicks, uint8_t easeOutOr0xFF);
+
+void SetMGKeyframeInterpolation(ParallaxScene& scene, uint32_t trackIndex, uint64_t timeTicks, KeyframeInterpolation mode);
+
+void SetMGKeyframeBezierTangents(ParallaxScene& scene, uint32_t trackIndex, uint64_t timeTicks, float tangentOut, float tangentIn);
 
 void SetMGCompositeMode(ParallaxScene& scene, BlendMode mode);
 void SetMGGlobalAlpha(ParallaxScene& scene, float alpha);

@@ -9,7 +9,7 @@ target_link_libraries(Disco
 
 # Set output directory
 set_target_properties(Disco PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_EXECUTABLE_OUTPUT_DIR}"
 )
 
 # MSVC static analysis

@@ -14,7 +14,50 @@
 #include <reactphysics3d/collision/PolygonVertexArray.h>
 #include <reactphysics3d/collision/PolyhedronMesh.h>
 
+#include <cmath>
+
 namespace Solstice::Physics {
+
+namespace {
+
+constexpr float kSyncEps = 1e-5f;
+
+inline bool NearF(float a, float b) {
+    return std::fabs(a - b) < kSyncEps;
+}
+
+inline bool Vec3Near(const Math::Vec3& a, const Math::Vec3& b) {
+    return NearF(a.x, b.x) && NearF(a.y, b.y) && NearF(a.z, b.z);
+}
+
+inline bool QuatNear(const Math::Quaternion& a, const Math::Quaternion& b) {
+    const float d = std::fabs(a.w * b.w + a.x * b.x + a.y * b.y + a.z * b.z);
+    return d > 1.f - 1e-3f;
+}
+
+inline void WriteSyncCache(detail::Rp3dSyncCache& c, const RigidBody& rb) {
+    c.Pos = rb.Position;
+    c.Rot = rb.Rotation;
+    c.LinVel = rb.Velocity;
+    c.AngVel = rb.AngularVelocity;
+    c.Mass = rb.Mass;
+    c.Friction = rb.Friction;
+    c.Restitution = rb.Restitution;
+    c.LinDamp = rb.LinearDamping;
+    c.AngDamp = rb.AngularDrag;
+    c.GravScale = rb.GravityScale;
+    c.IsStatic = rb.IsStatic;
+    c.GravityOn = rb.GravityScale > 0.0f;
+}
+
+inline bool CacheMatches(const detail::Rp3dSyncCache& c, const RigidBody& rb) {
+    return Vec3Near(c.Pos, rb.Position) && QuatNear(c.Rot, rb.Rotation) && Vec3Near(c.LinVel, rb.Velocity)
+        && Vec3Near(c.AngVel, rb.AngularVelocity) && NearF(c.Mass, rb.Mass) && NearF(c.Friction, rb.Friction)
+        && NearF(c.Restitution, rb.Restitution) && NearF(c.LinDamp, rb.LinearDamping) && NearF(c.AngDamp, rb.AngularDrag)
+        && NearF(c.GravScale, rb.GravityScale) && c.IsStatic == rb.IsStatic && c.GravityOn == (rb.GravityScale > 0.0f);
+}
+
+} // namespace
 
 ReactPhysics3DBridge::ReactPhysics3DBridge() {
     m_PhysicsCommon = std::make_unique<reactphysics3d::PhysicsCommon>();
@@ -61,6 +104,7 @@ void ReactPhysics3DBridge::Shutdown() {
     m_EntityToBody.clear();
     m_BodyToEntity.clear();
     m_BodyToShape.clear();
+    m_SyncToCache.clear();
     m_Registry = nullptr;
 }
 
@@ -87,7 +131,7 @@ void ReactPhysics3DBridge::SyncToReactPhysics3D() {
         if (it == m_EntityToBody.end()) {
             CreateBody(entityId, rigidBody);
         } else {
-            UpdateBodyProperties(it->second, rigidBody);
+            UpdateBodyProperties(entityId, it->second, rigidBody);
         }
     });
 }
@@ -166,6 +210,10 @@ void ReactPhysics3DBridge::CreateBody(ECS::EntityId entityId, RigidBody& rigidBo
     // Store mappings
     m_EntityToBody[entityId] = rp3dBody;
     m_BodyToEntity[rp3dBody] = entityId;
+
+    detail::Rp3dSyncCache seed{};
+    WriteSyncCache(seed, rigidBody);
+    m_SyncToCache[entityId] = seed;
 }
 
 void ReactPhysics3DBridge::RemoveBody(ECS::EntityId entityId) {
@@ -212,6 +260,7 @@ void ReactPhysics3DBridge::RemoveBody(ECS::EntityId entityId) {
 
     m_EntityToBody.erase(it);
     m_BodyToEntity.erase(rp3dBody);
+    m_SyncToCache.erase(entityId);
 }
 
 reactphysics3d::Vector3 ReactPhysics3DBridge::ToRP3D(const Math::Vec3& v) {
@@ -343,53 +392,44 @@ reactphysics3d::CollisionShape* ReactPhysics3DBridge::CreateCollisionShape(const
     return nullptr;
 }
 
-void ReactPhysics3DBridge::UpdateBodyProperties(reactphysics3d::RigidBody* rp3dBody, const RigidBody& solsticeBody) {
-    if (!rp3dBody) return;
+void ReactPhysics3DBridge::UpdateBodyProperties(ECS::EntityId entityId, reactphysics3d::RigidBody* rp3dBody,
+    const RigidBody& solsticeBody) {
+    if (!rp3dBody) {
+        return;
+    }
 
-    // Update transform
-    reactphysics3d::Transform transform(
-        ToRP3D(solsticeBody.Position),
-        ToRP3D(solsticeBody.Rotation)
-    );
+    const auto cit = m_SyncToCache.find(entityId);
+    if (cit != m_SyncToCache.end() && CacheMatches(cit->second, solsticeBody)) {
+        return;
+    }
+
+    const bool needWake = !solsticeBody.IsStatic
+        && (cit == m_SyncToCache.end()
+            || !Vec3Near(cit->second.Pos, solsticeBody.Position) || !QuatNear(cit->second.Rot, solsticeBody.Rotation)
+            || !Vec3Near(cit->second.LinVel, solsticeBody.Velocity) || !Vec3Near(cit->second.AngVel, solsticeBody.AngularVelocity)
+            || cit->second.IsStatic != solsticeBody.IsStatic);
+
+    reactphysics3d::Transform transform(ToRP3D(solsticeBody.Position), ToRP3D(solsticeBody.Rotation));
     rp3dBody->setTransform(transform);
 
-    // Update velocities - CRITICAL: Always set velocity, even if zero
-    // This ensures ReactPhysics3D respects our velocity changes
     rp3dBody->setLinearVelocity(ToRP3D(solsticeBody.Velocity));
     rp3dBody->setAngularVelocity(ToRP3D(solsticeBody.AngularVelocity));
 
-    // For dynamic bodies, ensure velocity is actually applied
-    // ReactPhysics3D might ignore velocity changes if body is sleeping or if damping is too high
-    if (!solsticeBody.IsStatic && solsticeBody.Mass > 0.0f) {
-        // Wake up the body if it's sleeping (so velocity changes take effect)
-        rp3dBody->setIsSleeping(false);
-    }
-
-    // Update mass
     if (!solsticeBody.IsStatic && solsticeBody.Mass > 0.0f) {
         rp3dBody->setMass(static_cast<reactphysics3d::decimal>(solsticeBody.Mass));
     }
 
-    // Update body type
     if (solsticeBody.IsStatic) {
         rp3dBody->setType(reactphysics3d::BodyType::STATIC);
     } else {
         rp3dBody->setType(reactphysics3d::BodyType::DYNAMIC);
-        // For dynamic bodies, ensure they're awake and can move
-        rp3dBody->setIsSleeping(false);
     }
 
-    // Update damping
     rp3dBody->setLinearDamping(static_cast<reactphysics3d::decimal>(solsticeBody.LinearDamping));
     rp3dBody->setAngularDamping(static_cast<reactphysics3d::decimal>(solsticeBody.AngularDrag));
 
-    // Update gravity
     rp3dBody->enableGravity(solsticeBody.GravityScale > 0.0f);
 
-    // Update gravity
-    rp3dBody->enableGravity(solsticeBody.GravityScale > 0.0f);
-
-    // Update material properties (if collider exists)
     if (rp3dBody->getNbColliders() > 0) {
         reactphysics3d::Collider* collider = rp3dBody->getCollider(0);
         if (collider) {
@@ -398,6 +438,14 @@ void ReactPhysics3DBridge::UpdateBodyProperties(reactphysics3d::RigidBody* rp3dB
             material.setBounciness(solsticeBody.Restitution);
         }
     }
+
+    if (needWake) {
+        rp3dBody->setIsSleeping(false);
+    }
+
+    detail::Rp3dSyncCache updated{};
+    WriteSyncCache(updated, solsticeBody);
+    m_SyncToCache[entityId] = updated;
 }
 
 void ReactPhysics3DBridge::UpdateRigidBodyProperties(RigidBody& solsticeBody, reactphysics3d::RigidBody* rp3dBody) {
@@ -507,6 +555,9 @@ void ReactPhysics3DBridge::SetBodyTransform(ECS::EntityId entityId, const Math::
         solsticeBody->Rotation = rotation;
         solsticeBody->Velocity = Math::Vec3(0, 0, 0);
         solsticeBody->AngularVelocity = Math::Vec3(0, 0, 0);
+        detail::Rp3dSyncCache c{};
+        WriteSyncCache(c, *solsticeBody);
+        m_SyncToCache[entityId] = c;
     }
 }
 

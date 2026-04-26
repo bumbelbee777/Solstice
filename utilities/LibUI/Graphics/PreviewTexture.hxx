@@ -7,7 +7,7 @@
 
 struct SDL_Window;
 
-namespace Solstice::MovieMaker {
+namespace LibUI::Graphics {
 
 /// OpenGL 2D RGBA texture for ImGui; resizes/reuploads as needed.
 struct PreviewTextureRgba {
@@ -17,10 +17,11 @@ struct PreviewTextureRgba {
 
     void Destroy();
     /// Ensures texture exists and matches dimensions; uploads RGBA8 row-major (top-down to match raster).
-    void SetSizeUpload(SDL_Window* window, uint32_t w, uint32_t h, const std::byte* rgbaTopDown, size_t byteCount);
+    /// Returns false on bad arguments, oversize allocation, or upload failure (see stderr / GL flush).
+    bool SetSizeUpload(SDL_Window* window, uint32_t w, uint32_t h, const std::byte* rgbaTopDown, size_t byteCount);
 
     ImTextureID ImGuiTexId() const { return static_cast<ImTextureID>(glTexture); }
     bool Valid() const { return glTexture != 0 && width > 0 && height > 0; }
 };
 
-} // namespace Solstice::MovieMaker
+} // namespace LibUI::Graphics

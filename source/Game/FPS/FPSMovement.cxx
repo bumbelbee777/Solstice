@@ -301,22 +301,6 @@ void FPSMovementSystem::UpdateMovement(ECS::Registry& Registry, ECS::EntityId En
         }
     }
 
-    // DEBUG: Force movement if input detected (temporary test)
-    if (Movement.MoveDirection.Magnitude() > 0.01f && wishDir.Magnitude() < 0.01f) {
-        // Emergency fallback - just move in input direction
-        wishDir = Math::Vec3(Movement.MoveDirection.x, 0, Movement.MoveDirection.z);
-        float mag = wishDir.Magnitude();
-        if (mag > 0.01f) {
-            wishDir = wishDir / mag;
-        } else {
-            wishDir = Math::Vec3(0, 0, 1);
-        }
-    }
-
-    // DEBUG: Force ground movement if we have input (temporary test)
-    // This ensures movement works even if ground detection fails
-    bool forceGroundMovement = (Movement.MoveDirection.Magnitude() > 0.01f && wishDir.Magnitude() > 0.01f);
-
     // Apply snow sinking effect if snow system is available
     if (SnowSys != nullptr && Movement.EnableSnowMovement && Movement.IsGrounded) {
         float horizontalSpeed = Math::Vec3(rb.Velocity.x, 0, rb.Velocity.z).Magnitude();
@@ -326,7 +310,7 @@ void FPSMovementSystem::UpdateMovement(ECS::Registry& Registry, ECS::EntityId En
         // We'll apply this after physics, so just store it for now
     }
 
-    if (Movement.IsGrounded || forceGroundMovement) {
+    if (Movement.IsGrounded) {
         ApplyGroundMovement(rb, Movement, wishDir, DeltaTime, SnowSys);
     } else {
         ApplyAirMovement(rb, Movement, wishDir, forward, right, DeltaTime);
@@ -360,10 +344,13 @@ void FPSMovementSystem::ApplyGroundMovement(Physics::RigidBody& RB, FPSMovement&
         // Let acceleration work naturally - don't force minimum velocity
         // The acceleration will build up speed over time
 
-        // Clamp to max ground speed (snow resistance will further reduce this)
+        // Clamp to max ground speed; sprinting raises the cap through the controller multiplier.
+        const float maxGroundSpeed = Movement.IsSprinting
+            ? Movement.MaxGroundSpeed * Movement.SprintMultiplier
+            : Movement.MaxGroundSpeed;
         float speed = horizontalVel.Magnitude();
-        if (speed > Movement.MaxGroundSpeed) {
-            horizontalVel = horizontalVel.Normalized() * Movement.MaxGroundSpeed;
+        if (speed > maxGroundSpeed) {
+            horizontalVel = horizontalVel.Normalized() * maxGroundSpeed;
         }
     } else {
         // Apply friction when no input - use effective friction (snow increases it)

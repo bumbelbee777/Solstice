@@ -1,4 +1,4 @@
-#include "DynamicLibrary.hxx"
+#include <Solstice/NativeLoad/DynamicLibrary.hxx>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -17,7 +17,7 @@
 #include <vector>
 #endif
 
-namespace Solstice::UtilityPluginHost {
+namespace Solstice::NativeLoad {
 
 #if defined(_WIN32)
 static std::wstring Utf8ToWide(const std::string& utf8) {
@@ -119,4 +119,4 @@ void* DynamicLibrary::GetSymbol(const char* symbolName) const {
 #endif
 }
 
-} // namespace Solstice::UtilityPluginHost
+} // namespace Solstice::NativeLoad

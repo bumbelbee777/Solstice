@@ -73,6 +73,11 @@ inline uint8_t GetStreamingPriority(uint16_t flags) {
     return static_cast<uint8_t>((flags & FlagStreamingPriorityMask) >> FlagStreamingPriorityShift);
 }
 
+inline uint16_t WithCompression(CompressionType c, uint16_t baseFlags = FlagNone) {
+    return static_cast<uint16_t>((baseFlags & ~FlagCompressionMask) |
+        (static_cast<uint16_t>(c) << 2));
+}
+
 // 64-bit asset hash (primary key)
 using AssetHash = uint64_t;
 
@@ -90,6 +95,8 @@ struct RelicFileHeader {
     uint64_t DependencyTableOffset;
     uint64_t DependencyTableSize;
     uint64_t DataBlobOffset;
+    uint64_t PathTableOffset; // 0 if absent (or legacy header without these fields)
+    uint64_t PathTableSize;
 };
 #pragma pack(pop)
 
@@ -108,7 +115,7 @@ struct RelicManifestEntry {
 #pragma pack(pop)
 
 static_assert(sizeof(RelicManifestEntry) <= 48, "Manifest entry must be <= 48 bytes");
-static_assert(sizeof(RelicFileHeader) >= 52, "Header size for alignment");
+static_assert(sizeof(RelicFileHeader) == 68, "RELIC v1 extended header size");
 
 // Bootstrap entry: one RELIC file to load
 struct BootstrapEntry {

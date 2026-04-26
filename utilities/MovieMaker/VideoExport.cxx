@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 #include <span>
 #include <unordered_map>
 #include <vector>
@@ -131,6 +132,10 @@ static ImTextureID TextureForHash(uint64_t hash, Solstice::Parallax::DevSessionA
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, decoded.data());
     glBindTexture(GL_TEXTURE_2D, 0);
+    constexpr size_t kMaxVideoTexCache = 128;
+    if (cache.size() >= kMaxVideoTexCache) {
+        ReleaseTextureCache(cache);
+    }
     cache[hash] = tex;
     return static_cast<ImTextureID>(tex);
 }
@@ -142,11 +147,42 @@ static void ReleaseTextureCache(std::unordered_map<uint64_t, GLuint>& cache) {
     cache.clear();
 }
 
+static std::string TrimOuterQuotesAndWhitespace(std::string s) {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r' || s.front() == '\n')) {
+        s.erase(s.begin());
+    }
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r' || s.back() == '\n')) {
+        s.pop_back();
+    }
+    if (s.size() >= 2 && ((s.front() == '"' && s.back() == '"') || (s.front() == '\'' && s.back() == '\''))) {
+        s = s.substr(1, s.size() - 2);
+    }
+    return s;
+}
+
 static FILE* OpenFfmpegPipe(const std::string& ffmpegExe, const VideoExportParams& params, std::string& err) {
     const uint32_t w = params.width;
     const uint32_t h = params.height;
     const uint32_t fps = std::max(1u, params.fps);
-    std::string out = params.outputPath;
+    std::string exe = TrimOuterQuotesAndWhitespace(ffmpegExe);
+    std::string out = TrimOuterQuotesAndWhitespace(params.outputPath);
+    if (exe.empty()) {
+        err = "ffmpeg executable path is empty.";
+        return nullptr;
+    }
+    if (out.empty()) {
+        err = "Video output path is empty.";
+        return nullptr;
+    }
+    try {
+        const std::filesystem::path parent = std::filesystem::path(out).parent_path();
+        if (!parent.empty()) {
+            std::filesystem::create_directories(parent);
+        }
+    } catch (const std::exception& e) {
+        err = std::string("Failed to create video output directory: ") + e.what();
+        return nullptr;
+    }
     for (char& c : out) {
         if (c == '\\') {
             c = '/';
@@ -162,7 +198,7 @@ static FILE* OpenFfmpegPipe(const std::string& ffmpegExe, const VideoExportParam
     args += out;
     args += "\"";
 
-    std::string cmd = "\"" + ffmpegExe + "\" " + args;
+    std::string cmd = "\"" + exe + "\" " + args;
 #ifdef _WIN32
     FILE* pipe = _popen(cmd.c_str(), "wb");
 #else

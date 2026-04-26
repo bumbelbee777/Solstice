@@ -284,6 +284,17 @@ void PhysicsSystem::Update(float dt) {
     // 2. Integrate velocity (fluid drag/buoyancy sample the fluid fields stepped above)
     IntegrateVelocity(stepDt);
 
+    // 2.5: Snapshot dynamic poses for render interpolation (fixed substep start vs end of this step)
+    m_Registry->ForEach<RigidBody>([&](ECS::EntityId, RigidBody& rb) {
+        if (rb.IsStatic) {
+            rb.HasRenderInterpolationSnapshot = false;
+            return;
+        }
+        rb.RenderInterpFromPos = rb.Position;
+        rb.RenderInterpFromRot = rb.Rotation;
+        rb.HasRenderInterpolationSnapshot = true;
+    });
+
     // 3. Update ReactPhysics3D physics world (handles collision detection and dynamics)
     {
         PROFILE_SCOPE("Physics.BridgeUpdate");

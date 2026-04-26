@@ -5,12 +5,15 @@
 #include <Render/Assets/ShaderLoader.hxx>
 #include <Math/Vector.hxx>
 #include <Core/Debug/Debug.hxx>
+#include <Core/Profiling/ScopeTimer.hxx>
 #include <Core/ML/SIMD.hxx>
 #include <Solstice.hxx>
 #include <UI/Core/UISystem.hxx>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
+#include <cstdio>
 #include <chrono>
 #include <cstdarg>
 #include <stdexcept>
@@ -40,6 +43,47 @@ std::vector<std::byte> g_FrameCaptureRgba;
 int g_FrameCaptureW = 0;
 int g_FrameCaptureH = 0;
 std::atomic<bool> g_FrameCaptureReady{false};
+
+/// Win32: match `GetEnvironmentVariableA` (same as LibUI DiagLog) so PowerShell-set vars are visible.
+bool PreviewEnvTruthy(const char* name) {
+#if defined(_WIN32)
+    char buf[16]{};
+    const DWORD n = GetEnvironmentVariableA(name, buf, static_cast<DWORD>(sizeof(buf)));
+    if (n == 0) {
+        return false;
+    }
+    if (n >= sizeof(buf)) {
+        return true;
+    }
+    if (buf[0] == '\0' || (buf[0] == '0' && buf[1] == '\0')) {
+        return false;
+    }
+    return true;
+#else
+    const char* s = std::getenv(name);
+    return s && s[0] != '\0' && s[0] != '0';
+#endif
+}
+
+} // namespace
+
+namespace {
+
+/// When `enable` is true, invokes RendererPreFrame in ctor and RendererPostFrame in dtor (same as prior nested struct).
+struct RendererFrameHooksRaii {
+    bool on;
+    explicit RendererFrameHooksRaii(bool enable) : on(enable) {
+        if (on) {
+            Solstice::Plugin::SubsystemHooks::Instance().Invoke(Solstice::Plugin::SubsystemHookKind::RendererPreFrame, 0.f);
+        }
+    }
+    ~RendererFrameHooksRaii() {
+        if (on) {
+            Solstice::Plugin::SubsystemHooks::Instance().Invoke(Solstice::Plugin::SubsystemHookKind::RendererPostFrame, 0.f);
+        }
+    }
+};
+
 } // namespace
 
 // Implement BGFX callback methods
@@ -60,11 +104,21 @@ void BgfxCallback::traceVargs(const char* _filePath, uint16_t _line, const char*
 void BgfxCallback::screenShot(const char* _filePath, uint32_t _width, uint32_t _height, uint32_t _pitch,
     bgfx::TextureFormat::Enum _format, const void* _data, uint32_t _size, bool _yflip) {
     (void)_filePath;
-    (void)_size;
     if (!_data || _width == 0 || _height == 0 || _pitch == 0) {
         return;
     }
     if (_format != bgfx::TextureFormat::BGRA8 && _format != bgfx::TextureFormat::RGBA8) {
+        return;
+    }
+    constexpr uint32_t kBpp = 4u;
+    if (_pitch < _width * kBpp) {
+        SIMPLE_LOG("screenShot: rejecting capture (pitch < width*bpp) — possible bad D3D11 readback");
+        return;
+    }
+    const uint64_t lastRow = _height > 1u ? static_cast<uint64_t>(_pitch) * static_cast<uint64_t>(_height - 1u) : 0u;
+    const uint64_t needBytes = lastRow + static_cast<uint64_t>(_width) * kBpp;
+    if (needBytes > static_cast<uint64_t>(_size)) {
+        SIMPLE_LOG("screenShot: rejecting capture (buffer _size too small for pitch*height) — possible bad D3D11 readback");
         return;
     }
     std::lock_guard<std::mutex> lock(g_FrameCaptureMutex);
@@ -108,13 +162,24 @@ bool SoftwareRenderer::TryGetLastFramebufferCaptureRGBA8(std::vector<std::byte>&
     return !outRgbaTopDown.empty();
 }
 
-SoftwareRenderer::SoftwareRenderer(int Width, int Height, int TileSize, SDL_Window* Window)
+uint32_t SoftwareRenderer::BgfxBackbufferResetFlags(uint32_t) const {
+    // Main 3D uses an offscreen HDR target; swapchain MSAA is redundant. UI draws after post.
+    uint32_t flags = 0u;
+    if (m_VSyncEnabled) {
+        flags |= BGFX_RESET_VSYNC;
+    }
+    return flags;
+}
+
+SoftwareRenderer::SoftwareRenderer(int Width, int Height, int TileSize, SDL_Window* Window, bool enableCpuRaytracing,
+    bool disableBackbufferMsaa)
     : m_Width(Width)
     , m_Height(Height)
     , m_DepthTestEnabled(true)
     , m_MeshLibrary(nullptr)
     , m_MaterialLibrary(nullptr)
     , m_FrameAllocator(16 * 1024 * 1024) // 16MB per-frame allocator
+    , m_DisableBackbufferMsaa(disableBackbufferMsaa)
 {
     s_RendererInstanceCount++;
     SIMPLE_LOG("SoftwareRenderer: Initializing CPU rasterizer (Instance #" + std::to_string(s_RendererInstanceCount.load()) + ")...");
@@ -134,6 +199,11 @@ SoftwareRenderer::SoftwareRenderer(int Width, int Height, int TileSize, SDL_Wind
     // Initialize Post Processing
     m_PostProcessing = std::make_unique<PostProcessing>();
     m_PostProcessing->Initialize(Width, Height);
+    if (m_DisableBackbufferMsaa) {
+        PostProcessing::TAASettings taa{};
+        taa.Enabled = false;
+        m_PostProcessing->SetTAASettings(taa);
+    }
 
     // Initialize helper renderers (after PostProcessing and shaders are loaded)
     // Shaders are loaded in InitializeBGFX, which was called above
@@ -151,6 +221,14 @@ SoftwareRenderer::SoftwareRenderer(int Width, int Height, int TileSize, SDL_Wind
         if (bgfx::isValid(m_CubeProgram)) {
             m_SceneRenderer->Initialize(m_CubeProgram, m_CubeLayout, m_PostProcessing.get(),
                                         &m_TextureRegistry, m_Skybox, m_SkyboxProgram, m_Width, m_Height);
+            if (m_DisableBackbufferMsaa) {
+                m_PostProcessing->SetSceneMsaaSamples(1);
+                m_SceneRenderer->SetVelocityPassEnabled(false);
+                m_SceneRenderer->SetSceneRasterMsaa(false);
+                m_SceneRenderer->SetProjectionJitterEnabled(false);
+            } else {
+                ApplyScenePassMsaaToSceneRenderer();
+            }
             SIMPLE_LOG("SoftwareRenderer: Initialized SceneRenderer");
         } else {
             SIMPLE_LOG("WARNING: Cube program invalid, SceneRenderer not initialized");
@@ -159,19 +237,31 @@ SoftwareRenderer::SoftwareRenderer(int Width, int Height, int TileSize, SDL_Wind
         SIMPLE_LOG("ERROR: PostProcessing not initialized, cannot initialize helper renderers");
     }
 
-    // Initialize Raytracing for advanced lighting
-    m_Raytracing = std::make_unique<Raytracing>();
-    Math::Vec3 worldMin(-100.0f, -100.0f, -100.0f);
-    Math::Vec3 worldMax(100.0f, 100.0f, 100.0f);
-    m_Raytracing->Initialize(Width, Height, worldMin, worldMax);
-    SIMPLE_LOG("SoftwareRenderer: Initialized raytracing system");
+    if (enableCpuRaytracing) {
+        m_Raytracing = std::make_unique<Raytracing>();
+        Math::Vec3 worldMin(-100.0f, -100.0f, -100.0f);
+        Math::Vec3 worldMax(100.0f, 100.0f, 100.0f);
+        m_Raytracing->Initialize(Width, Height, worldMin, worldMax);
+        SIMPLE_LOG("SoftwareRenderer: Initialized raytracing system");
+    } else {
+        SIMPLE_LOG("SoftwareRenderer: CPU raytracing disabled (offscreen/preview build)");
+    }
 }
 
 SoftwareRenderer::~SoftwareRenderer() {
-    // Shutdown raytracing
+    WaitForJobs();
+
+    // Shutdown raytracing (BGFX textures/uniforms)
     if (m_Raytracing) {
         m_Raytracing->Shutdown();
     }
+
+    // `bgfx::shutdown()` runs in this destructor body below. Subobject destructors run
+    // after the body, so without an explicit reset, ~SceneRenderer / ~PostProcessing would
+    // call `bgfx::destroy` after shutdown. Release these while BGFX is still initialized.
+    m_SceneRenderer.reset();
+    m_ShadowRenderer.reset();
+    m_PostProcessing.reset();
 
     // Clean up shader programs
     if (bgfx::isValid(m_SkyboxProgram)) {
@@ -319,7 +409,7 @@ void SoftwareRenderer::InitializeBGFX(SDL_Window* Window) {
     } else {
         // BGFX already initialized, just reset the resolution
         SIMPLE_LOG("BGFX already initialized, resetting resolution...");
-        bgfx::reset(m_Width, m_Height, BGFX_RESET_MSAA_X16); // No VSync by default
+        bgfx::reset(m_Width, m_Height, BgfxBackbufferResetFlags(0));
     }
 
     bgfx::setDebug(m_ShowDebugOverlay ? BGFX_DEBUG_TEXT : 0);
@@ -433,22 +523,16 @@ void SoftwareRenderer::Resize(int NewWidth, int NewHeight) {
     // Reallocate framebuffers
     AllocateFramebuffers();
 
-    // Update BGFX (preserve MSAA)
-    uint32_t resetFlags = BGFX_RESET_MSAA_X4;
-    if (m_VSyncEnabled) {
-        resetFlags |= BGFX_RESET_VSYNC;
-    }
-    bgfx::reset(m_Width, m_Height, resetFlags);
+    bgfx::reset(m_Width, m_Height, BgfxBackbufferResetFlags(0));
 
     // Resize PostProcessing buffers
     if (m_PostProcessing) {
         m_PostProcessing->Resize(m_Width, m_Height);
     }
 
-    // Update SceneRenderer with new dimensions
+    // SceneRenderer: only bump dimensions — do not re-run Initialize (reloads velocity shaders + createProgram every time; fragile on D3D11/Intel).
     if (m_SceneRenderer) {
-        m_SceneRenderer->Initialize(m_CubeProgram, m_CubeLayout, m_PostProcessing.get(),
-                                    &m_TextureRegistry, m_Skybox, m_SkyboxProgram, m_Width, m_Height);
+        m_SceneRenderer->SetFramebufferSize(static_cast<uint32_t>(m_Width), static_cast<uint32_t>(m_Height));
     }
 
     // Resize raytracing system
@@ -470,13 +554,26 @@ void SoftwareRenderer::SetVSync(bool Enable) {
     if (m_VSyncEnabled == Enable) return;
     m_VSyncEnabled = Enable;
 
-    uint32_t flags = BGFX_RESET_MSAA_X4; // Default MSAA
-    if (m_VSyncEnabled) {
-        flags |= BGFX_RESET_VSYNC;
-    }
-
-    bgfx::reset(m_Width, m_Height, flags);
+    bgfx::reset(m_Width, m_Height, BgfxBackbufferResetFlags(0));
     SIMPLE_LOG("VSync " + std::string(Enable ? "Enabled" : "Disabled"));
+}
+
+void SoftwareRenderer::ApplyScenePassMsaaToSceneRenderer() {
+    if (!m_SceneRenderer || !m_PostProcessing) {
+        return;
+    }
+    if (m_DisableBackbufferMsaa) {
+        m_SceneRenderer->SetSceneRasterMsaa(false);
+        return;
+    }
+    m_SceneRenderer->SetSceneRasterMsaa(m_PostProcessing->GetSceneMsaaSamples() > 1);
+}
+
+void SoftwareRenderer::SetSceneMsaaSamples(uint8_t samples) {
+    if (m_PostProcessing) {
+        m_PostProcessing->SetSceneMsaaSamples(samples);
+    }
+    ApplyScenePassMsaaToSceneRenderer();
 }
 
 void SoftwareRenderer::UploadFramebufferToGPU() {
@@ -530,13 +627,14 @@ void SoftwareRenderer::Present() {
 
 void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam) {
     if (!m_Initialized) return;
-    Solstice::Plugin::SubsystemHooks::Instance().Invoke(Solstice::Plugin::SubsystemHookKind::RendererPreFrame, 0.f);
-    struct RendererPostFrameHooks {
-        ~RendererPostFrameHooks() {
-            Solstice::Plugin::SubsystemHooks::Instance().Invoke(
-                Solstice::Plugin::SubsystemHookKind::RendererPostFrame, 0.f);
-        }
-    } rendererPostFrameHooks;
+
+    // Offscreen LevelEditor preview: optional skip flags for debugging (SOLSTICE_PREVIEW_SKIP_*).
+    const bool bisectPreview = m_DisableBackbufferMsaa;
+    const bool skipShadowPass = bisectPreview && PreviewEnvTruthy("SOLSTICE_PREVIEW_SKIP_SHADOW");
+    const bool skipScenePass = bisectPreview && PreviewEnvTruthy("SOLSTICE_PREVIEW_SKIP_SCENE");
+    const bool skipApplyPass = bisectPreview && PreviewEnvTruthy("SOLSTICE_PREVIEW_SKIP_APPLY");
+
+    RendererFrameHooksRaii rendererHooks(!bisectPreview);
     auto t0 = std::chrono::high_resolution_clock::now();
 
     // Optional: sync physics to scene before building view/culling
@@ -563,7 +661,7 @@ void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam) {
     }
 
     // Render shadow map using ShadowRenderer
-    if (m_ShadowRenderer) {
+    if (m_ShadowRenderer && !skipShadowPass) {
         m_ShadowRenderer->RenderShadowMap(SceneGraph, Cam, m_MeshLibrary,
                                          m_OptimizeStaticBuffers, m_Stats.VisibleObjects);
     }
@@ -572,7 +670,7 @@ void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam) {
     // Render scene using SceneRenderer
     // If lights weren't set via RenderScene(..., Lights), SceneRenderer will use fallback
     uint32_t TotalTriangles = 0;
-    if (m_SceneRenderer) {
+    if (m_SceneRenderer && !skipScenePass) {
         m_SceneRenderer->SetWireframe(m_WireframeEnabled);
     m_SceneRenderer->SetSelectedObjects(m_SelectedObjects);
     m_SceneRenderer->SetHoveredObject(m_HoveredObject);
@@ -614,23 +712,25 @@ void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam) {
 
     // --- POST PROCESS PASS ---
     m_PostProcessing->EndScenePass();
-    m_PostProcessing->Apply(0); // Blit to backbuffer (View 0)
+    if (!skipApplyPass) {
+        m_PostProcessing->Apply(0); // Blit to backbuffer (View 0)
+    }
     auto t1 = std::chrono::high_resolution_clock::now();
     m_Stats.TotalTimeMs = std::chrono::duration<float, std::milli>(t1 - t0).count();
 
-    // UI needs to be drawn AFTER PostProcess (View 0).
-    // Need to set view order.
-    // Default is 0, 1, 2...
-    // We want 1->3(velocity)->2->0->5(world UI)->255 (ImGui)
-    bgfx::ViewId viewOrder[] = {
-        PostProcessing::VIEW_SHADOW,
-        PostProcessing::VIEW_VELOCITY,
-        PostProcessing::VIEW_SCENE,
-        0,
-        SoftwareRenderer::VIEW_WORLD_UI,
-        Solstice::UI::UISystem::Instance().GetViewId()
-    };
-    bgfx::setViewOrder(0, 6, viewOrder);
+    // UI / game: reorder views for correct composition. LevelEditor's bgfx instance has no bgfx-driven ImGui —
+    // skip setViewOrder for offscreen preview; some D3D11 drivers fault on custom remap + hidden swapchains.
+    if (!m_DisableBackbufferMsaa) {
+        bgfx::ViewId viewOrder[] = {
+            PostProcessing::VIEW_SHADOW,
+            PostProcessing::VIEW_VELOCITY,
+            PostProcessing::VIEW_SCENE,
+            0,
+            SoftwareRenderer::VIEW_WORLD_UI,
+            Solstice::UI::UISystem::Instance().GetViewId()
+        };
+        bgfx::setViewOrder(0, 6, viewOrder);
+    }
 
     // Simple UI crosshair overlay submitted on view 3 (UI)
     // DISABLED: HUD has its own crosshair
@@ -1050,10 +1150,23 @@ void SoftwareRenderer::SetHoveredObject(SceneObjectID objectID) {
 
 void SoftwareRenderer::SetSkybox(Skybox* skybox) {
     m_Skybox = skybox;
-    // Update SceneRenderer with the new skybox
-    if (m_SceneRenderer && m_PostProcessing && bgfx::isValid(m_CubeProgram)) {
-        m_SceneRenderer->Initialize(m_CubeProgram, m_CubeLayout, m_PostProcessing.get(),
-                                    &m_TextureRegistry, m_Skybox, m_SkyboxProgram, m_Width, m_Height);
+    if (!m_SceneRenderer || !m_PostProcessing || !bgfx::isValid(m_CubeProgram)) {
+        return;
+    }
+    // After the first Initialize (constructor), only update the skybox pointer so cubemap refreshes do not
+    // destroy/recreate the velocity program and shared uniforms.
+    if (bgfx::isValid(m_SceneRenderer->GetSceneProgram())) {
+        m_SceneRenderer->SetSkybox(m_Skybox);
+        return;
+    }
+    m_SceneRenderer->Initialize(m_CubeProgram, m_CubeLayout, m_PostProcessing.get(),
+                                &m_TextureRegistry, m_Skybox, m_SkyboxProgram, m_Width, m_Height);
+    if (m_DisableBackbufferMsaa) {
+        m_SceneRenderer->SetVelocityPassEnabled(false);
+        m_SceneRenderer->SetSceneRasterMsaa(false);
+        m_SceneRenderer->SetProjectionJitterEnabled(false);
+    } else {
+        ApplyScenePassMsaaToSceneRenderer();
     }
 }
 
@@ -1098,13 +1211,29 @@ void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam, const s
 
     // Update raytracing asynchronously for better lighting
     if (m_Raytracing) {
-        // Build/update voxel grid periodically (every 60 frames)
-        static int frameCount = 0;
-        if (frameCount % 60 == 0) {
-            m_Raytracing->BuildVoxelGrid(SceneGraph);
-            m_Raytracing->UpdateReflectionProbe(SceneGraph, Cam.GetPosition());
+        PROFILE_SCOPE("SoftwareRenderer.Raytracing");
+
+        const uint32_t objCount = static_cast<uint32_t>(SceneGraph.GetObjectCount());
+        const Math::Vec3 camPos = Cam.GetPosition();
+        ++m_RaytraceFrameCounter;
+
+        bool camMoved = false;
+        if (!m_RaytraceCamInitialized) {
+            m_RaytraceCamInitialized = true;
+            camMoved = true;
+        } else {
+            const Math::Vec3 d = camPos - m_LastRaytraceCamPos;
+            camMoved = d.Dot(d) > 0.25f; // 0.5 m threshold
         }
-        frameCount++;
+        const bool countChanged = objCount != m_LastRaytraceObjectCount;
+        const bool periodicRebuild = (m_RaytraceFrameCounter % 120u) == 0u;
+
+        if (periodicRebuild || camMoved || countChanged) {
+            m_Raytracing->BuildVoxelGrid(SceneGraph);
+            m_Raytracing->UpdateReflectionProbe(SceneGraph, camPos);
+            m_LastRaytraceCamPos = camPos;
+            m_LastRaytraceObjectCount = objCount;
+        }
 
         // Use provided lights, or fallback to default sun light
         std::vector<Physics::LightSource> lightsToUse = Lights;
@@ -1120,9 +1249,9 @@ void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam, const s
             lightsToUse.push_back(sunLight);
         }
 
-        // Update raytracing asynchronously (non-blocking)
+        // Submit raytracing work on the job thread, then wait before using textures on this thread (avoids bgfx / buffer races).
         m_Raytracing->UpdateAsync(lightsToUse, SceneGraph);
-        m_Raytracing->UpdateAsync(); // Clean up completed jobs
+        m_Raytracing->WaitForPendingAsyncJobs();
         m_Raytracing->UpdateUniforms();
 
         // Pass raytracing textures to post-processing

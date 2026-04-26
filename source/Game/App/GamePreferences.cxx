@@ -2,6 +2,7 @@
 #include "../../Core/Debug/Debug.hxx"
 #include "../../Core/Audio/Audio.hxx"
 #include "../../UI/Core/UISystem.hxx"
+#include <Render/SoftwareRenderer.hxx>
 #include <imgui.h>
 #include <fstream>
 #include <sstream>
@@ -67,9 +68,20 @@ void GamePreferences::ResetToDefaults() {
 }
 
 void GamePreferences::ApplyGraphicsSettings() {
-    // Apply graphics settings to renderer
-    // This would integrate with the renderer system
-    SIMPLE_LOG("GamePreferences: Applying graphics settings");
+    SIMPLE_LOG("GamePreferences: Applying graphics settings (use SyncRenderer when a renderer is available)");
+}
+
+void GamePreferences::SyncRenderer(Solstice::Render::SoftwareRenderer& renderer) {
+    uint8_t samples = 1;
+    if (m_GraphicsSettings.MSAA >= 8) {
+        samples = 8;
+    } else if (m_GraphicsSettings.MSAA >= 4) {
+        samples = 4;
+    } else if (m_GraphicsSettings.MSAA >= 2) {
+        samples = 2;
+    }
+    renderer.SetSceneMsaaSamples(samples);
+    renderer.SetVSync(m_GraphicsSettings.VSync);
 }
 
 void GamePreferences::ApplyAudioSettings() {

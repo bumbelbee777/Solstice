@@ -9,6 +9,7 @@
 #include "Fluid.h"
 #include "Profiler.h"
 #include "MotionGraphics.h"
+#include "Smm.h"
 #include "UI.h"
 #include "Narrative.h"
 #include "Cutscene.h"

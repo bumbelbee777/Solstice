@@ -145,9 +145,8 @@ void RenderPipeline::UpdateRaytracing(Scene& scene, const std::vector<Physics::L
         lightsToUse.push_back(sunLight);
     }
 
-    // Use async raytracing (non-blocking)
     m_Raytracing->UpdateAsync(lightsToUse, scene);
-    m_Raytracing->UpdateAsync(); // Clean up completed jobs
+    m_Raytracing->WaitForPendingAsyncJobs();
     m_Raytracing->UpdateUniforms();
 }
 

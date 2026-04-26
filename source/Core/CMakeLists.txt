@@ -1,6 +1,7 @@
 # Core: engine fundamentals, asset loading, materials, etc.
 set(SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
 add_library(Core STATIC
+    AuthoringSkyboxBus.cxx
     Debug/Debug.cxx
     Audio/Audio.cxx
     ML/MLP.cxx
@@ -17,6 +18,10 @@ add_library(Core STATIC
     System/LZ4.cxx
     Relic/Bootstrap.cxx
     Relic/Reader.cxx
+    Relic/PathTable.cxx
+    Relic/Compress.cxx
+    Relic/Writer.cxx
+    Relic/Unpack.cxx
     Relic/VirtualTable.cxx
     Relic/Decompress.cxx
     Relic/Delta.cxx

@@ -379,6 +379,82 @@ bool ScreenToXZPlane(const Mat4Col& view, const Mat4Col& proj, const ImVec2& pan
     return true;
 }
 
+bool ScreenToWorldOnPlane(const Mat4Col& view, const Mat4Col& proj, const ImVec2& panel_min,
+    const ImVec2& panel_max, const ImVec2& screen_pos, float planeNx, float planeNy, float planeNz, float planeD,
+    float& outX, float& outY, float& outZ) {
+    float ox, oy, oz, dx, dy, dz;
+    if (!ScreenToWorldRay(view, proj, panel_min, panel_max, screen_pos, ox, oy, oz, dx, dy, dz)) {
+        return false;
+    }
+    float t = 0.f;
+    if (!IntersectRayPlane(ox, oy, oz, dx, dy, dz, planeNx, planeNy, planeNz, planeD, t)) {
+        return false;
+    }
+    if (t < 0.f) {
+        return false;
+    }
+    outX = ox + t * dx;
+    outY = oy + t * dy;
+    outZ = oz + t * dz;
+    return true;
+}
+
+bool WorldDeltaOnHorizontalPlane(const Mat4Col& view, const Mat4Col& proj, const ImVec2& panel_min,
+    const ImVec2& panel_max, const ImVec2& prev_screen, const ImVec2& cur_screen, float planeY, float& outDeltaX,
+    float& outDeltaZ) {
+    float px, pz, cx, cz;
+    if (!ScreenToXZPlane(view, proj, panel_min, panel_max, prev_screen, planeY, px, pz)) {
+        return false;
+    }
+    if (!ScreenToXZPlane(view, proj, panel_min, panel_max, cur_screen, planeY, cx, cz)) {
+        return false;
+    }
+    outDeltaX = cx - px;
+    outDeltaZ = cz - pz;
+    return true;
+}
+
+bool IntersectRayAxisAlignedBox(float originX, float originY, float originZ, float dirX, float dirY, float dirZ,
+    float bminX, float bminY, float bminZ, float bmaxX, float bmaxY, float bmaxZ, float& outT) {
+    float t0 = 0.f;
+    float t1 = 1.0e30f;
+    const float eps = 1e-8f;
+
+    auto slab = [&](float o, float d, float bmin, float bmax) -> bool {
+        if (std::fabs(d) < eps) {
+            if (o < bmin || o > bmax) {
+                return false;
+            }
+            return true;
+        }
+        const float inv = 1.f / d;
+        float ta = (bmin - o) * inv;
+        float tb = (bmax - o) * inv;
+        if (ta > tb) {
+            std::swap(ta, tb);
+        }
+        t0 = std::max(t0, ta);
+        t1 = std::min(t1, tb);
+        return true;
+    };
+
+    if (!slab(originX, dirX, bminX, bmaxX)) {
+        return false;
+    }
+    if (!slab(originY, dirY, bminY, bmaxY)) {
+        return false;
+    }
+    if (!slab(originZ, dirZ, bminZ, bmaxZ)) {
+        return false;
+    }
+
+    if (t0 > t1 || t1 < 0.f) {
+        return false;
+    }
+    outT = (t0 < 0.f) ? 0.f : t0;
+    return true;
+}
+
 static bool ProjectToScreen(const Mat4Col& vp, float wx, float wy, float wz, const ImVec2& panel_min,
     const ImVec2& panel_max, ImVec2& out) {
     float cx, cy, cz, cw;

@@ -31,6 +31,15 @@ public:
                    Skybox* skybox, bgfx::ProgramHandle skyboxProgram,
                    uint32_t width, uint32_t height);
 
+    /// Swap skybox pointer without recreating velocity program / uniforms (used after image cubemap loads).
+    void SetSkybox(Skybox* skybox) { m_Skybox = skybox; }
+
+    /// Update internal resolution after a window/backbuffer resize without reloading shaders or recreating programs.
+    void SetFramebufferSize(uint32_t width, uint32_t height) {
+        m_Width = width;
+        m_Height = height;
+    }
+
     // Render scene objects to the specified view
     void RenderScene(Scene& scene, const Camera& camera,
                     MeshLibrary* meshLib, Core::MaterialLibrary* materialLib,
@@ -46,6 +55,12 @@ public:
     void SetOptimizeStaticBuffers(bool enable) { m_OptimizeStaticBuffers = enable; }
     void SetWireframe(bool enable) { m_WireframeEnabled = enable; }
     void SetShowDebugOverlay(bool enable) { m_ShowDebugOverlay = enable; }
+    /// When false, skips velocity MRT setup and VIEW_VELOCITY submits (used for fragile D3D11 offscreen paths).
+    void SetVelocityPassEnabled(bool enabled) { m_VelocityPassEnabled = enabled; }
+    /// When false, scene/ outline passes omit `BGFX_STATE_MSAA` (single-sampled MRTs + MSAA state can fault on some Intel drivers).
+    void SetSceneRasterMsaa(bool enabled) { m_SceneRasterMsaa = enabled; }
+    /// When false, skips Halton sub-pixel projection jitter (TAA) — use for offscreen/editor preview to avoid shimmering.
+    void SetProjectionJitterEnabled(bool enabled) { m_ProjectionJitterEnabled = enabled; }
 
     // Object selection and hover state
     void SetSelectedObjects(const std::set<SceneObjectID>& objects) { m_SelectedObjects = objects; }
@@ -67,6 +82,9 @@ private:
     bool m_OptimizeStaticBuffers = true;
     bool m_WireframeEnabled = false;
     bool m_ShowDebugOverlay = false;
+    bool m_VelocityPassEnabled = true;
+    bool m_SceneRasterMsaa = true;
+    bool m_ProjectionJitterEnabled = true;
     std::vector<Physics::LightSource> m_Lights;
 
     // Selection and hover state

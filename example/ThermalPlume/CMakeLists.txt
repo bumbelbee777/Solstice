@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 project(ThermalPlume)
 
+if(NOT BGFX_DIR)
+    message(FATAL_ERROR "BGFX_DIR is not set; configure the top-level Solstice project so bgfx (CPM) is available.")
+endif()
+
 add_executable(ThermalPlume
     "Main.cxx"
     "ThermalPlumeGame.cxx"
@@ -10,8 +14,8 @@ add_executable(ThermalPlume
 )
 
 target_include_directories(ThermalPlume PRIVATE
-    "${CMAKE_SOURCE_DIR}/3rdparty/bgfx"
-    "${CMAKE_SOURCE_DIR}/3rdparty/bgfx/3rdparty/meshoptimizer/src"
+    "${BGFX_DIR}"
+    "${BGFX_DIR}/3rdparty/meshoptimizer/src"
 )
 
 target_link_libraries(ThermalPlume PRIVATE SolsticeEngine)
@@ -20,7 +24,7 @@ set_target_properties(ThermalPlume PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
     CXX_EXTENSIONS OFF
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_EXECUTABLE_OUTPUT_DIR}"
 )
 
 if(WIN32)

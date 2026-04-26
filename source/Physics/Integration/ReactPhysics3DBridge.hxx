@@ -14,8 +14,24 @@
 #include <reactphysics3d/collision/Collider.h>
 #include <unordered_map>
 #include <memory>
-
 namespace Solstice::Physics {
+
+namespace detail {
+struct Rp3dSyncCache {
+    Math::Vec3 Pos{};
+    Math::Vec3 LinVel{};
+    Math::Vec3 AngVel{};
+    Math::Quaternion Rot{};
+    float Mass{1.f};
+    float Friction{0.5f};
+    float Restitution{0.5f};
+    float LinDamp{};
+    float AngDamp{};
+    float GravScale{1.f};
+    bool IsStatic{false};
+    bool GravityOn{true};
+};
+} // namespace detail
 
 /**
  * Bridge class that manages ReactPhysics3D physics world and synchronizes
@@ -105,7 +121,7 @@ private:
     /**
      * Update a ReactPhysics3D body's properties from a RigidBody
      */
-    void UpdateBodyProperties(reactphysics3d::RigidBody* rp3dBody, const RigidBody& solsticeBody);
+    void UpdateBodyProperties(ECS::EntityId entityId, reactphysics3d::RigidBody* rp3dBody, const RigidBody& solsticeBody);
 
     /**
      * Update a RigidBody's properties from a ReactPhysics3D body
@@ -127,6 +143,8 @@ private:
 
     // Track polyhedron meshes for convex shapes (must destroy after shape)
     std::unordered_map<reactphysics3d::ConvexMeshShape*, reactphysics3d::PolyhedronMesh*> m_ConvexShapeToPolyhedronMesh;
+
+    std::unordered_map<ECS::EntityId, detail::Rp3dSyncCache> m_SyncToCache;
 };
 
 } // namespace Solstice::Physics

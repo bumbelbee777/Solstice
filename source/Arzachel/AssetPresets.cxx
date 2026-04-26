@@ -44,18 +44,53 @@ Generator<MeshData> PlaneAsset(const Seed& SeedParam) {
 
 Generator<MeshData> Shack(const Seed& SeedParam) {
     return Generator<MeshData>([](const Seed& SeedParamInner) {
-        Generator<MeshData> Base = Scale(Cube(1.0f, SeedParamInner), Math::Vec3(2.0f, 1.5f, 2.0f));
-        Generator<MeshData> Roof = Transform(Scale(Cube(1.1f, SeedParamInner.Derive(1)), Math::Vec3(2.2f, 0.2f, 2.2f)), Math::Matrix4::Translation(Math::Vec3(0, 0.85f, 0)));
-        return Merge(Base, Roof)(SeedParamInner);
+        Generator<MeshData> Body = Scale(Cube(1.0f, SeedParamInner), Math::Vec3(2.8f, 1.7f, 2.2f));
+        Generator<MeshData> RoofA = Transform(
+            Scale(Cube(1.0f, SeedParamInner.Derive(1)), Math::Vec3(3.1f, 0.16f, 1.45f)),
+            Math::Matrix4::Translation(Math::Vec3(0, 1.02f, -0.48f)) * Math::Matrix4::RotationX(-0.42f));
+        Generator<MeshData> RoofB = Transform(
+            Scale(Cube(1.0f, SeedParamInner.Derive(2)), Math::Vec3(3.1f, 0.16f, 1.45f)),
+            Math::Matrix4::Translation(Math::Vec3(0, 1.02f, 0.48f)) * Math::Matrix4::RotationX(0.42f));
+        Generator<MeshData> Door = Transform(
+            Scale(Cube(1.0f, SeedParamInner.Derive(3)), Math::Vec3(0.55f, 0.95f, 0.08f)),
+            Math::Matrix4::Translation(Math::Vec3(-0.45f, -0.35f, 1.13f)));
+        Generator<MeshData> Window = Transform(
+            Scale(Cube(1.0f, SeedParamInner.Derive(4)), Math::Vec3(0.42f, 0.34f, 0.08f)),
+            Math::Matrix4::Translation(Math::Vec3(0.55f, 0.2f, 1.14f)));
+        Generator<MeshData> Chimney = Transform(
+            Scale(Cube(1.0f, SeedParamInner.Derive(5)), Math::Vec3(0.28f, 0.65f, 0.28f)),
+            Math::Matrix4::Translation(Math::Vec3(0.82f, 1.35f, -0.32f)));
+        return Merge(Merge(Merge(Body, RoofA), Merge(RoofB, Chimney)), Merge(Door, Window))(SeedParamInner);
     });
 }
 
 Generator<MeshData> Cabin(const Seed& SeedParam) {
     return Generator<MeshData>([](const Seed& SeedParamInner) {
-        Generator<MeshData> MainBody = Scale(Cube(1.0f, SeedParamInner), Math::Vec3(4.0f, 2.5f, 3.0f));
-        Generator<MeshData> Porch = Transform(Scale(Cube(1.0f, SeedParamInner.Derive(1)), Math::Vec3(4.0f, 0.2f, 1.0f)), Math::Matrix4::Translation(Math::Vec3(0, -1.15f, 2.0f)));
-        Generator<MeshData> Roof = Transform(Scale(Cube(1.0f, SeedParamInner.Derive(2)), Math::Vec3(4.5f, 0.5f, 4.0f)), Math::Matrix4::Translation(Math::Vec3(0, 1.5f, 0.5f)));
-        return Merge(Merge(MainBody, Porch), Roof)(SeedParamInner);
+        Generator<MeshData> MainBody = Scale(Cube(1.0f, SeedParamInner), Math::Vec3(4.4f, 2.2f, 3.2f));
+        Generator<MeshData> Porch = Transform(
+            Scale(Cube(1.0f, SeedParamInner.Derive(1)), Math::Vec3(4.2f, 0.18f, 1.15f)),
+            Math::Matrix4::Translation(Math::Vec3(0, -1.01f, 2.15f)));
+        Generator<MeshData> RoofA = Transform(
+            Scale(Cube(1.0f, SeedParamInner.Derive(2)), Math::Vec3(4.9f, 0.2f, 2.15f)),
+            Math::Matrix4::Translation(Math::Vec3(0, 1.38f, -0.62f)) * Math::Matrix4::RotationX(-0.36f));
+        Generator<MeshData> RoofB = Transform(
+            Scale(Cube(1.0f, SeedParamInner.Derive(3)), Math::Vec3(4.9f, 0.2f, 2.15f)),
+            Math::Matrix4::Translation(Math::Vec3(0, 1.38f, 0.62f)) * Math::Matrix4::RotationX(0.36f));
+        Generator<MeshData> Door = Transform(
+            Scale(Cube(1.0f, SeedParamInner.Derive(4)), Math::Vec3(0.68f, 1.25f, 0.09f)),
+            Math::Matrix4::Translation(Math::Vec3(-0.85f, -0.45f, 1.66f)));
+        Generator<MeshData> WindowL = Transform(
+            Scale(Cube(1.0f, SeedParamInner.Derive(5)), Math::Vec3(0.52f, 0.42f, 0.09f)),
+            Math::Matrix4::Translation(Math::Vec3(0.35f, 0.25f, 1.67f)));
+        Generator<MeshData> WindowR = Transform(
+            Scale(Cube(1.0f, SeedParamInner.Derive(6)), Math::Vec3(0.52f, 0.42f, 0.09f)),
+            Math::Matrix4::Translation(Math::Vec3(1.25f, 0.25f, 1.67f)));
+        Generator<MeshData> Chimney = Transform(
+            Scale(Cube(1.0f, SeedParamInner.Derive(7)), Math::Vec3(0.34f, 0.85f, 0.34f)),
+            Math::Matrix4::Translation(Math::Vec3(1.45f, 1.82f, -0.55f)));
+        return Merge(
+            Merge(Merge(MainBody, Porch), Merge(RoofA, RoofB)),
+            Merge(Merge(Door, Chimney), Merge(WindowL, WindowR)))(SeedParamInner);
     });
 }
 

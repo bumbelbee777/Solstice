@@ -93,13 +93,25 @@ public:
 
     struct TAASettings {
         bool Enabled = true;
-        float BlendFactor = 0.10f;
-        float ClampStrength = 1.25f;
-        float Sharpen = 0.10f;
+        float BlendFactor = 0.085f;
+        float ClampStrength = 0.70f;
+        float Sharpen = 0.20f;
     };
     void SetTAASettings(const TAASettings& settings) { m_TAASettings = settings; }
     const TAASettings& GetTAASettings() const { return m_TAASettings; }
     void InvalidateTAAHistory();
+
+    /// Per-sample MSAA for the main HDR color/depth pass (1, 2, 4, 8). Resolved before TAA/post.
+    void SetSceneMsaaSamples(uint8_t samples);
+    uint8_t GetSceneMsaaSamples() const { return m_SceneMsaaSamples; }
+
+    // Fast approximate anti-aliasing (HDR linear, before tone map). Helps edges when TAA is off or thin geometry.
+    struct FXAASettings {
+        bool Enabled = true;
+        float Strength = 0.85f;
+    };
+    void SetFXAASettings(const FXAASettings& settings) { m_FXAASettings = settings; }
+    const FXAASettings& GetFXAASettings() const { return m_FXAASettings; }
 
     // Bloom settings (HDR glow extraction)
     struct BloomSettings {
@@ -149,6 +161,8 @@ public:
 private:
     uint32_t m_Width = 0;
     uint32_t m_Height = 0;
+    /// Scene HDR MSAA: 1 = off, 2/4/8 = bgfx MSAA FBO; combined with TAA on resolved color.
+    uint8_t m_SceneMsaaSamples = 8;
 
     // Shadow Resources
     uint32_t m_ShadowMapSize = 1024;
@@ -217,6 +231,9 @@ private:
     bgfx::UniformHandle s_TexHistory = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_TAAParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_TAAJitter = BGFX_INVALID_HANDLE;
+
+    FXAASettings m_FXAASettings;
+    bgfx::UniformHandle u_FXAAParams = BGFX_INVALID_HANDLE;
 
     // Bloom settings
     BloomSettings m_BloomSettings;

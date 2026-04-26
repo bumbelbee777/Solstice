@@ -75,11 +75,11 @@ jobs:
 
       - name: Build tests (quick) (Windows)
         if: runner.os == 'Windows'
-        run: cmake --build build --config Release --parallel 2 --target solstice_quick_tests
+        run: cmake --build build --config Release --parallel 1 --target solstice_quick_tests
 
       - name: Build utilities (Windows)
         if: runner.os == 'Windows'
-        run: cmake --build build --config Release --parallel 2 --target solstice_utilities
+        run: cmake --build build --config Release --parallel 1 --target solstice_utilities
 
       # Linux: phased targets + bounded parallelism (half of nproc) to avoid OOM on shared runners.
       - name: Build third-party deps (Linux)

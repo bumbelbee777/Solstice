@@ -48,6 +48,11 @@ public:
     // Get the ReactPhysics3D bridge
     ReactPhysics3DBridge& GetBridge() { return m_Bridge; }
 
+    /// Blends from the per-substep snapshot toward the current simulated pose when building the render scene
+    /// (see Render::SyncPhysicsToScene). Fixed-step games set this from the frame's physics accumulator; default 1.
+    void SetSceneRenderBlendForSync(float t) { m_SceneRenderBlendT = t; }
+    float GetSceneRenderBlendForSync() const { return m_SceneRenderBlendT; }
+
     // Check if a body would collide when moved from prevPos to targetPos
     // Returns true if collision detected, and outputs collision point and normal
     static bool CheckSweptCollision(RigidBody* Body, const Math::Vec3& PrevPos, const Math::Vec3& TargetPos,
@@ -88,6 +93,9 @@ private:
     std::vector<FluidSimulation*> m_FluidSimulations;
 
     float m_MaxStepDt{1.0f / 30.0f};
+
+    // Render: blend from substep snapshot to current pose (0..1, typically 1 - accumulator / fixedStep).
+    float m_SceneRenderBlendT{1.0f};
 
     // Functional integration strategy type
     using IntegrationStrategy = std::function<void(struct RigidBody&, float)>;

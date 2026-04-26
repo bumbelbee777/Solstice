@@ -47,9 +47,11 @@ add_library(Game STATIC
     Dialogue/VisualNovelPresets.cxx
     Cutscene/CutscenePlayer.cxx
     VisualNovel/VisualNovelGame.cxx
+    Networking/MultiplayerPresets.cxx
+    Networking/NetworkSessionCoordinator.cxx
 )
 target_include_directories(Game PUBLIC ${SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(Game PUBLIC Core Math Physics Render UI Arzachel Scripting)
+target_link_libraries(Game PUBLIC Core Math Physics Render UI Arzachel Scripting Networking)
 target_link_libraries(Game PRIVATE Entity)
 if(MSVC)
     target_compile_options(Game PRIVATE /Zc:preprocessor /W0)

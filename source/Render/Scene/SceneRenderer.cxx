@@ -74,6 +74,10 @@ void SceneRenderer::Initialize(bgfx::ProgramHandle sceneProgram, bgfx::VertexLay
     m_SkyboxProgram = skyboxProgram; // Can be invalid, will be checked before use
     m_Width = width;
     m_Height = height;
+    if (bgfx::isValid(m_VelocityProgram)) {
+        bgfx::destroy(m_VelocityProgram);
+        m_VelocityProgram = BGFX_INVALID_HANDLE;
+    }
     bgfx::ShaderHandle vshVelocity = ShaderLoader::LoadShader("vs_velocity.bin");
     bgfx::ShaderHandle fshVelocity = ShaderLoader::LoadShader("fs_velocity.bin");
     if (bgfx::isValid(vshVelocity) && bgfx::isValid(fshVelocity)) {
@@ -162,6 +166,8 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
                                 uint32_t& trianglesSubmitted) {
     PROFILE_SCOPE("SceneRenderer::RenderScene");
 
+    const uint64_t sceneMsaaFlag = m_SceneRasterMsaa ? BGFX_STATE_MSAA : 0;
+
     if (!meshLib || !bgfx::isValid(m_SceneProgram) || !m_PostProcessing) {
         if (!meshLib) SIMPLE_LOG("SceneRenderer::RenderScene: meshLib is null");
         if (!bgfx::isValid(m_SceneProgram)) SIMPLE_LOG("SceneRenderer::RenderScene: sceneProgram is invalid");
@@ -195,31 +201,34 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
     float aspectRatio = static_cast<float>(m_Width) / static_cast<float>(m_Height);
     Math::Matrix4 ProjUnjittered = camera.GetProjectionMatrix(aspectRatio, 0.1f, 2000.0f);
     Math::Matrix4 Proj = ProjUnjittered;
+    Math::Vec2 jitterNdc(0.0f, 0.0f);
 
-    // Halton 2,3 jitter for TAA (in NDC space).
-    const uint32_t jitterIndex = (m_JitterFrame % 8u) + 1u;
-    const float jitterX = Halton(jitterIndex, 2u) - 0.5f;
-    const float jitterY = Halton(jitterIndex, 3u) - 0.5f;
-    const Math::Vec2 jitterNdc(
-        (2.0f * jitterX) / static_cast<float>(m_Width),
-        (2.0f * jitterY) / static_cast<float>(m_Height)
-    );
-    Proj.M[0][2] += jitterNdc.x;
-    Proj.M[1][2] += jitterNdc.y;
-    ++m_JitterFrame;
+    if (m_ProjectionJitterEnabled) {
+        // Halton 2,3 jitter for TAA (in NDC space). 16-tap loop reduces edge crawl / periodic shimmer vs 8.
+        const uint32_t jitterIndex = (m_JitterFrame % 16u) + 1u;
+        const float jitterX = Halton(jitterIndex, 2u) - 0.5f;
+        const float jitterY = Halton(jitterIndex, 3u) - 0.5f;
+        jitterNdc = Math::Vec2((2.0f * jitterX) / static_cast<float>(m_Width), (2.0f * jitterY) / static_cast<float>(m_Height));
+        Proj.M[0][2] += jitterNdc.x;
+        Proj.M[1][2] += jitterNdc.y;
+        ++m_JitterFrame;
+    }
 
     m_PostProcessing->SetCameraMatrices(View, Proj, ProjUnjittered, camPos, jitterNdc);
 
-    // Begin velocity pass before main scene submission.
-    m_PostProcessing->BeginVelocityPass();
     Math::Matrix4 ViewT = View.Transposed();
     Math::Matrix4 ProjUnjitteredT = ProjUnjittered.Transposed();
-    bgfx::setViewTransform(PostProcessing::VIEW_VELOCITY, &ViewT.M[0][0], &ProjUnjitteredT.M[0][0]);
-    if (bgfx::isValid(m_uVelocityCurrViewProj) && bgfx::isValid(m_uVelocityPrevViewProj)) {
-        Math::Matrix4 currUnjitteredViewProjT = m_PostProcessing->GetCurrentUnjitteredViewProj().Transposed();
-        Math::Matrix4 prevUnjitteredViewProjT = m_PostProcessing->GetPreviousUnjitteredViewProj().Transposed();
-        bgfx::setUniform(m_uVelocityCurrViewProj, &currUnjitteredViewProjT.M[0][0]);
-        bgfx::setUniform(m_uVelocityPrevViewProj, &prevUnjitteredViewProjT.M[0][0]);
+
+    // Begin velocity pass before main scene submission.
+    if (m_VelocityPassEnabled) {
+        m_PostProcessing->BeginVelocityPass();
+        bgfx::setViewTransform(PostProcessing::VIEW_VELOCITY, &ViewT.M[0][0], &ProjUnjitteredT.M[0][0]);
+        if (bgfx::isValid(m_uVelocityCurrViewProj) && bgfx::isValid(m_uVelocityPrevViewProj)) {
+            Math::Matrix4 currUnjitteredViewProjT = m_PostProcessing->GetCurrentUnjitteredViewProj().Transposed();
+            Math::Matrix4 prevUnjitteredViewProjT = m_PostProcessing->GetPreviousUnjitteredViewProj().Transposed();
+            bgfx::setUniform(m_uVelocityCurrViewProj, &currUnjitteredViewProjT.M[0][0]);
+            bgfx::setUniform(m_uVelocityPrevViewProj, &prevUnjitteredViewProjT.M[0][0]);
+        }
     }
 
     // Begin scene pass
@@ -283,66 +292,69 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
     static float pltPrm[32 * 4];
     int pltCount = 0;
 
-    // Process lights: First directional becomes sun, others become point lights
-    for (const auto& light : m_Lights) {
-        if (light.Type == Physics::LightSource::LightType::Directional) {
-            // First directional is sun
-            lightDir = light.Position.Normalized();
-            lightColor = light.Color;
-            lightIntensity = light.Intensity;
-        } else if (pltCount < 32) {
-            // Add to point lights
-            pltPos[pltCount * 4 + 0] = light.Position.x;
-            pltPos[pltCount * 4 + 1] = light.Position.y;
-            pltPos[pltCount * 4 + 2] = light.Position.z;
-            pltPos[pltCount * 4 + 3] = light.Range; // Store range in w
+    {
+        PROFILE_SCOPE("SceneRenderer::LightsShadowEnv");
+        // Process lights: First directional becomes sun, others become point lights
+        for (const auto& light : m_Lights) {
+            if (light.Type == Physics::LightSource::LightType::Directional) {
+                // First directional is sun
+                lightDir = light.Position.Normalized();
+                lightColor = light.Color;
+                lightIntensity = light.Intensity;
+            } else if (pltCount < 32) {
+                // Add to point lights
+                pltPos[pltCount * 4 + 0] = light.Position.x;
+                pltPos[pltCount * 4 + 1] = light.Position.y;
+                pltPos[pltCount * 4 + 2] = light.Position.z;
+                pltPos[pltCount * 4 + 3] = light.Range; // Store range in w
 
-            pltCol[pltCount * 4 + 0] = light.Color.x;
-            pltCol[pltCount * 4 + 1] = light.Color.y;
-            pltCol[pltCount * 4 + 2] = light.Color.z;
-            pltCol[pltCount * 4 + 3] = light.Intensity; // Store intensity in w
+                pltCol[pltCount * 4 + 0] = light.Color.x;
+                pltCol[pltCount * 4 + 1] = light.Color.y;
+                pltCol[pltCount * 4 + 2] = light.Color.z;
+                pltCol[pltCount * 4 + 3] = light.Intensity; // Store intensity in w
 
-            pltPrm[pltCount * 4 + 0] = light.Attenuation;
-            pltPrm[pltCount * 4 + 1] = 0.0f; // Padding
-            pltPrm[pltCount * 4 + 2] = 0.0f; // Padding
-            pltPrm[pltCount * 4 + 3] = 0.0f; // Padding
+                pltPrm[pltCount * 4 + 0] = light.Attenuation;
+                pltPrm[pltCount * 4 + 1] = 0.0f; // Padding
+                pltPrm[pltCount * 4 + 2] = 0.0f; // Padding
+                pltPrm[pltCount * 4 + 3] = 0.0f; // Padding
 
-            pltCount++;
+                pltCount++;
+            }
         }
-    }
 
-    // Set Sun Light Uniforms
-    float lightDirData[4] = { lightDir.x, lightDir.y, lightDir.z, 0.0f };
-    float lightColorData[4] = { lightColor.x, lightColor.y, lightColor.z, lightIntensity };
-    bgfx::setUniform(u_LightDir, lightDirData);
-    bgfx::setUniform(u_LightColor, lightColorData);
+        // Set Sun Light Uniforms
+        float lightDirData[4] = { lightDir.x, lightDir.y, lightDir.z, 0.0f };
+        float lightColorData[4] = { lightColor.x, lightColor.y, lightColor.z, lightIntensity };
+        bgfx::setUniform(u_LightDir, lightDirData);
+        bgfx::setUniform(u_LightColor, lightColorData);
 
-    // Set Point Light Uniforms
-    if (pltCount > 0) {
-        bgfx::setUniform(u_PointLightPos, pltPos, static_cast<uint16_t>(pltCount));
-        bgfx::setUniform(u_PointLightColor, pltCol, static_cast<uint16_t>(pltCount));
-        bgfx::setUniform(u_PointLightParams, pltPrm, static_cast<uint16_t>(pltCount));
-    }
-    float numLightsData[4] = { static_cast<float>(pltCount), 0.0f, 0.0f, 0.0f };
-    bgfx::setUniform(u_NumPointLights, numLightsData);
+        // Set Point Light Uniforms
+        if (pltCount > 0) {
+            bgfx::setUniform(u_PointLightPos, pltPos, static_cast<uint16_t>(pltCount));
+            bgfx::setUniform(u_PointLightColor, pltCol, static_cast<uint16_t>(pltCount));
+            bgfx::setUniform(u_PointLightParams, pltPrm, static_cast<uint16_t>(pltCount));
+        }
+        float numLightsData[4] = { static_cast<float>(pltCount), 0.0f, 0.0f, 0.0f };
+        bgfx::setUniform(u_NumPointLights, numLightsData);
 
-    // Set camera position uniform EVERY FRAME - required for correct view direction calculation
-    float camPosData[4] = { camPos.x, camPos.y, camPos.z, 0.0f };
-    bgfx::setUniform(u_CameraPos, camPosData);
+        // Set camera position uniform EVERY FRAME - required for correct view direction calculation
+        float camPosData[4] = { camPos.x, camPos.y, camPos.z, 0.0f };
+        bgfx::setUniform(u_CameraPos, camPosData);
 
-    // Prepare Shadow Matrix - get it AFTER BeginShadowPass() has been called
-    // (which happens in ShadowRenderer before this function is called)
-    Math::Matrix4 shadowViewProj = m_PostProcessing->GetShadowViewProj();
-    Math::Matrix4 shadowMatT = shadowViewProj.Transposed();
-    bgfx::setUniform(u_shadowMtx, &shadowMatT.M[0][0]);
-    bgfx::setTexture(1, s_TexShadow, m_PostProcessing->GetShadowMap());
+        // Prepare Shadow Matrix - get it AFTER BeginShadowPass() has been called
+        // (which happens in ShadowRenderer before this function is called)
+        Math::Matrix4 shadowViewProj = m_PostProcessing->GetShadowViewProj();
+        Math::Matrix4 shadowMatT = shadowViewProj.Transposed();
+        bgfx::setUniform(u_shadowMtx, &shadowMatT.M[0][0]);
+        bgfx::setTexture(1, s_TexShadow, m_PostProcessing->GetShadowMap());
 
-    // Set environment map (skybox cubemap) for reflections
-    if (m_Skybox && m_Skybox->IsInitialized() && bgfx::isValid(m_Skybox->GetCubemap())) {
-        bgfx::setTexture(3, s_TexEnvironment, m_Skybox->GetCubemap());
-    } else {
-        // Fallback: use a default cubemap or skip reflection
-        // For now, we'll just not set it and let the shader handle it
+        // Set environment map (skybox cubemap) for reflections
+        if (m_Skybox && m_Skybox->IsInitialized() && bgfx::isValid(m_Skybox->GetCubemap())) {
+            bgfx::setTexture(3, s_TexEnvironment, m_Skybox->GetCubemap());
+        } else {
+            // Fallback: use a default cubemap or skip reflection
+            // For now, we'll just not set it and let the shader handle it
+        }
     }
 
     // Default textures for materials without textures
@@ -546,7 +558,7 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
             bgfx::setTexture(9, s_TexLightmap, defaultLightmapTexture); // TODO: Bind actual lightmap texture when available
 
             uint64_t state = BGFX_STATE_WRITE_R | BGFX_STATE_WRITE_G | BGFX_STATE_WRITE_B | BGFX_STATE_WRITE_A
-                            | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA;
+                            | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | sceneMsaaFlag;
             if (isTransparent) {
                 state |= BGFX_STATE_BLEND_ALPHA;
                 // Keep depth writing enabled for transparent objects to prevent overlap
@@ -555,7 +567,7 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
             }
             bgfx::setState(state);
             bgfx::submit(PostProcessing::VIEW_SCENE, m_SceneProgram);
-            if (bgfx::isValid(m_VelocityProgram)) {
+            if (m_VelocityPassEnabled && bgfx::isValid(m_VelocityProgram)) {
                 uint64_t velocityState = BGFX_STATE_WRITE_R | BGFX_STATE_WRITE_G
                                        | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS;
                 bgfx::setState(velocityState);
@@ -689,7 +701,7 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
         bgfx::setTexture(9, s_TexLightmap, defaultLightmapTexture); // TODO: Bind actual lightmap texture when available
 
         uint64_t state = BGFX_STATE_WRITE_R | BGFX_STATE_WRITE_G | BGFX_STATE_WRITE_B | BGFX_STATE_WRITE_A
-                        | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_MSAA;
+                        | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS | sceneMsaaFlag;
         if (isTransparent) {
             state |= BGFX_STATE_BLEND_ALPHA;
             // Keep depth writing enabled for transparent objects to prevent overlap
@@ -711,7 +723,7 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
                     SubMesh.IndexCount
                 );
         bgfx::submit(PostProcessing::VIEW_SCENE, m_SceneProgram);
-                if (bgfx::isValid(m_VelocityProgram)) {
+                if (m_VelocityPassEnabled && bgfx::isValid(m_VelocityProgram)) {
                     uint64_t velocityState = BGFX_STATE_WRITE_R | BGFX_STATE_WRITE_G
                                            | BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS;
                     bgfx::setState(velocityState);
@@ -784,8 +796,9 @@ void SceneRenderer::RenderObjectOutline(SceneObjectID objID, Scene& scene, MeshL
 
     // Render outline with depth test but write only to color (no depth write)
     // Cull front faces so we only see the back-facing scaled version
+    const uint64_t outlineMsaa = m_SceneRasterMsaa ? BGFX_STATE_MSAA : 0;
     uint64_t state = BGFX_STATE_WRITE_R | BGFX_STATE_WRITE_G | BGFX_STATE_WRITE_B | BGFX_STATE_WRITE_A
-                    | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | BGFX_STATE_MSAA;
+                    | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_CULL_CW | outlineMsaa;
     bgfx::setState(state);
 
     bool UsesStaticBuffers = (m_OptimizeStaticBuffers && MeshPtr->IsStatic &&

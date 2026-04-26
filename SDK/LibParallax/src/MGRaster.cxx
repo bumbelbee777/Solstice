@@ -365,13 +365,47 @@ static void DrawEntry(const MGDisplayList::Entry& e, float originX, float origin
     }
 }
 
+static thread_local std::unordered_map<uint64_t, DecodedTex> s_GlobalMgDecodedTexCache;
+
 static void RasterizeMGDisplayListInner(const MGDisplayList& list, IAssetResolver* assets, uint32_t width, uint32_t height,
     std::span<std::byte> rgbaBuffer) {
     ClearBlackOpaque(rgbaBuffer, width, height);
-    std::unordered_map<uint64_t, DecodedTex> texCache;
+    if (s_GlobalMgDecodedTexCache.size() > 200) {
+        s_GlobalMgDecodedTexCache.clear();
+    }
     const float ga = std::clamp(list.GlobalAlpha, 0.0f, 1.0f);
-    for (const auto& e : list.Entries) {
-        DrawEntry(e, kRootOrigin, kRootOrigin, ga, assets, texCache, rgbaBuffer, width, height);
+    std::vector<size_t> order(list.Entries.size());
+    for (size_t i = 0; i < order.size(); ++i) {
+        order[i] = i;
+    }
+    std::stable_sort(order.begin(), order.end(), [&](size_t ai, size_t bi) {
+        return MGEntryCompositeDepth(list.Entries[ai]) < MGEntryCompositeDepth(list.Entries[bi]);
+    });
+    for (size_t idx : order) {
+        DrawEntry(list.Entries[idx], kRootOrigin, kRootOrigin, ga, assets, s_GlobalMgDecodedTexCache, rgbaBuffer, width, height);
+    }
+}
+
+static void Downsample2x2Box(const std::span<const std::byte> src, uint32_t sw, uint32_t sh, std::span<std::byte> dst, uint32_t dw,
+    uint32_t dh) {
+    if (sw != dw * 2u || sh != dh * 2u) {
+        return;
+    }
+    const auto* s = reinterpret_cast<const uint8_t*>(src.data());
+    auto* d = reinterpret_cast<uint8_t*>(dst.data());
+    for (uint32_t y = 0; y < dh; ++y) {
+        for (uint32_t x = 0; x < dw; ++x) {
+            const size_t s0 = (static_cast<size_t>(y * 2u) * sw + static_cast<size_t>(x * 2u)) * 4u;
+            const size_t s1 = s0 + 4u;
+            const size_t s2 = s0 + static_cast<size_t>(sw) * 4u;
+            const size_t s3 = s2 + 4u;
+            for (int c = 0; c < 4; ++c) {
+                const unsigned sum = static_cast<unsigned>(s[s0 + c]) + static_cast<unsigned>(s[s1 + c]) + static_cast<unsigned>(s[s2 + c])
+                    + static_cast<unsigned>(s[s3 + c]);
+                d[(static_cast<size_t>(y) * dw + static_cast<size_t>(x)) * 4u + static_cast<size_t>(c)] =
+                    static_cast<uint8_t>((sum + 2u) / 4u);
+            }
+        }
     }
 }
 
@@ -381,6 +415,18 @@ void RasterizeMGDisplayList(const MGDisplayList& list, IAssetResolver* assets, u
     std::span<std::byte> rgbaBuffer) {
     const size_t need = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
     if (rgbaBuffer.size() < need) {
+        return;
+    }
+    const bool use2x = width >= 2u && height >= 2u && width <= 2048u && height <= 2048u
+        && static_cast<uint64_t>(width) * static_cast<uint64_t>(height) * 16u
+            < (uint64_t{1} << 29); // cap ~537M for 4x buffer
+    if (use2x) {
+        const uint32_t w2 = width * 2u;
+        const uint32_t h2 = height * 2u;
+        const size_t n2 = static_cast<size_t>(w2) * static_cast<size_t>(h2) * 4u;
+        std::vector<std::byte> high(n2);
+        RasterizeMGDisplayListInner(list, assets, w2, h2, std::span<std::byte>(high.data(), high.size()));
+        Downsample2x2Box(std::span<const std::byte>(high.data(), high.size()), w2, h2, rgbaBuffer, width, height);
         return;
     }
     RasterizeMGDisplayListInner(list, assets, width, height, rgbaBuffer);

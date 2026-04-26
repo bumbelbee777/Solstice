@@ -11,6 +11,7 @@ add_library(Render STATIC
     Lighting/Raytracing.cxx
     Lighting/VolumetricLighting.cxx
     Scene/Skybox.cxx
+    Scene/AuthoringSkyboxApply.cxx
     Assets/ShaderLoader.cxx
     Particle/ParticleSystem.cxx
     Particle/ParticlePresets.cxx
@@ -23,7 +24,7 @@ add_library(Render STATIC
     Assets/ShaderUniforms.cxx
 )
 target_include_directories(Render PUBLIC ${SOURCE_DIR})
-target_link_libraries(Render PUBLIC Core Math Arzachel Physics)
+target_link_libraries(Render PUBLIC Core Math Arzachel Physics bimg bx)
 target_link_libraries(Render PRIVATE Plugin)
 if(MSVC)
     target_compile_options(Render PRIVATE /Zc:preprocessor /W0)

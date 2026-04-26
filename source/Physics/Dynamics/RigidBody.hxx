@@ -82,7 +82,7 @@ struct RigidBody {
     std::shared_ptr<ConvexHull> Hull;       // Computed convex hull (for ConvexHull type)
 
     // Continuous Collision Detection (CCD)
-    bool IsGrabbed{false};                  // Tracked by gameplay code for special CCD handling
+    bool IsGrabbed{false}; // Tracked by gameplay code; uses exact transforms (no render substep blend)
     bool EnableCCD{false};                  // Enable continuous collision detection
     float CCDMotionThreshold{1.0f};         // Min velocity magnitude to trigger CCD
 
@@ -114,6 +114,11 @@ struct RigidBody {
     static constexpr float SLEEP_VELOCITY_THRESHOLD = 0.01f;  // m/s
     static constexpr float SLEEP_ANGULAR_THRESHOLD = 0.01f;  // rad/s
     static constexpr int SLEEP_FRAMES_REQUIRED = 60;         // Frames to sleep
+
+    // Transform at the start of the current physics substep (for fixed-timestep render interpolation).
+    Math::Vec3 RenderInterpFromPos{};
+    Math::Quaternion RenderInterpFromRot{};
+    bool HasRenderInterpolationSnapshot{false};
 
     void SetMass(float mass) {
         if (mass <= 0.0f) {

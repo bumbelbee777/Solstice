@@ -1,6 +1,8 @@
 #include "App/GameBase.hxx"
 #include "Core/Debug/Debug.hxx"
 #include "Core/Profiling/Profiler.hxx"
+#include "Networking/NetworkingSystem.hxx"
+#include <Physics/Integration/PhysicsSystem.hxx>
 #include <Plugin/SubsystemHooks.hxx>
 #include <algorithm>
 #include <iostream>
@@ -29,6 +31,10 @@ int GameBase::Run() {
                 m_Window->PollEvents();
             }
 
+            if (Solstice::Networking::NetworkingSystem::Instance().IsRunning()) {
+                Solstice::Networking::NetworkingSystem::Instance().Poll();
+            }
+
             // Handle input
             HandleInput();
 
@@ -52,6 +58,9 @@ int GameBase::Run() {
             m_LastFrameTime = now;
             m_GameTime += dt;
             m_DeltaTime = dt;
+
+            // Default: render uses full physics pose. Fixed-timestep games set this in Update (see SetSceneRenderBlendForSync).
+            Solstice::Physics::PhysicsSystem::Instance().SetSceneRenderBlendForSync(1.0f);
 
             Solstice::Plugin::SubsystemHooks::Instance().Invoke(Solstice::Plugin::SubsystemHookKind::GamePreUpdate, dt);
             Update(dt);

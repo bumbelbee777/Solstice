@@ -62,4 +62,40 @@ std::optional<BootstrapConfig> ParseBootstrap(const std::filesystem::path& path)
     return config;
 }
 
+bool WriteBootstrap(const std::filesystem::path& path, const std::vector<BootstrapEntry>& entries) {
+    std::ofstream f(path, std::ios::binary | std::ios::trunc);
+    if (!f) {
+        return false;
+    }
+    const uint32_t magic = RELIC_BOOTSTRAP_MAGIC;
+    const uint16_t version = RELIC_FORMAT_VERSION;
+    const uint16_t reserved = 0;
+    const uint32_t entryCount = static_cast<uint32_t>(entries.size());
+    f.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
+    f.write(reinterpret_cast<const char*>(&version), sizeof(version));
+    f.write(reinterpret_cast<const char*>(&reserved), sizeof(reserved));
+    f.write(reinterpret_cast<const char*>(&entryCount), sizeof(entryCount));
+    if (!f) {
+        return false;
+    }
+    for (const auto& e : entries) {
+        if (e.Path.size() > 4096u) {
+            return false;
+        }
+        const uint16_t pathLen = static_cast<uint16_t>(e.Path.size());
+        f.write(reinterpret_cast<const char*>(&pathLen), sizeof(pathLen));
+        if (pathLen > 0) {
+            f.write(e.Path.data(), pathLen);
+        }
+        f.write(reinterpret_cast<const char*>(&e.Priority), sizeof(e.Priority));
+        const uint8_t hint = static_cast<uint8_t>(e.Hint);
+        f.write(reinterpret_cast<const char*>(&hint), sizeof(hint));
+        f.write(reinterpret_cast<const char*>(&e.TagSet), sizeof(e.TagSet));
+        if (!f) {
+            return false;
+        }
+    }
+    return static_cast<bool>(f);
+}
+
 } // namespace Solstice::Core::Relic

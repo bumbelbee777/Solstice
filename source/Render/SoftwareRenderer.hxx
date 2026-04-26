@@ -64,7 +64,10 @@ class SOLSTICE_API SoftwareRenderer {
 public:
     static constexpr int TILE_SIZE = 16;
     static constexpr bgfx::ViewId VIEW_WORLD_UI = 5;
-    SoftwareRenderer(int Width, int Height, int TileSize = TILE_SIZE, SDL_Window* Window = nullptr);
+    /// When `enableCpuRaytracing` is false, skips CPU voxel raytrace + bgfx R32F uploads (recommended for offscreen/editor preview).
+    /// When `disableBackbufferMsaa` is true, `bgfx::reset` omits MSAA (recommended for hidden SDL + D3D11 on some Intel iGPUs).
+    SoftwareRenderer(int Width, int Height, int TileSize = TILE_SIZE, SDL_Window* Window = nullptr,
+        bool enableCpuRaytracing = true, bool disableBackbufferMsaa = false);
     ~SoftwareRenderer();
 
     // Delete copy constructor and assignment operator (contains non-copyable std::future)
@@ -91,6 +94,9 @@ public:
 
     // VSync Control
     void SetVSync(bool Enable);
+
+    /// HDR scene pass MSAA (1=off, 2/4/8). Hardware AA before adaptive TAA on the resolved buffer.
+    void SetSceneMsaaSamples(uint8_t samples);
 
     // Optimization Control
     void SetOptimizeStaticBuffers(bool Enable) { m_OptimizeStaticBuffers = Enable; }
@@ -177,6 +183,8 @@ private:
     void UploadFramebufferToGPU();
 
 private:
+    void ApplyScenePassMsaaToSceneRenderer();
+
     void AllocateFramebuffers();
     void InitializeBGFX(SDL_Window* Window);
 
@@ -225,6 +233,11 @@ private:
     // Optimization flags
     bool m_OptimizeStaticBuffers{true};
     bool m_VSyncEnabled{true};
+    /// When true, scene + swapchain use driver-safe single sampling (see EditorEnginePreview on Intel D3D11).
+    bool m_DisableBackbufferMsaa{false};
+
+    /// VSync and related flags. Swapchain MSAA is not used; HDR scene MSAA is configured on `PostProcessing`.
+    uint32_t BgfxBackbufferResetFlags(uint32_t) const;
 
     // Memory management
     Core::ArenaAllocator m_FrameAllocator;
@@ -282,6 +295,12 @@ private:
 
     // Pre-allocated buffers for common operations (reused across frames)
     mutable std::vector<SceneObjectID> m_PreallocatedVisibleObjects; // Pre-allocated for culling results
+
+    // CPU raytracing voxel/probe refresh (adaptive; avoids fixed-interval rebuild when idle)
+    uint32_t m_RaytraceFrameCounter{0};
+    Solstice::Math::Vec3 m_LastRaytraceCamPos{0.0f, 0.0f, 0.0f};
+    uint32_t m_LastRaytraceObjectCount{0};
+    bool m_RaytraceCamInitialized{false};
 
     // Helper functions
     void TransformVertices(const std::vector<QuantizedVertex>& Vertices, const Solstice::Math::Matrix4& MVP);

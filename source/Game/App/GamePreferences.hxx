@@ -6,6 +6,10 @@
 #include <unordered_map>
 #include <functional>
 
+namespace Solstice::Render {
+class SoftwareRenderer;
+}
+
 namespace Solstice::Game {
 
 // Settings categories
@@ -22,7 +26,7 @@ struct GraphicsSettings {
     int ResolutionHeight{1080};
     bool Fullscreen{false};
     bool VSync{true};
-    int MSAA{0}; // 0, 2, 4, 8
+    int MSAA{8}; // 0, 2, 4, 8 — drives HDR scene MSAA; TAA runs on the resolved buffer
     float RenderDistance{1000.0f};
     float FOV{75.0f};
     bool Shadows{true};
@@ -93,6 +97,9 @@ public:
 
     // Apply settings to systems
     void ApplyGraphicsSettings();
+
+    /// Push MSAA / VSync from `m_GraphicsSettings` to the renderer (call after `SoftwareRenderer` exists).
+    void SyncRenderer(Solstice::Render::SoftwareRenderer& renderer);
     void ApplyAudioSettings();
     void ApplyControlsSettings();
 

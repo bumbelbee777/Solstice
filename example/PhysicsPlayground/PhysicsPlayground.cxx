@@ -761,6 +761,21 @@ void PhysicsPlayground::Update(float DeltaTime) {
         }
     }
 
+    {
+        const float kStep = 1.0f / 60.0f;
+        float renderBlendT = 1.0f;
+        if (steps > 0) {
+            renderBlendT = 1.0f - m_PhysicsAccumulator / kStep;
+            if (renderBlendT < 0.0f) {
+                renderBlendT = 0.0f;
+            }
+            if (renderBlendT > 1.0f) {
+                renderBlendT = 1.0f;
+            }
+        }
+        Physics::PhysicsSystem::Instance().SetSceneRenderBlendForSync(renderBlendT);
+    }
+
     // Sync physics to scene
     SyncPhysicsToScene();
 
@@ -823,12 +838,7 @@ void PhysicsPlayground::UpdateGrabbedObject(float deltaTime) {
 }
 
 void PhysicsPlayground::SyncPhysicsToScene() {
-    m_Registry.ForEach<Physics::RigidBody>([&](ECS::EntityId eid, Physics::RigidBody& rb) {
-        if (rb.RenderObjectID != Render::InvalidObjectID) {
-            m_Scene.SetPosition(rb.RenderObjectID, rb.Position);
-            m_Scene.SetRotation(rb.RenderObjectID, rb.Rotation);
-        }
-    });
+    Render::SyncPhysicsToScene(m_Registry, m_Scene);
 }
 
 void PhysicsPlayground::Render() {

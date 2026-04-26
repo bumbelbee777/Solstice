@@ -1,5 +1,9 @@
 # Motion Graphics System
 
+## Parallax MG + SMM
+
+**Parallax** (`LibParallax`) exposes a separate **MG** layer: `MGTextElement`, `MGSpriteElement`, optional **`MotionGraphicsRootElement`** (`CompositeAlpha`), and **MG tracks** keyed like 3D channels. **MovieMaker** treats 2D layout in **screen pixels** with a **nominal composition** size (authoring-only) for **nudge** and **align** tools, **linked width/height** for sprites, and a **root opacity** slider when a root element exists. Keyframe curves for MG properties use the same **Curve editor** as 3D—including **INI keyframe presets** from `presets/Keyframe/` (see [Presets.md](Presets.md)). Full SMM workflow: [SMM.md](SMM.md).
+
 ## Overview
 
 The Motion Graphics system provides animation, transitions, visual effects, and sprite rendering for UI elements. It supports keyframe-based animations, smooth transitions, visual effects (shadows, blur, glow), and both 2D and world-space sprite rendering. **Easing types and functions** (EasingType, Ease, EaseBezier) are provided by the **MinGfx** module (`Solstice::MinGfx`); the UI Animation layer consumes them (and exposes type aliases for compatibility).
@@ -681,6 +685,12 @@ blur.Strength = 1.0f;
 VisualEffects::DrawBlurredRect(drawList, ImVec2(10, 10), ImVec2(110, 60),
                                IM_COL32(255, 255, 255, 255), blur);
 ```
+
+## Parallax MG display lists (MovieMaker / export)
+
+**LibParallax** builds a display list with **`EvaluateMG`**, then either **CPU-rasterizes** it ([`MGRaster.hxx`](../SDK/LibParallax/include/Parallax/MGRaster.hxx)) for MovieMaker previews or submits it to **`Solstice::UI::MotionGraphics::Compositor`** for **ffmpeg** video frames. Both paths use the same rule for **root** entries: sort by the float attribute **`Depth`** (ascending), so **larger Depth values composite in front**. Missing **`Depth`** behaves as **0**. This is **2D stacking** only—the MG layer does not depth-test against 3D geometry unless a future pipeline adds a shared depth buffer.
+
+For authoring details and how this interacts with the **unified viewport** overlay, see **[SMM.md](SMM.md)**.
 
 ## Best Practices
 

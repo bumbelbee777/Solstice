@@ -119,6 +119,10 @@ public:
     void UpdateAsync();
     void UpdateAsync(const std::vector<Physics::LightSource>& lights, const Scene& scene);
 
+    /// Waits for any in-flight `SubmitAsync` raytracing work (same as shutdown drain, without destroying GPU state).
+    /// Required before the render thread uses raytrace textures / continues the frame.
+    void WaitForPendingAsyncJobs();
+
     // Texture access
     bgfx::TextureHandle GetShadowTexture() const { return m_ShadowTexture; }
     bgfx::TextureHandle GetAOTexture() const { return m_AOTexture; }
@@ -200,6 +204,8 @@ private:
     std::array<std::vector<uint8_t>, 6> m_ReflectionProbeFaces;
 
     // Internal methods
+    /// Blocks until all `SubmitAsync` raytracing jobs finish; safe to call before buffer/GPU teardown.
+    void DrainAsyncJobs();
     void UploadTextures();
     void GenerateRayPacket(const Math::Vec3& origin, const Math::Vec3& direction,
                            RayPacket& packet, int rayIndex);

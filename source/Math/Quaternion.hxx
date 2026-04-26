@@ -10,7 +10,9 @@ namespace Solstice::Math {
 }
 
 namespace Solstice::Math {
-struct SOLSTICE_API Quaternion {
+/* Inline ctors must not be class-dllexported: static libs (e.g. LibParallax) + SolsticeEngine.dll
+ * otherwise both provide identical MSVC-exported symbols and utilities link both (LNK2005). */
+struct Quaternion {
     float w, x, y, z;
 
     Quaternion() : w(1), x(0), y(0), z(0) {}
@@ -116,7 +118,7 @@ struct SOLSTICE_API Quaternion {
         return Q;
     }
 
-    [[nodiscard]] Matrix4 ToMatrix() const;
+    [[nodiscard]] SOLSTICE_API Matrix4 ToMatrix() const;
 
     void Print() const {
         std::cout << "Quaternion(" << w << ", " << x << ", " << y << ", " << z << ")\n";

@@ -46,6 +46,40 @@ inline void ValidateParallaxSceneEditing(const ParallaxScene& scene, std::vector
     const auto elCount = els.size();
     for (std::size_t i = 0; i < els.size(); ++i) {
         const auto& e = els[i];
+        {
+            const std::string_view st = GetElementSchema(scene, static_cast<ElementIndex>(i));
+            if (st == "SmmFluidVolumeElement") {
+                int32_t nx = 32, ny = 32, nz = 32;
+                const ElementIndex eidx = static_cast<ElementIndex>(i);
+                {
+                    const AttributeValue avx = GetAttribute(scene, eidx, "ResolutionX");
+                    if (const auto* v = std::get_if<int32_t>(&avx)) {
+                        nx = *v;
+                    }
+                }
+                {
+                    const AttributeValue avy = GetAttribute(scene, eidx, "ResolutionY");
+                    if (const auto* v = std::get_if<int32_t>(&avy)) {
+                        ny = *v;
+                    }
+                }
+                {
+                    const AttributeValue avz = GetAttribute(scene, eidx, "ResolutionZ");
+                    if (const auto* v = std::get_if<int32_t>(&avz)) {
+                        nz = *v;
+                    }
+                }
+                const int64_t cells = static_cast<int64_t>(nx) * static_cast<int64_t>(ny) * static_cast<int64_t>(nz);
+                if (cells > kParallaxFluidInteriorCellBudget) {
+                    ParallaxValidationMessage m;
+                    m.Text = "Fluid volume '" + e.Name + "': Nx*Ny*Nz (" + std::to_string(nx) + "×" + std::to_string(ny) + "×"
+                        + std::to_string(nz) + " = " + std::to_string(cells) + ") exceeds budget (" + std::to_string(
+                                                                                           kParallaxFluidInteriorCellBudget)
+                        + ").";
+                    outMessages.push_back(std::move(m));
+                }
+            }
+        }
         if (e.Parent != PARALLAX_INVALID_INDEX && static_cast<std::size_t>(e.Parent) >= elCount) {
             ParallaxValidationMessage m;
             m.Text = "Element '" + e.Name + "': Parent index out of range.";

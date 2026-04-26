@@ -10,6 +10,9 @@
 #include <Render/Assets/Mesh.hxx>
 #include <Core/Debug/Debug.hxx>
 
+#include <array>
+#include <string>
+
 namespace Solstice::Render {
 
 // Sky preset types for quick configuration
@@ -56,6 +59,12 @@ public:
         view.M[3][1] = 0.0f;
         view.M[3][2] = 0.0f;
         view.M[3][3] = 1.0f;
+
+        if (m_ImageCubemapActive && m_AuthoringImageYawDegrees != 0.0f) {
+            constexpr float kDeg = 3.14159265f / 180.f;
+            Math::Matrix4 ry = Math::Matrix4::RotationY(m_AuthoringImageYawDegrees * kDeg);
+            view = ry * view;
+        }
 
         // Get projection matrix
         Math::Matrix4 proj = Math::Matrix4::Perspective(
@@ -164,6 +173,19 @@ public:
     // Regenerate cubemap with current parameters
     void Regenerate();
 
+    /// Six face paths in order +X, −X, +Y, −Y, +Z, −Z (matches Parallax / SMF). `brightness` scales RGB after decode.
+    bool LoadImageCubemapFromFacePaths(const std::array<std::string, 6>& paths, float brightness, std::string* errOut = nullptr);
+
+    void ClearImageCubemapAndRegenerateProcedural(uint32_t proceduralResolution = 512);
+
+    bool IsImageCubemapActive() const { return m_ImageCubemapActive; }
+
+    void SetAuthoringImageYawDegrees(float yawDegrees) { m_AuthoringImageYawDegrees = yawDegrees; }
+    float GetAuthoringImageYawDegrees() const { return m_AuthoringImageYawDegrees; }
+
+    uint64_t GetAppliedAuthoringRevision() const { return m_AppliedAuthoringRevision; }
+    void SetAppliedAuthoringRevision(uint64_t rev) { m_AppliedAuthoringRevision = rev; }
+
     // Getters
     float GetTimeOfDay() const { return m_TimeOfDay; }
     Math::Vec3 GetSunDirection() const { return m_SunDirection; }
@@ -203,6 +225,10 @@ private:
     Math::Vec3 m_ZenithColor;
     float m_CloudDensity;
     float m_AtmosphereThickness;
+
+    bool m_ImageCubemapActive{false};
+    float m_AuthoringImageYawDegrees{0.f};
+    uint64_t m_AppliedAuthoringRevision{0};
 };
 
 } // namespace Solstice::Render

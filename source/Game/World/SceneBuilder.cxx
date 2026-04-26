@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <string>
 #include <cmath>
+#include <algorithm>
 
 namespace Solstice::Game {
 
@@ -140,7 +141,8 @@ void SceneBuilder::AddTerrain(
         // Position terrain collision at ground level (flat terrain)
         // For flat terrain, the box top should be at Y=0 (ground level)
         // Make it thick enough to prevent falling through
-        float TerrainHeight = 2.0f; // Thick box for reliable collision detection
+        // Thick slab: reduces edge tunneling; top face stays at Y=0
+        float TerrainHeight = 5.0f;
         float TerrainCenterY = -TerrainHeight * 0.5f; // Center below ground so top is at Y=0
 
         TerrainRB.Position = Math::Vec3(0, TerrainCenterY, 0);
@@ -265,6 +267,7 @@ void SceneBuilder::AddStructures(
     Render::Scene* Scene,
     Render::MeshLibrary* MeshLibrary,
     Core::MaterialLibrary* MaterialLibrary,
+    ECS::Registry* Registry,
     const StructureConfig& Config) {
 
     if (!Scene || !MeshLibrary || !MaterialLibrary) {
@@ -273,18 +276,24 @@ void SceneBuilder::AddStructures(
     }
 
     using namespace Solstice::Arzachel;
+    using Solstice::Math::Matrix4;
+    using Solstice::Math::Vec3;
+    using Solstice::Math::Vec4;
 
     // Use stored terrain size if available
     float TerrainSize = (m_TerrainSize > 0.0f) ? m_TerrainSize : Config.TerrainSize;
 
     std::vector<StructureData> Structures = Arzachel::GenerateStructures(Config.Count, TerrainSize, Config.Seed);
 
-    for (const auto& Struct : Structures) {
+    for (size_t I = 0; I < Structures.size(); ++I) {
+        const auto& Struct = Structures[I];
+        Arzachel::Seed InstanceSeed = Arzachel::Seed(Config.Seed).Derive(static_cast<uint32_t>(I));
         Arzachel::Generator<Arzachel::MeshData> Gen = (Struct.StructureType == StructureData::Type::Shack) ?
-            Arzachel::Shack(Arzachel::Seed(Config.Seed)) :
-            Arzachel::Cabin(Arzachel::Seed(Config.Seed));
+            Arzachel::Shack(InstanceSeed) :
+            Arzachel::Cabin(InstanceSeed);
 
-        Arzachel::MeshData Data = Gen(Arzachel::Seed(Config.Seed));
+        Arzachel::MeshData Data = Gen(InstanceSeed);
+        Data.CalculateBounds();
         auto StructMesh = Arzachel::ConvertToRenderMesh(Data);
         uint32_t MeshID = MeshLibrary->AddMesh(std::move(StructMesh));
 
@@ -296,13 +305,63 @@ void SceneBuilder::AddStructures(
             }
         }
 
-        Scene->AddObject(
+        Vec3 PlacedPosition = Struct.Position;
+        float TerrainY = 0.0f;
+        if (!m_TerrainHeightmap.empty() && m_TerrainResolution > 0 && m_TerrainSize > 0.0f) {
+            float TerrainX = (Struct.Position.x / m_TerrainSize + 0.5f) * static_cast<float>(m_TerrainResolution);
+            float TerrainZ = (Struct.Position.z / m_TerrainSize + 0.5f) * static_cast<float>(m_TerrainResolution);
+            int X = static_cast<int>(std::max(0.0f, std::min(static_cast<float>(m_TerrainResolution - 1), TerrainX)));
+            int Z = static_cast<int>(std::max(0.0f, std::min(static_cast<float>(m_TerrainResolution - 1), TerrainZ)));
+            int Index = Z * static_cast<int>(m_TerrainResolution) + X;
+            if (Index >= 0 && Index < static_cast<int>(m_TerrainHeightmap.size())) {
+                TerrainY = m_TerrainHeightmap[Index];
+            }
+        }
+        PlacedPosition.y = TerrainY - (Data.BoundsMin.y * Struct.Scale.y);
+
+        Render::SceneObjectID ObjId = Scene->AddObject(
             MeshID,
-            Struct.Position,
+            PlacedPosition,
             Struct.Rotation,
             Struct.Scale,
             Render::ObjectType_Static
         );
+
+        if (Config.CreatePhysicsBody && Registry) {
+            Vec3 BMin(Data.BoundsMin.x * Struct.Scale.x, Data.BoundsMin.y * Struct.Scale.y, Data.BoundsMin.z * Struct.Scale.z);
+            Vec3 BMax(Data.BoundsMax.x * Struct.Scale.x, Data.BoundsMax.y * Struct.Scale.y, Data.BoundsMax.z * Struct.Scale.z);
+            Vec3 LocalCenter = (BMin + BMax) * 0.5f;
+            Vec3 LocalHalf = (BMax - BMin) * 0.5f;
+            const float kPad = 0.12f;
+            LocalHalf = Vec3(
+                std::max(LocalHalf.x + kPad, 0.25f),
+                std::max(LocalHalf.y + kPad, 0.25f),
+                std::max(LocalHalf.z + kPad, 0.25f));
+
+            Matrix4 RotM = Struct.Rotation.ToMatrix();
+            Vec4 Rc(LocalCenter.x, LocalCenter.y, LocalCenter.z, 0.0f);
+            Vec4 Rw = RotM * Rc;
+            Vec3 WorldCenter = PlacedPosition + Vec3(Rw.x, Rw.y, Rw.z);
+
+            auto SEntity = Registry->Create();
+            auto& SRB = Registry->Add<Physics::RigidBody>(SEntity);
+            SRB.Position = WorldCenter;
+            SRB.Rotation = Struct.Rotation;
+            SRB.IsStatic = true;
+            SRB.SetMass(0.0f);
+            SRB.Type = Physics::ColliderType::Box;
+            SRB.HalfExtents = LocalHalf;
+            SRB.Friction = 0.6f;
+            SRB.Restitution = 0.0f;
+            SRB.RenderObjectID = ObjId;
+        }
+    }
+
+    if (Config.CreatePhysicsBody && Registry) {
+        try {
+            Physics::PhysicsSystem::Instance().GetBridge().SyncToReactPhysics3D();
+        } catch (...) {
+        }
     }
 }
 

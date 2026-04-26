@@ -1,10 +1,25 @@
 #include "MaterialSerializer.hxx"
+#include "../Material/SmatBinary.hxx"
 #include "../Core/Serialization/Base64.hxx"
 #include <fstream>
 #include <sstream>
 #include <filesystem>
+#include <cctype>
 
 namespace Solstice::Arzachel {
+
+namespace {
+
+bool FilePathExtensionEquals(const std::string& FilePath, const char* LowerExtWithDot) {
+    std::filesystem::path P(FilePath);
+    std::string Ext = P.extension().string();
+    for (char& C : Ext) {
+        C = static_cast<char>(std::tolower(static_cast<unsigned char>(C)));
+    }
+    return Ext == LowerExtWithDot;
+}
+
+} // namespace
 
 Core::JSONValue MaterialSerializer::Serialize(const ProceduralMaterial& Material) {
     Core::JSONObject Obj;
@@ -82,6 +97,11 @@ bool MaterialSerializer::SaveToFile(const std::string& FilePath, const Core::Mat
             std::filesystem::create_directories(Path.parent_path());
         }
 
+        if (FilePathExtensionEquals(FilePath, ".smat")) {
+            Core::SmatError Err = Core::SmatError::None;
+            return Core::WriteSmat(FilePath, Material, &Err);
+        }
+
         std::ofstream File(FilePath);
         if (!File.is_open()) {
             return false;
@@ -100,6 +120,7 @@ bool MaterialSerializer::SaveToFile(const std::string& FilePath, const Core::Mat
         return true;
     } catch (const std::exception& e) {
         // Log error if possible (but we can't use SIMPLE_LOG here as it might not be available)
+        (void)e;
         return false;
     } catch (...) {
         return false;
@@ -107,6 +128,11 @@ bool MaterialSerializer::SaveToFile(const std::string& FilePath, const Core::Mat
 }
 
 bool MaterialSerializer::LoadFromFile(const std::string& FilePath, Core::Material& OutMaterial) {
+    if (FilePathExtensionEquals(FilePath, ".smat")) {
+        Core::SmatError Err = Core::SmatError::None;
+        return Core::ReadSmat(FilePath, OutMaterial, &Err);
+    }
+
     std::ifstream File(FilePath);
     if (!File.is_open()) return false;
 

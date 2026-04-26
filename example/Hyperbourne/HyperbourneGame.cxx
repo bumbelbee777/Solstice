@@ -24,6 +24,7 @@
 #include <Arzachel/Presets/Furniture/FurniturePresets.hxx>
 #include <Arzachel/Presets/LevelCompositions.hxx>
 #include <Render/Scene/Skybox.hxx>
+#include <Render/Scene/AuthoringSkyboxApply.hxx>
 #include <Render/PhysicsBridge.hxx>
 #include <Physics/Integration/PhysicsSystem.hxx>
 #include <Physics/Dynamics/RigidBody.hxx>
@@ -208,8 +209,14 @@ void HyperbourneGame::Initialize() {
 
     // Initialize game preferences
     m_GamePreferences = std::make_unique<Game::GamePreferences>();
+    if (m_Renderer) {
+        m_GamePreferences->SyncRenderer(*m_Renderer);
+    }
     m_GamePreferences->SetSettingsClosedCallback([this]() {
         m_ShowSettingsMenu = false;
+        if (m_Renderer) {
+            m_GamePreferences->SyncRenderer(*m_Renderer);
+        }
         // Also close settings menu in MainMenu if it's open
         if (m_MainMenu) {
             m_MainMenu->CloseSettingsMenu();
@@ -1296,6 +1303,10 @@ void HyperbourneGame::Render() {
 
             // Render scene
             if (m_Renderer) {
+                if (m_Skybox) {
+                    std::string skyErr;
+                    Solstice::Render::ApplyAuthoringSkyboxBusToSkybox(*m_Skybox, &skyErr);
+                }
                 Vec4 clearColor(0.1f, 0.1f, 0.12f, 1.0f);
                 m_Renderer->Clear(clearColor);
 

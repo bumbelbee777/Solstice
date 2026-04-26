@@ -469,6 +469,8 @@ int main() {
             lastTime = now;
             simTime += dt;
 
+            Physics::PhysicsSystem::Instance().SetSceneRenderBlendForSync(1.0f);
+
             Core::Audio::Listener listener;
             listener.Position = Cam.Position;
             listener.Forward = Cam.Front;
@@ -544,6 +546,14 @@ int main() {
                 Physics::PhysicsSystem::Instance().Update(physicsStep);
                 accumulator -= physicsStep;
                 steps++;
+            }
+            {
+                float renderBlendT = 1.0f;
+                if (steps > 0) {
+                    renderBlendT = 1.0f - accumulator / physicsStep;
+                    renderBlendT = std::clamp(renderBlendT, 0.0f, 1.0f);
+                }
+                Physics::PhysicsSystem::Instance().SetSceneRenderBlendForSync(renderBlendT);
             }
             SyncPhysicsToScene(Registry, DemoScene);
             DemoScene.UpdateTransforms();

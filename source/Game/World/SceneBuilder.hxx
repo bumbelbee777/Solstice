@@ -133,11 +133,12 @@ public:
         ECS::Registry* Registry,
         const HillConfig& Config);
 
-    // Add structures to scene
+    // Add structures to scene (optional static physics boxes from mesh bounds)
     void AddStructures(
         Render::Scene* Scene,
         Render::MeshLibrary* MeshLibrary,
         Core::MaterialLibrary* MaterialLibrary,
+        ECS::Registry* Registry,
         const StructureConfig& Config);
 
     // Add trees to scene

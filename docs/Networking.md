@@ -108,6 +108,11 @@ SolsticeV1_NetworkingSendEx(
 
 `Poll()` must run regularly to process connection callbacks and drive receive/callback dispatch.
 
+### Game loop and ECS integration
+
+- **`GameBase`** ([`source/Game/App/GameBase.cxx`](../source/Game/App/GameBase.cxx)) calls `NetworkingSystem::Poll()` once per frame after window event polling when networking is running, so callbacks and receive dispatch stay current during gameplay.
+- **Multiplayer presets and ECS** live under [`source/Game/Networking/`](../source/Game/Networking/): `MultiplayerPresets` (session tuning, channels, message helpers) and `NetworkSessionCoordinator` (maps connections to ECS entities, installs `SetReceiveCallback`, registers Simulation-phase systems for heartbeat, app-level ping RTT, and timeouts). ECS component types for peers, teams, parties, and lobby state are in [`source/Entity/NetworkMultiplayer.hxx`](../source/Entity/NetworkMultiplayer.hxx). Use at most one `NetworkSessionCoordinator` per process (it owns the global receive callback slot).
+
 ## Tests
 
 - `tests/NetworkingTest.cxx`

@@ -1,6 +1,7 @@
 #include "UtilityPluginHost.hxx"
 
 #include <algorithm>
+#include <exception>
 #include <filesystem>
 #include <utility>
 
@@ -21,7 +22,11 @@ void UtilityPluginHost::InvokeOnUnload(DynamicLibrary& lib, const char* symbolOn
     }
     auto* fn = reinterpret_cast<PluginVoidFn>(lib.GetSymbol(symbolOnUnload));
     if (fn) {
-        fn();
+        try {
+            fn();
+        } catch (const std::exception&) {
+        } catch (...) {
+        }
     }
 }
 
@@ -31,7 +36,11 @@ void UtilityPluginHost::InvokeOnLoad(DynamicLibrary& lib, const char* symbolOnLo
     }
     auto* fn = reinterpret_cast<PluginVoidFn>(lib.GetSymbol(symbolOnLoad));
     if (fn) {
-        fn();
+        try {
+            fn();
+        } catch (const std::exception&) {
+        } catch (...) {
+        }
     }
 }
 

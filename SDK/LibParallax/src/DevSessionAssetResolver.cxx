@@ -1,7 +1,9 @@
 #include <Parallax/DevSessionAssetResolver.hxx>
 
 #include <fstream>
+#include <optional>
 #include <span>
+#include <vector>
 
 namespace Solstice::Parallax {
 
@@ -23,10 +25,10 @@ static uint64_t HashBytesFNV1a(std::span<const std::byte> data) {
     return h;
 }
 
-bool DevSessionAssetResolver::ImportFile(const std::filesystem::path& path) {
+std::optional<uint64_t> DevSessionAssetResolver::ImportFile(const std::filesystem::path& path) {
     std::ifstream f(path, std::ios::binary);
     if (!f) {
-        return false;
+        return std::nullopt;
     }
     f.seekg(0, std::ios::end);
     auto sz = f.tellg();
@@ -37,7 +39,7 @@ bool DevSessionAssetResolver::ImportFile(const std::filesystem::path& path) {
     AssetData ad;
     ad.Bytes = std::move(buf);
     Register(h, std::move(ad), path.filename().string());
-    return true;
+    return h;
 }
 
 void DevSessionAssetResolver::Register(uint64_t hash, AssetData data, std::string_view logicalPath) {

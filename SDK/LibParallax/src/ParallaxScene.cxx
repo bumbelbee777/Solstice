@@ -16,12 +16,8 @@ static uint32_t FindSchemaIndex(const ParallaxScene& scene, std::string_view nam
     return PARALLAX_INVALID_INDEX;
 }
 
-void RegisterBuiltinSchemas(ParallaxScene& scene) {
-    auto& schemas = scene.GetSchemas();
-    if (!schemas.empty()) {
-        return;
-    }
-
+static std::vector<SchemaDef> BuildBuiltinSchemaTable() {
+    std::vector<SchemaDef> schemas;
     auto add = [&](const char* type, std::initializer_list<SchemaAttributeDef> attrs) {
         SchemaDef def;
         def.TypeName = type;
@@ -31,7 +27,16 @@ void RegisterBuiltinSchemas(ParallaxScene& scene) {
 
     add("SceneRoot", {{"TickRate", AttributeType::Int32},
                       {"AmbientColor", AttributeType::ColorRGBA},
-                      {"AmbientIntensity", AttributeType::Float}});
+                      {"AmbientIntensity", AttributeType::Float},
+                      {"SkyboxEnabled", AttributeType::Bool},
+                      {"SkyboxBrightness", AttributeType::Float},
+                      {"SkyboxYawDegrees", AttributeType::Float},
+                      {"SkyboxFacePosX", AttributeType::String},
+                      {"SkyboxFaceNegX", AttributeType::String},
+                      {"SkyboxFacePosY", AttributeType::String},
+                      {"SkyboxFaceNegY", AttributeType::String},
+                      {"SkyboxFacePosZ", AttributeType::String},
+                      {"SkyboxFaceNegZ", AttributeType::String}});
     add("CameraElement", {{"Position", AttributeType::Vec3},
                           {"Target", AttributeType::Vec3},
                           {"FovDegrees", AttributeType::Float},
@@ -46,17 +51,95 @@ void RegisterBuiltinSchemas(ParallaxScene& scene) {
                          {"CastShadows", AttributeType::Bool},
                          {"ShadowResolution", AttributeType::Int32}});
     add("ActorElement", {{"MeshAsset", AttributeType::AssetHash},
-                         {"AnimationClip", AttributeType::AssetHash}});
+                         {"AnimationClip", AttributeType::AssetHash},
+                         {"Position", AttributeType::Vec3},
+                         {"ArzachelRigidBodyDamage", AttributeType::Float},
+                         {"LodDistanceHigh", AttributeType::Float},
+                         {"LodDistanceLow", AttributeType::Float},
+                         {"ArzachelAnimationClipPreset", AttributeType::String},
+                         {"ArzachelDestructionAnimPreset", AttributeType::String},
+                         {"FacialVariationSeed", AttributeType::Int64},
+                         {"EnableProceduralBlink", AttributeType::Bool},
+                         {"EnableProceduralSaccade", AttributeType::Bool}});
     add("AudioSourceElement", {{"AudioAsset", AttributeType::AssetHash},
                                {"Volume", AttributeType::Float},
                                {"Pitch", AttributeType::Float}});
     add("MotionGraphicsRootElement", {{"CompositeAlpha", AttributeType::Float}});
     add("MGTextElement", {{"Text", AttributeType::String},
                           {"Position", AttributeType::Vec2},
-                          {"Color", AttributeType::ColorRGBA}});
+                          {"Color", AttributeType::ColorRGBA},
+                          {"Depth", AttributeType::Float}});
     add("MGSpriteElement", {{"Texture", AttributeType::AssetHash},
                             {"Position", AttributeType::Vec2},
-                            {"Size", AttributeType::Vec2}});
+                            {"Size", AttributeType::Vec2},
+                            {"Depth", AttributeType::Float}});
+    add("SmmParticleEmitterElement",
+        {{"Enabled", AttributeType::Bool},
+            {"AttachToSceneElement", AttributeType::Bool},
+            {"AttachElementIndex", AttributeType::Int32},
+            {"SpawnPerSec", AttributeType::Float},
+            {"LifetimeSec", AttributeType::Float},
+            {"VelMin", AttributeType::Vec3},
+            {"VelMax", AttributeType::Vec3},
+            {"StartSize", AttributeType::Float},
+            {"EndSize", AttributeType::Float},
+            {"Gravity", AttributeType::Vec3},
+            {"LinearDrag", AttributeType::Float},
+            {"MaxParticles", AttributeType::Int32},
+            {"ColorStart", AttributeType::ColorRGBA},
+            {"ColorEnd", AttributeType::ColorRGBA},
+            {"UseImportedSprite", AttributeType::Bool},
+            {"SpriteTexture", AttributeType::AssetHash},
+            {"SpriteSourcePath", AttributeType::String}});
+    add("SmmFluidVolumeElement",
+        {{"Enabled", AttributeType::Bool},
+            {"EnableMacCormack", AttributeType::Bool},
+            {"EnableBoussinesq", AttributeType::Bool},
+            {"VolumeVisualizationClip", AttributeType::Bool},
+            {"BoundsMin", AttributeType::Vec3},
+            {"BoundsMax", AttributeType::Vec3},
+            {"ResolutionX", AttributeType::Int32},
+            {"ResolutionY", AttributeType::Int32},
+            {"ResolutionZ", AttributeType::Int32},
+            {"Diffusion", AttributeType::Float},
+            {"Viscosity", AttributeType::Float},
+            {"ReferenceDensity", AttributeType::Float},
+            {"PressureRelaxationIterations", AttributeType::Int32},
+            {"BuoyancyStrength", AttributeType::Float},
+            {"Prandtl", AttributeType::Float}});
+    return schemas;
+}
+
+void RegisterBuiltinSchemas(ParallaxScene& scene) {
+    auto& schemas = scene.GetSchemas();
+    if (!schemas.empty()) {
+        return;
+    }
+    schemas = BuildBuiltinSchemaTable();
+}
+
+void MergeBuiltinSchemaAttributes(ParallaxScene& scene) {
+    const std::vector<SchemaDef> canonical = BuildBuiltinSchemaTable();
+    for (const auto& c : canonical) {
+        for (auto& s : scene.GetSchemas()) {
+            if (s.TypeName != c.TypeName) {
+                continue;
+            }
+            for (const auto& a : c.Attributes) {
+                bool have = false;
+                for (const auto& e : s.Attributes) {
+                    if (e.Name == a.Name) {
+                        have = true;
+                        break;
+                    }
+                }
+                if (!have) {
+                    s.Attributes.push_back(a);
+                }
+            }
+            break;
+        }
+    }
 }
 
 std::unique_ptr<ParallaxScene> CreateScene(uint32_t ticksPerSecond) {
@@ -201,6 +284,10 @@ void AddKeyframe(ParallaxScene& scene, ChannelIndex channel, uint64_t timeTicks,
     k.TimeTicks = timeTicks;
     k.Easing = static_cast<uint8_t>(easing);
     k.Flags = 0;
+    k.EaseOut = 0xFF;
+    k.Interp = static_cast<uint8_t>(KeyframeInterpolation::Eased);
+    k.TangentIn = 1.f / 3.f;
+    k.TangentOut = 1.f / 3.f;
     k.Value = value;
     auto& kfs = channels[channel].Keyframes;
     kfs.push_back(std::move(k));
@@ -218,6 +305,59 @@ void RemoveKeyframe(ParallaxScene& scene, ChannelIndex channel, uint64_t timeTic
     kfs.erase(std::remove_if(kfs.begin(), kfs.end(),
                              [timeTicks](const KeyframeRecord& k) { return k.TimeTicks == timeTicks; }),
               kfs.end());
+}
+
+void SetKeyframeEasing(ParallaxScene& scene, ChannelIndex channel, uint64_t timeTicks, EasingType easing) {
+    auto& channels = scene.GetChannels();
+    if (channel >= channels.size()) {
+        return;
+    }
+    for (auto& k : channels[channel].Keyframes) {
+        if (k.TimeTicks == timeTicks) {
+            k.Easing = static_cast<uint8_t>(easing);
+            return;
+        }
+    }
+}
+
+void SetKeyframeEaseOut(ParallaxScene& scene, ChannelIndex channel, uint64_t timeTicks, uint8_t easeOutOr0xFF) {
+    auto& channels = scene.GetChannels();
+    if (channel >= channels.size()) {
+        return;
+    }
+    for (auto& k : channels[channel].Keyframes) {
+        if (k.TimeTicks == timeTicks) {
+            k.EaseOut = easeOutOr0xFF;
+            return;
+        }
+    }
+}
+
+void SetKeyframeInterpolation(ParallaxScene& scene, ChannelIndex channel, uint64_t timeTicks, KeyframeInterpolation mode) {
+    auto& channels = scene.GetChannels();
+    if (channel >= channels.size()) {
+        return;
+    }
+    for (auto& k : channels[channel].Keyframes) {
+        if (k.TimeTicks == timeTicks) {
+            k.Interp = static_cast<uint8_t>(mode);
+            return;
+        }
+    }
+}
+
+void SetKeyframeBezierTangents(ParallaxScene& scene, ChannelIndex channel, uint64_t timeTicks, float tangentOut, float tangentIn) {
+    auto& channels = scene.GetChannels();
+    if (channel >= channels.size()) {
+        return;
+    }
+    for (auto& k : channels[channel].Keyframes) {
+        if (k.TimeTicks == timeTicks) {
+            k.TangentOut = tangentOut;
+            k.TangentIn = tangentIn;
+            return;
+        }
+    }
 }
 
 MGIndex AddMGElement(ParallaxScene& scene, std::string_view schemaType, std::string_view name, MGIndex parent) {
@@ -279,12 +419,81 @@ void AddMGKeyframe(ParallaxScene& scene, uint32_t trackIndex, uint64_t timeTicks
     KeyframeRecord k;
     k.TimeTicks = timeTicks;
     k.Easing = static_cast<uint8_t>(easing);
+    k.Flags = 0;
+    k.EaseOut = 0xFF;
+    k.Interp = static_cast<uint8_t>(KeyframeInterpolation::Eased);
+    k.TangentIn = 1.f / 3.f;
+    k.TangentOut = 1.f / 3.f;
     k.Value = value;
     auto& kfs = tracks[trackIndex].Keyframes;
     kfs.push_back(std::move(k));
     std::sort(kfs.begin(), kfs.end(), [](const KeyframeRecord& a, const KeyframeRecord& b) {
         return a.TimeTicks < b.TimeTicks;
     });
+}
+
+void RemoveMGKeyframe(ParallaxScene& scene, uint32_t trackIndex, uint64_t timeTicks) {
+    auto& tracks = scene.GetMGTracks();
+    if (trackIndex >= tracks.size()) {
+        return;
+    }
+    auto& kfs = tracks[trackIndex].Keyframes;
+    kfs.erase(std::remove_if(kfs.begin(), kfs.end(),
+                             [timeTicks](const KeyframeRecord& k) { return k.TimeTicks == timeTicks; }),
+        kfs.end());
+}
+
+void SetMGKeyframeEasing(ParallaxScene& scene, uint32_t trackIndex, uint64_t timeTicks, EasingType easing) {
+    auto& tracks = scene.GetMGTracks();
+    if (trackIndex >= tracks.size()) {
+        return;
+    }
+    for (auto& k : tracks[trackIndex].Keyframes) {
+        if (k.TimeTicks == timeTicks) {
+            k.Easing = static_cast<uint8_t>(easing);
+            return;
+        }
+    }
+}
+
+void SetMGKeyframeEaseOut(ParallaxScene& scene, uint32_t trackIndex, uint64_t timeTicks, uint8_t easeOutOr0xFF) {
+    auto& tracks = scene.GetMGTracks();
+    if (trackIndex >= tracks.size()) {
+        return;
+    }
+    for (auto& k : tracks[trackIndex].Keyframes) {
+        if (k.TimeTicks == timeTicks) {
+            k.EaseOut = easeOutOr0xFF;
+            return;
+        }
+    }
+}
+
+void SetMGKeyframeInterpolation(ParallaxScene& scene, uint32_t trackIndex, uint64_t timeTicks, KeyframeInterpolation mode) {
+    auto& tracks = scene.GetMGTracks();
+    if (trackIndex >= tracks.size()) {
+        return;
+    }
+    for (auto& k : tracks[trackIndex].Keyframes) {
+        if (k.TimeTicks == timeTicks) {
+            k.Interp = static_cast<uint8_t>(mode);
+            return;
+        }
+    }
+}
+
+void SetMGKeyframeBezierTangents(ParallaxScene& scene, uint32_t trackIndex, uint64_t timeTicks, float tangentOut, float tangentIn) {
+    auto& tracks = scene.GetMGTracks();
+    if (trackIndex >= tracks.size()) {
+        return;
+    }
+    for (auto& k : tracks[trackIndex].Keyframes) {
+        if (k.TimeTicks == timeTicks) {
+            k.TangentOut = tangentOut;
+            k.TangentIn = tangentIn;
+            return;
+        }
+    }
 }
 
 void SetMGCompositeMode(ParallaxScene& scene, BlendMode mode) {

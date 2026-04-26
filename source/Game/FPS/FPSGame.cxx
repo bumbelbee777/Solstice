@@ -92,6 +92,12 @@ void FPSGame::InitializeFPSSystems() {
 
 void FPSGame::ConfigureECSPhases() {
     m_ECSScheduler.Clear();
+    if (m_EnableMultiplayerECS) {
+        if (!m_NetworkSession) {
+            m_NetworkSession = std::make_unique<NetworkSessionCoordinator>(m_Registry, MultiplayerPresets::GetCooperative());
+        }
+        m_NetworkSession->RegisterSystems(m_ECSScheduler);
+    }
     m_ECSScheduler.Register(ECS::SystemPhase::Input, "FPSMovementInput", [this](ECS::Registry&, float) {
         if (m_PlayerEntity == 0) {
             return;
@@ -114,7 +120,7 @@ void FPSGame::ConfigureECSPhases() {
     });
 
     m_ECSScheduler.Register(ECS::SystemPhase::Simulation, "FPSMovement", [this](ECS::Registry&, float deltaTime) {
-        FPSMovementSystem::Update(m_Registry, deltaTime, m_Camera);
+        UpdateFPSMovement(deltaTime);
     });
 
     m_ECSScheduler.Register(ECS::SystemPhase::Simulation, "PhysicsStep", [this](ECS::Registry&, float deltaTime) {
@@ -244,8 +250,7 @@ void FPSGame::HandleInput() {
 }
 
 void FPSGame::UpdateFPSMovement(float DeltaTime) {
-    m_ECSScheduler.ExecutePhase(ECS::SystemPhase::Input, m_Registry, DeltaTime);
-    m_ECSScheduler.ExecutePhase(ECS::SystemPhase::Simulation, m_Registry, DeltaTime);
+    FPSMovementSystem::Update(m_Registry, DeltaTime, m_Camera);
 }
 
 void FPSGame::UpdateWeapons(float DeltaTime) {

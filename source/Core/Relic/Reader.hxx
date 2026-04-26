@@ -16,6 +16,7 @@ struct RelicContainer {
     RelicFileHeader Header;
     std::vector<RelicManifestEntry> Manifest;
     std::vector<std::byte> DependencyTableBlob;  // raw bytes; DependencyListOffset is byte offset into this
+    std::vector<std::byte> PathTableBlob;
     std::filesystem::path FilePath;
 };
 

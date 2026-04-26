@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Solstice.hxx>
 #include <Entity/System.hxx>
 #include <functional>
 #include <string>
@@ -14,7 +15,7 @@ enum class SystemPhase {
     Late
 };
 
-class PhaseScheduler {
+class SOLSTICE_API PhaseScheduler {
 public:
     struct Entry {
         std::string Name;

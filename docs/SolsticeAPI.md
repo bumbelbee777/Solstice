@@ -19,13 +19,23 @@ Stable **C** entry points for tools and hosts that load `SolsticeEngine` (Window
 | [`Scripting.h`](../SDK/SolsticeAPI/V1/Scripting.h) | Moonwalk compile/execute (`SolsticeV1_ScriptingCompile` / `Execute`) |
 | [`Narrative.h`](../SDK/SolsticeAPI/V1/Narrative.h) | Narrative JSON validate, JSON→YAML |
 | [`Cutscene.h`](../SDK/SolsticeAPI/V1/Cutscene.h) | Cutscene JSON validate (same parse rules as runtime `CutscenePlayer`) |
-| [`Smf.h`](../SDK/SolsticeAPI/V1/Smf.h) | `.smf` v1 binary validate |
+| [`Smf.h`](../SDK/SolsticeAPI/V1/Smf.h) | `.smf` binary validate; **`SolsticeV1_SmfApplyGameplay`** pushes zones/lights to engine |
 | [`Audio.h`](../SDK/SolsticeAPI/V1/Audio.h) | Listener, emitters, music hooks |
 | [`Physics.h`](../SDK/SolsticeAPI/V1/Physics.h) | World lifetime and stepping |
 | [`Networking.h`](../SDK/SolsticeAPI/V1/Networking.h) | Relay/listen helpers |
 | [`Fluid.h`](../SDK/SolsticeAPI/V1/Fluid.h) | Grid fluid sandbox API |
 | [`Profiler.h`](../SDK/SolsticeAPI/V1/Profiler.h) | Counters and enable flag |
 | [`MotionGraphics.h`](../SDK/SolsticeAPI/V1/MotionGraphics.h) | Easing helpers |
+| [`Smm.h`](../SDK/SolsticeAPI/V1/Smm.h) | SMM session/viewer/export intent helpers (playhead clamp, viewer tab policy, export gating) |
+
+## SMM API lane (`Smm.h`)
+
+`Smm.h` models authoring-session behavior used by Solstice Movie Maker's SFM-style workspace:
+
+- `SolsticeV1_SmmSessionState` carries timeline/playhead and optional loop region fields.
+- `SolsticeV1_SmmClampPlayhead` clamps editor playhead decisions to valid session bounds.
+- `SolsticeV1_SmmViewerTab` + `SolsticeV1_SmmSetViewerTab` represent viewer selection policy (default `3D viewport`, optional `2D MG`).
+- `SolsticeV1_SmmExportIntent` + `SolsticeV1_SmmCanRunExport` formalize explicit export opt-in checks.
 
 ## Tests
 

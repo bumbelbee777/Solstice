@@ -1,16 +1,20 @@
 cmake_minimum_required(VERSION 3.20)
 project(Blizzard)
 
-# Meshoptimizer source files for mesh optimization
+# Meshoptimizer sources from the same bgfx tree CPM provides (root sets BGFX_DIR = bgfx_SOURCE_DIR).
+if(NOT BGFX_DIR)
+    message(FATAL_ERROR "BGFX_DIR is not set; configure the top-level Solstice project so bgfx (CPM) is available.")
+endif()
+set(_solstice_meshopt "${BGFX_DIR}/3rdparty/meshoptimizer/src")
 set(MESHOPTIMIZER_SOURCES
-    "${CMAKE_SOURCE_DIR}/3rdparty/bgfx/3rdparty/meshoptimizer/src/simplifier.cpp"
-    "${CMAKE_SOURCE_DIR}/3rdparty/bgfx/3rdparty/meshoptimizer/src/vertexcodec.cpp"
-    "${CMAKE_SOURCE_DIR}/3rdparty/bgfx/3rdparty/meshoptimizer/src/indexcodec.cpp"
-    "${CMAKE_SOURCE_DIR}/3rdparty/bgfx/3rdparty/meshoptimizer/src/vcacheoptimizer.cpp"
-    "${CMAKE_SOURCE_DIR}/3rdparty/bgfx/3rdparty/meshoptimizer/src/vfetchoptimizer.cpp"
-    "${CMAKE_SOURCE_DIR}/3rdparty/bgfx/3rdparty/meshoptimizer/src/overdrawoptimizer.cpp"
-    "${CMAKE_SOURCE_DIR}/3rdparty/bgfx/3rdparty/meshoptimizer/src/clusterizer.cpp"
-    "${CMAKE_SOURCE_DIR}/3rdparty/bgfx/3rdparty/meshoptimizer/src/vertexfilter.cpp"
+    "${_solstice_meshopt}/simplifier.cpp"
+    "${_solstice_meshopt}/vertexcodec.cpp"
+    "${_solstice_meshopt}/indexcodec.cpp"
+    "${_solstice_meshopt}/vcacheoptimizer.cpp"
+    "${_solstice_meshopt}/vfetchoptimizer.cpp"
+    "${_solstice_meshopt}/overdrawoptimizer.cpp"
+    "${_solstice_meshopt}/clusterizer.cpp"
+    "${_solstice_meshopt}/vertexfilter.cpp"
 )
 
 # Create the executable
@@ -20,21 +24,20 @@ add_executable(Blizzard
     "BlizzardGame.hxx"
 )
 
-# Include directories for meshoptimizer
 target_include_directories(Blizzard PRIVATE
-    "${CMAKE_SOURCE_DIR}/3rdparty/bgfx"
-    "${CMAKE_SOURCE_DIR}/3rdparty/bgfx/3rdparty/meshoptimizer/src"
+    "${BGFX_DIR}"
+    "${BGFX_DIR}/3rdparty/meshoptimizer/src"
 )
 
-# Link against the Solstice engine
-target_link_libraries(Blizzard PRIVATE SolsticeEngine)
+# Link against the Solstice engine and optional prop import support
+target_link_libraries(Blizzard PRIVATE SolsticeEngine Asset)
 
 # Set C++ standard
 set_target_properties(Blizzard PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
     CXX_EXTENSIONS OFF
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_EXECUTABLE_OUTPUT_DIR}"
 )
 
 # Copy DLLs to the executable directory on Windows

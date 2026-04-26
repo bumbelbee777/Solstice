@@ -120,6 +120,13 @@ LIBUI_API void EndMenu();
 LIBUI_API bool MenuItem(const char* label, const char* shortcut = nullptr, bool selected = false, bool enabled = true);
 LIBUI_API bool MenuItem(const char* label, const char* shortcut, bool* p_selected, bool enabled = true);
 
+// Tabs
+LIBUI_API bool BeginTabBar(const char* str_id, ImGuiTabBarFlags flags = 0);
+LIBUI_API void EndTabBar();
+LIBUI_API bool BeginTabItem(const char* label, bool* p_open = nullptr, ImGuiTabItemFlags flags = 0);
+LIBUI_API void EndTabItem();
+LIBUI_API void SetTabItemClosed(const char* tab_or_docked_window_label);
+
 // Popups
 LIBUI_API void OpenPopup(const char* str_id, ImGuiPopupFlags popup_flags = 0);
 LIBUI_API void OpenPopupOnItemClick(const char* str_id = nullptr, ImGuiPopupFlags popup_flags = 1);

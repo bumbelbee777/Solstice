@@ -56,6 +56,10 @@ namespace Solstice::Core::Audio {
         int Priority{0};
         bool IsSpherical{false};
         bool Enabled{true};
+        /// Relative asset path (e.g. under path table / assets). Empty = do not drive music from this zone.
+        std::string MusicPath;
+        /// Optional looping 3D emitter at `Center` for ambient bed. Empty = none.
+        std::string AmbiencePath;
     };
 
     struct AudioSource {
@@ -167,10 +171,17 @@ namespace Solstice::Core::Audio {
         float m_DialogueDuckingStrength{0.25f};
         float m_CriticalCueDuckingStrength{0.15f};
 
+        /// Per-map zone BGM/ambience (not mixed with ad-hoc `PlayMusic` / emitters for other features).
+        std::string m_ZoneDrivenMusicPath;
+        std::string m_ZoneDrivenAmbiencePath;
+        AudioEmitterHandle m_ZoneAmbienceEmitter{0};
+
         // Thread safety
         mutable Spinlock m_Lock;
 
         // Internal helpers
+        void ClearZoneDrivenMedia();
+        void UpdateZoneDrivenMedia();
         static ReverbParams GetPresetParams(ReverbPresetType Preset);
         static float Clamp01(float V);
         static float ComputeDistanceAttenuation(const AudioSource& Source, float Distance);

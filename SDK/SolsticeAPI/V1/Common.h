@@ -5,6 +5,7 @@
  * Naming: SolsticeV1_<ApiSet><Action> with PascalCase after SolsticeV1_
  */
 
+#include <stddef.h>
 #include <stdint.h>
 
 #if defined(_WIN32) || defined(_WIN64)

@@ -6,6 +6,7 @@
 #include <vector>
 #include <optional>
 #include <filesystem>
+#include <vector>
 
 namespace Solstice::Core::Relic {
 
@@ -22,5 +23,8 @@ SOLSTICE_API std::optional<BootstrapConfig> ParseBootstrap(const std::filesystem
 
 // Get the default path for game.data.relic (relative to executable/base path).
 SOLSTICE_API std::filesystem::path GetDefaultBootstrapPath(const std::filesystem::path& basePath);
+
+// Write bootstrap file (same layout as ParseBootstrap).
+SOLSTICE_API bool WriteBootstrap(const std::filesystem::path& path, const std::vector<BootstrapEntry>& entries);
 
 } // namespace Solstice::Core::Relic

@@ -33,7 +33,7 @@ endfunction()
 add_library(SolsticeTestSupport INTERFACE)
 target_include_directories(SolsticeTestSupport INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}")
 
-set(SOLSTICE_TEST_BIN_DIR "${CMAKE_BINARY_DIR}/bin")
+# SOLSTICE_TEST_BIN_DIR set in cmake/SolsticeBuildOptions.cmake (override with -DSOLSTICE_TEST_BINDIR=)
 
 function(solstice_add_ctest exe_name labels)
     # Use generator expression so multi-config generators (Visual Studio) find bin/Release or bin/Debug.
@@ -233,21 +233,49 @@ target_link_libraries(GpuSmokeTest PRIVATE SDL3-shared bgfx)
 set_target_properties(GpuSmokeTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_TEST_BIN_DIR}")
 solstice_copy_runtime_dlls(GpuSmokeTest)
 
+add_executable(AuthoringSkyboxBusTest AuthoringSkyboxBusTest.cxx)
+target_include_directories(AuthoringSkyboxBusTest PRIVATE "${CMAKE_SOURCE_DIR}/source")
+target_link_libraries(AuthoringSkyboxBusTest PRIVATE Core SolsticeTestSupport)
+set_target_properties(AuthoringSkyboxBusTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_TEST_BIN_DIR}")
+
 add_executable(ParallaxFormatTest ParallaxFormatTest.cxx)
 target_link_libraries(ParallaxFormatTest PRIVATE LibParallax SolsticeTestSupport)
 set_target_properties(ParallaxFormatTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_TEST_BIN_DIR}")
+if(MSVC)
+    # Heavy static link; lower intra-link parallelism to reduce peak RSS on CI runners.
+    target_link_options(ParallaxFormatTest PRIVATE /CGTHREADS:1)
+endif()
+
+add_executable(FacialAnimationTest FacialAnimationTest.cxx)
+target_include_directories(FacialAnimationTest PRIVATE "${CMAKE_SOURCE_DIR}/source")
+target_link_libraries(FacialAnimationTest PRIVATE Arzachel SolsticeTestSupport)
+set_target_properties(FacialAnimationTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_TEST_BIN_DIR}")
+if(MSVC)
+    target_link_options(FacialAnimationTest PRIVATE /CGTHREADS:1)
+endif()
 
 add_executable(SmfFormatTest SmfFormatTest.cxx)
 target_link_libraries(SmfFormatTest PRIVATE LibSmf SolsticeTestSupport)
 set_target_properties(SmfFormatTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_TEST_BIN_DIR}")
 
+add_executable(SmatFormatTest SmatFormatTest.cxx)
+target_include_directories(SmatFormatTest PRIVATE "${CMAKE_SOURCE_DIR}/source")
+target_link_libraries(SmatFormatTest PRIVATE Material SolsticeTestSupport)
+set_target_properties(SmatFormatTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_TEST_BIN_DIR}")
+
+add_executable(RelicFormatTest RelicFormatTest.cxx)
+target_include_directories(RelicFormatTest PRIVATE "${CMAKE_SOURCE_DIR}/source")
+target_link_libraries(RelicFormatTest PRIVATE SolsticeEngine SolsticeTestSupport)
+set_target_properties(RelicFormatTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_TEST_BIN_DIR}")
+solstice_copy_runtime_dlls(RelicFormatTest)
+
 if(TARGET Multimedia)
     find_program(SOLSTICE_FFMPEG_CLI NAMES ffmpeg ffmpeg.exe)
-    set(SOLSTICE_LAVFI_TEST_MP4 "${CMAKE_BINARY_DIR}/test_support/solstice_lavfi_pattern.mp4")
+    set(SOLSTICE_LAVFI_TEST_MP4 "${SOLSTICE_STAGING_DIR}/test_support/solstice_lavfi_pattern.mp4")
     if(SOLSTICE_FFMPEG_CLI)
         add_custom_command(
             OUTPUT "${SOLSTICE_LAVFI_TEST_MP4}"
-            COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/test_support"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SOLSTICE_STAGING_DIR}/test_support"
             COMMAND
                 "${SOLSTICE_FFMPEG_CLI}" -nostdin -hide_banner -loglevel error -y -f lavfi
                 -i testsrc=duration=0.2:size=64x48:rate=10 -pix_fmt yuv420p -c:v libx264
@@ -265,8 +293,9 @@ if(TARGET Multimedia)
 endif()
 
 # -----------------------------------------------------------------------------
-# CTest registration (labels: quick, stress, network, fuzz, gpu, api)
+# CTest registration (labels: quick, stress, network, fuzz, gpu, api, tools)
 # Run:  ctest --test-dir build -L quick
+# package_executables_selftest: Python in tools/ (FST/zip) — no test exe to build
 #        ctest --test-dir build -L stress -L network
 # -----------------------------------------------------------------------------
 
@@ -289,8 +318,12 @@ solstice_add_ctest(NetworkingStressTest "stress;network")
 solstice_add_ctest(ScriptStressTest "quick;stress")
 solstice_add_ctest(EngineLifecycleTest "quick")
 solstice_add_ctest(GpuSmokeTest "gpu")
+solstice_add_ctest(AuthoringSkyboxBusTest "quick")
 solstice_add_ctest(ParallaxFormatTest "quick")
+solstice_add_ctest(FacialAnimationTest "quick")
 solstice_add_ctest(SmfFormatTest "quick")
+solstice_add_ctest(SmatFormatTest "quick")
+solstice_add_ctest(RelicFormatTest "quick")
 if(TARGET MultimediaFfmpegTest)
     add_test(
         NAME MultimediaFfmpegTest
@@ -317,8 +350,12 @@ set(_solstice_quick_test_targets
     AssetPipelineTest
     ScriptStressTest
     EngineLifecycleTest
+    AuthoringSkyboxBusTest
     ParallaxFormatTest
+    FacialAnimationTest
     SmfFormatTest
+    SmatFormatTest
+    RelicFormatTest
 )
 foreach(_qt IN LISTS _solstice_quick_test_targets)
     if(TARGET ${_qt})
@@ -327,4 +364,14 @@ foreach(_qt IN LISTS _solstice_quick_test_targets)
 endforeach()
 if(TARGET MultimediaFfmpegTest)
     add_dependencies(solstice_quick_tests MultimediaFfmpegTest)
+endif()
+
+# package_executables.py (FST) — no engine/utilities build required; exercises zip + parse
+if(Python3_FOUND)
+    add_test(
+        NAME package_executables_selftest
+        COMMAND ${Python3_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/test_package_executables.py"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    )
+    set_tests_properties(package_executables_selftest PROPERTIES LABELS "quick;tools" TIMEOUT 120)
 endif()

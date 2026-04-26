@@ -17,6 +17,15 @@ SOLSTICE_V1_API SolsticeV1_ResultCode SolsticeV1_SmfValidateBinary(
     char* ErrBuffer,
     size_t ErrBufferSize);
 
+/**
+ * Load SMF bytes and apply acoustic zones + authoring lights to engine subsystems (same as Jackhammer on load).
+ */
+SOLSTICE_V1_API SolsticeV1_ResultCode SolsticeV1_SmfApplyGameplay(
+    const void* Bytes,
+    size_t ByteCount,
+    char* ErrBuffer,
+    size_t ErrBufferSize);
+
 #ifdef __cplusplus
 }
 #endif

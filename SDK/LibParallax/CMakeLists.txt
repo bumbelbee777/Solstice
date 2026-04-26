@@ -10,6 +10,7 @@ set(LIBPARALLAX_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 set(LIBPARALLAX_INCLUDE "${LIBPARALLAX_DIR}/include")
 
 add_library(LibParallax STATIC
+    src/ParallaxPlayback.cxx
     src/ParallaxScene.cxx
     src/ParallaxEditOps.cxx
     src/ParallaxBinary.cxx
@@ -27,7 +28,6 @@ target_include_directories(LibParallax
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_SOURCE_DIR}/source
-        ${CMAKE_SOURCE_DIR}/3rdparty/tinygltf
         ${CMAKE_SOURCE_DIR}/3rdparty/stb
 )
 
@@ -42,7 +42,7 @@ target_link_libraries(LibParallax PUBLIC
     Render
     Entity
 )
-target_link_libraries(LibParallax PRIVATE LibSmf)
+target_link_libraries(LibParallax PRIVATE LibSmf tinygltf)
 
 if(DEFINED zstd_SOURCE_DIR)
     target_include_directories(LibParallax PRIVATE "${zstd_SOURCE_DIR}/lib")

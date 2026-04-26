@@ -10,6 +10,36 @@
 
 namespace Solstice::Render {
 
+namespace {
+
+uint64_t BgfxSceneMsaaRenderTargetFlags(uint8_t samples) {
+    if (samples >= 8) {
+        return BGFX_TEXTURE_RT_MSAA_X8;
+    }
+    if (samples >= 4) {
+        return BGFX_TEXTURE_RT_MSAA_X4;
+    }
+    if (samples >= 2) {
+        return BGFX_TEXTURE_RT_MSAA_X2;
+    }
+    return 0;
+}
+
+uint8_t SanitizeSceneMsaaSamples(uint8_t samples) {
+    if (samples <= 1) {
+        return 1;
+    }
+    if (samples >= 8) {
+        return 8;
+    }
+    if (samples >= 4) {
+        return 4;
+    }
+    return 2;
+}
+
+} // namespace
+
 PostProcessing::PostProcessing() {
     m_Layout
         .begin(bgfx::getRendererType())
@@ -28,6 +58,7 @@ PostProcessing::PostProcessing() {
     s_TexHistory = bgfx::createUniform("s_texHistory", bgfx::UniformType::Sampler);
     u_TAAParams = bgfx::createUniform("u_taaParams", bgfx::UniformType::Vec4);
     u_TAAJitter = bgfx::createUniform("u_taaJitter", bgfx::UniformType::Vec4);
+    u_FXAAParams = bgfx::createUniform("u_fxaaParams", bgfx::UniformType::Vec4);
 
     // Bloom uniforms
     u_BloomParams = bgfx::createUniform("u_BloomParams", bgfx::UniformType::Vec4);
@@ -71,6 +102,9 @@ PostProcessing::~PostProcessing() {
     }
     if (bgfx::isValid(u_TAAJitter)) {
         bgfx::destroy(u_TAAJitter);
+    }
+    if (bgfx::isValid(u_FXAAParams)) {
+        bgfx::destroy(u_FXAAParams);
     }
     if (bgfx::isValid(u_BloomParams)) {
         bgfx::destroy(u_BloomParams);
@@ -133,6 +167,19 @@ void PostProcessing::Resize(uint32_t width, uint32_t height) {
     CreateResources();
 }
 
+void PostProcessing::SetSceneMsaaSamples(uint8_t samples) {
+    const uint8_t s = SanitizeSceneMsaaSamples(samples);
+    if (m_SceneMsaaSamples == s) {
+        return;
+    }
+    m_SceneMsaaSamples = s;
+    if (m_Width == 0 || m_Height == 0) {
+        return;
+    }
+    DestroyResources();
+    CreateResources();
+}
+
 void PostProcessing::CreateResources() {
     // 1. Shadow Map
     uint64_t shadowFlags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
@@ -141,15 +188,46 @@ void PostProcessing::CreateResources() {
 
     if (!bgfx::isValid(m_ShadowFB)) SIMPLE_LOG("PostProcessing: Failed to create Shadow FB");
 
-    // 2. Scene FB (Color + Depth)
-    uint64_t sceneFlags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
-    m_SceneColor = bgfx::createTexture2D(m_Width, m_Height, false, 1, bgfx::TextureFormat::RGBA16F, sceneFlags);
-    m_SceneDepth = bgfx::createTexture2D(m_Width, m_Height, false, 1, bgfx::TextureFormat::D24S8, sceneFlags);
+    // 2. Scene FB (Color + Depth): optional MSAA; bgfx keeps a resolved color/depth for shader sampling.
+    const uint64_t msaaRt = BgfxSceneMsaaRenderTargetFlags(m_SceneMsaaSamples);
+    const bool useSceneMsaa = msaaRt != 0;
+    uint64_t colorFlags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | msaaRt;
+    // Depth: match sample count. Same RT flags as color so the resolved texture stays depth-samplable in post.
+    uint64_t depthFlags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP | msaaRt;
+    m_SceneColor
+        = bgfx::createTexture2D(m_Width, m_Height, false, 1, bgfx::TextureFormat::RGBA16F, colorFlags);
+    m_SceneDepth
+        = bgfx::createTexture2D(m_Width, m_Height, false, 1, bgfx::TextureFormat::D24S8, depthFlags);
 
-    bgfx::TextureHandle sceneTexs[] = { m_SceneColor, m_SceneDepth };
+    bgfx::TextureHandle sceneTexs[] = {m_SceneColor, m_SceneDepth};
     m_SceneFB = bgfx::createFrameBuffer(2, sceneTexs, true); // true = destroy textures when FB destroyed
 
-    if (!bgfx::isValid(m_SceneFB)) SIMPLE_LOG("PostProcessing: Failed to create Scene FB");
+    if (useSceneMsaa && !bgfx::isValid(m_SceneFB)) {
+        SIMPLE_LOG("PostProcessing: MSAA scene FB not supported; falling back to 1x");
+        if (bgfx::isValid(m_SceneColor)) {
+            bgfx::destroy(m_SceneColor);
+        }
+        if (bgfx::isValid(m_SceneDepth)) {
+            bgfx::destroy(m_SceneDepth);
+        }
+        m_SceneFB = BGFX_INVALID_HANDLE;
+        m_SceneColor = BGFX_INVALID_HANDLE;
+        m_SceneDepth = BGFX_INVALID_HANDLE;
+        m_SceneMsaaSamples = 1;
+        colorFlags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
+        depthFlags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
+        m_SceneColor
+            = bgfx::createTexture2D(m_Width, m_Height, false, 1, bgfx::TextureFormat::RGBA16F, colorFlags);
+        m_SceneDepth
+            = bgfx::createTexture2D(m_Width, m_Height, false, 1, bgfx::TextureFormat::D24S8, depthFlags);
+        sceneTexs[0] = m_SceneColor;
+        sceneTexs[1] = m_SceneDepth;
+        m_SceneFB = bgfx::createFrameBuffer(2, sceneTexs, true);
+    }
+
+    if (!bgfx::isValid(m_SceneFB)) {
+        SIMPLE_LOG("PostProcessing: Failed to create Scene FB");
+    }
 
     // 3. Velocity Buffer (RG16F for 2D velocity vectors)
     uint64_t velocityFlags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
@@ -348,6 +426,16 @@ void PostProcessing::Apply(bgfx::ViewId viewId) {
     if (bgfx::isValid(u_viewportSize)) {
         float viewportData[4] = { static_cast<float>(m_Width), static_cast<float>(m_Height), 0.0f, 0.0f };
         bgfx::setUniform(u_viewportSize, viewportData);
+    }
+
+    if (bgfx::isValid(u_FXAAParams)) {
+        float fxaaData[4] = {
+            m_FXAASettings.Enabled ? 1.0f : 0.0f,
+            m_FXAASettings.Strength,
+            0.0f,
+            0.0f
+        };
+        bgfx::setUniform(u_FXAAParams, fxaaData);
     }
 
     // Set HDR exposure uniform

@@ -448,6 +448,8 @@ int main() {
             dt = std::min(dt, 0.033f); // Cap at 30 FPS to avoid instability
             last = nowTs;
 
+            Physics::PhysicsSystem::Instance().SetSceneRenderBlendForSync(1.0f);
+
             // Camera movement (WASD or ZQSD depending on layout, plus arrow keys)
             // Use scancodes (position-based) instead of keycodes (character-based)
             if (mouseLocked) {
@@ -533,6 +535,20 @@ int main() {
                 Physics::PhysicsSystem::Instance().Update(physicsStep);
                 accumulator -= physicsStep;
                 steps++;
+            }
+
+            {
+                float renderBlendT = 1.0f;
+                if (steps > 0) {
+                    renderBlendT = 1.0f - accumulator / physicsStep;
+                    if (renderBlendT < 0.0f) {
+                        renderBlendT = 0.0f;
+                    }
+                    if (renderBlendT > 1.0f) {
+                        renderBlendT = 1.0f;
+                    }
+                }
+                Physics::PhysicsSystem::Instance().SetSceneRenderBlendForSync(renderBlendT);
             }
 
             // Sync physics positions to render scene

@@ -3,7 +3,7 @@
 
 namespace Solstice::Math {
 
-Matrix4 Quaternion::ToMatrix() const {
+SOLSTICE_API Matrix4 Quaternion::ToMatrix() const {
     // Normalize the quaternion first
     Quaternion q = Normalized();
     

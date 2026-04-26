@@ -1,6 +1,16 @@
 #include "LibUI/Core/Core.hxx"
+#include "LibUI/Undo/SnapshotStack.hxx"
 #include "LibUI/FileDialogs/FileDialogs.hxx"
+#include "LibUI/Tools/AppAbout.hxx"
+#include "LibUI/Tools/FileChangedOnDiskModal.hxx"
+#include "LibUI/Tools/OpenGlDebugBase.hxx"
+#include "LibUI/Tools/Win32ExceptionDiag.hxx"
+#include "LibUI/Shell/Frame.hxx"
+#include "LibUI/Shell/GlWindow.hxx"
+#include "LibUI/Shell/MainHost.hxx"
+#include "LibUI/Icons/Icons.hxx"
 #include "LibUI/Widgets/Widgets.hxx"
+#include "LibVersion.hxx"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_dialog.h>
 #include <SDL3/SDL_opengl.h>
@@ -20,6 +30,7 @@
 #include <sstream>
 #include <span>
 #include <cstdlib>
+#include <functional>
 
 #include "PluginLoader.hxx"
 #include "SharponConsole.hxx"
@@ -27,6 +38,11 @@
 #include "SolsticeAPI/V1/Cutscene.h"
 #include "SolsticeAPI/V1/Narrative.h"
 #include "SolsticeAPI/V1/Scripting.h"
+#include <Solstice/FileWatch/FileWatcher.hxx>
+#include <Solstice/SettingsStore/SettingsStore.hxx>
+#include <Solstice/EditorAudio/EditorAudio.hxx>
+
+#include <chrono>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -245,6 +261,8 @@ void UnloadSolsticeEngine() {
     }
 }
 
+static constexpr size_t kSharponMaxUndo = 128;
+
 // Tab representing an open file
 struct Tab {
     std::string FilePath;
@@ -252,8 +270,7 @@ struct Tab {
     bool UnsavedChanges = false;
     int Id; // Unique identifier
 
-    std::vector<std::string> UndoStack;
-    std::vector<std::string> RedoStack;
+    LibUI::Undo::SnapshotStack<std::string> CodeUndo{kSharponMaxUndo};
     std::string UndoSentinel;
     bool WantSelectAll = false;
     bool WantCut = false;
@@ -264,8 +281,7 @@ struct Tab {
     Tab(int id, const std::string& path) : FilePath(path), Id(id) {}
 
     void ResetEditorHistory() {
-        UndoStack.clear();
-        RedoStack.clear();
+        CodeUndo.Clear();
         UndoSentinel = CodeBuffer;
     }
 };
@@ -278,7 +294,7 @@ struct EditorState {
 
     std::string CompilationOutput;
     std::string ScriptOutput;
-    int SelectedTab = 0; // 0 = Compilation, 1 = Script Output
+    int SelectedTab = 0; // 0 = Compilation, 1 = Script Output, 2 = System shell
 
     // File browser
     std::string FileBrowserRootPath = "scripts";
@@ -299,9 +315,9 @@ struct EditorState {
 
     bool ShowNarrativePanel = false;
     bool ShowCutscenePanel = false;
-    bool ShowPluginsPanel = true;
-    bool ShowConsolePanel = true;
-    bool ShowProfilerPanel = true;
+    bool ShowPluginsPanel = false;
+    bool ShowAboutPanel = false;
+    bool ShowProfilerPanel = false;
     std::string NarrativeJSONBuffer;
     std::string NarrativeValidationOutput;
     std::string NarrativeYAMLBuffer;
@@ -309,11 +325,13 @@ struct EditorState {
     std::string CutsceneJSONBuffer;
     std::string CutsceneValidationOutput;
 
-    std::vector<std::string> ConsoleScrollback;
-    char ConsoleInputBuf[512] = {};
+    SharponEmbeddedShell SystemShell;
 
     /// Non-empty when engine missing or exports incomplete (shown under menu bar).
     std::string EngineStatusBanner;
+
+    bool ShowScriptDiskReloadModal = false;
+    bool WatchActiveScriptFile = true;
 };
 
 static SDL_Window* g_SharponSdlWindow = nullptr;
@@ -333,23 +351,24 @@ static const LibUI::FileDialogs::FileFilter kJsonFileFilters[] = {
 static std::filesystem::path SharponWritableStateDir() {
     const char* b = SDL_GetBasePath();
     if (b) {
-        std::filesystem::path p(b);
-        SDL_free((void*)b);
-        return p;
+        return std::filesystem::path(b);
     }
     return std::filesystem::current_path();
 }
 
-static void SaveSharponWorkspaceFile(const std::string& path) {
-    std::error_code ec;
-    std::filesystem::create_directories(SharponWritableStateDir(), ec);
-    std::ofstream out(SharponWritableStateDir() / "sharpon_workspace.txt", std::ios::binary | std::ios::trunc);
-    if (out) {
-        out << path;
+static Solstice::SettingsStore::Store* g_SharponSettings = nullptr;
+
+static void PersistSharponSettings(const EditorState& state) {
+    if (!g_SharponSettings) {
+        return;
     }
+    g_SharponSettings->SetString(Solstice::SettingsStore::kKeyFormatVersion, "1");
+    g_SharponSettings->SetString(Solstice::SettingsStore::kKeyFileBrowserRoot, state.FileBrowserRootPath);
+    g_SharponSettings->SetBool(Solstice::SettingsStore::kKeyWatchActiveScriptFile, state.WatchActiveScriptFile);
+    g_SharponSettings->Save();
 }
 
-static std::string LoadSharponWorkspaceFile() {
+static std::string LoadLegacySharponWorkspaceTxt() {
     std::ifstream in(SharponWritableStateDir() / "sharpon_workspace.txt");
     if (!in) {
         return {};
@@ -395,7 +414,7 @@ static void DrainSharponPendingQueues(EditorState& state) {
     std::string err;
     if (w) {
         state.FileBrowserRootPath = *w;
-        SaveSharponWorkspaceFile(*w);
+        PersistSharponSettings(state);
         LibUI::Core::RecentPathPush(w->c_str());
     }
     if (no) {
@@ -451,59 +470,6 @@ static void TryOpenRepositoryDocsFolder() {
         }
         p = p.parent_path();
     }
-}
-
-void LoadFont() {
-    // Make sure we're using the LibUI ImGui context
-    ImGuiContext* context = LibUI::Core::GetContext();
-    if (!context) {
-        std::cerr << "LoadFont: ERROR - LibUI context is null!" << std::endl;
-        return;
-    }
-    ImGui::SetCurrentContext(context);
-    ImGuiIO& io = ImGui::GetIO();
-
-    // Try multiple font paths
-    const char* fontPaths[] = {
-        "assets/fonts/Roboto-Medium.ttf",
-        "../assets/fonts/Roboto-Medium.ttf",
-        "../../assets/fonts/Roboto-Medium.ttf",
-        "example/Disco/assets/fonts/Roboto-Medium.ttf",
-        "example/Hyperbourne/assets/fonts/Roboto-Medium.ttf",
-        "3rdparty/imgui/misc/fonts/Roboto-Medium.ttf"
-    };
-
-    ImFontConfig fontConfig;
-    fontConfig.OversampleH = 3;
-    fontConfig.OversampleV = 3;
-    fontConfig.PixelSnapH = false;
-    const float fontSize = 17.0f;
-
-    ImFont* font = nullptr;
-    for (const char* path : fontPaths) {
-        if (std::filesystem::exists(path)) {
-            font = io.Fonts->AddFontFromFileTTF(path, fontSize, &fontConfig);
-            if (font) {
-                std::cout << "Loaded font from: " << path << std::endl;
-                break;
-            }
-        }
-    }
-
-    if (!font) {
-        std::cout << "Could not load Roboto font, using default" << std::endl;
-        io.Fonts->AddFontDefault();
-    } else {
-        io.FontDefault = font;
-    }
-
-    // Build font atlas
-    unsigned char* pixels;
-    int width, height;
-    io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
-
-    // Note: The ImGui OpenGL3 backend will upload the font texture automatically
-    // on the first NewFrame() call, so we don't need to do it here
 }
 
 // Moonwalk keywords for syntax highlighting
@@ -704,8 +670,6 @@ struct SharponImGuiStrUserData {
     Tab* TabPtr{nullptr};
 };
 
-static constexpr size_t kSharponMaxUndo = 128;
-
 static int SharponCodeBufferCallback(ImGuiInputTextCallbackData* data) {
     auto* ud = reinterpret_cast<SharponImGuiStrUserData*>(data->UserData);
     Tab* tab = ud->TabPtr;
@@ -720,12 +684,8 @@ static int SharponCodeBufferCallback(ImGuiInputTextCallbackData* data) {
     if (data->EventFlag == ImGuiInputTextFlags_CallbackEdit) {
         std::string newStr(data->Buf, static_cast<size_t>(data->BufTextLen));
         if (newStr != tab->UndoSentinel) {
-            if (tab->UndoStack.size() >= kSharponMaxUndo) {
-                tab->UndoStack.erase(tab->UndoStack.begin());
-            }
-            tab->UndoStack.push_back(tab->UndoSentinel);
+            tab->CodeUndo.PushBeforeChange(tab->UndoSentinel);
             tab->UndoSentinel = std::move(newStr);
-            tab->RedoStack.clear();
         }
         tab->UnsavedChanges = true;
         return 0;
@@ -795,26 +755,24 @@ static void RefreshSharponEngineBanner(EditorState& state) {
 
 static void SharponApplyUndo(EditorState& state) {
     Tab* t = GetActiveTab(state);
-    if (!t || t->UndoStack.empty()) {
+    if (!t || !t->CodeUndo.CanUndo()) {
         return;
     }
-    ImGui::ClearActiveID();
-    t->RedoStack.push_back(t->CodeBuffer);
-    t->CodeBuffer = std::move(t->UndoStack.back());
-    t->UndoStack.pop_back();
+    if (!t->CodeUndo.Undo(t->CodeBuffer)) {
+        return;
+    }
     t->UndoSentinel = t->CodeBuffer;
     t->UnsavedChanges = true;
 }
 
 static void SharponApplyRedo(EditorState& state) {
     Tab* t = GetActiveTab(state);
-    if (!t || t->RedoStack.empty()) {
+    if (!t || !t->CodeUndo.CanRedo()) {
         return;
     }
-    ImGui::ClearActiveID();
-    t->UndoStack.push_back(t->CodeBuffer);
-    t->CodeBuffer = std::move(t->RedoStack.back());
-    t->RedoStack.pop_back();
+    if (!t->CodeUndo.Redo(t->CodeBuffer)) {
+        return;
+    }
     t->UndoSentinel = t->CodeBuffer;
     t->UnsavedChanges = true;
 }
@@ -891,28 +849,6 @@ void RunScript(EditorState& state) {
         } else {
             state.ScriptOutput += "Unknown error\n";
         }
-    }
-}
-
-void OnConsoleLine(void* user, const char* line) {
-    auto* state = static_cast<EditorState*>(user);
-    if (!line || !line[0]) {
-        return;
-    }
-    state->ConsoleScrollback.push_back(std::string("> ") + line);
-    std::string cmd = line;
-    if (cmd == "help") {
-        state->ConsoleScrollback.push_back("Commands: help | compile | run | clear");
-    } else if (cmd == "compile") {
-        CompileScript(*state);
-        state->ConsoleScrollback.push_back("(compile output in Compilation tab)");
-    } else if (cmd == "run") {
-        RunScript(*state);
-        state->ConsoleScrollback.push_back("(run output in Script Output tab)");
-    } else if (cmd == "clear") {
-        state->ConsoleScrollback.clear();
-    } else {
-        state->ConsoleScrollback.push_back("Unknown command. Type help.");
     }
 }
 
@@ -1291,25 +1227,11 @@ void RenderFileOperationDialogs(EditorState& state) {
 }
 
 void RenderEditor(EditorState& state) {
-    // Create fullscreen window
-    const ImGuiViewport* viewport = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->Pos);
-    ImGui::SetNextWindowSize(viewport->Size);
-
-    ImGuiWindowFlags windowFlags =
-        ImGuiWindowFlags_MenuBar |
-        ImGuiWindowFlags_NoTitleBar |
-        ImGuiWindowFlags_NoCollapse |
-        ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoBringToFrontOnFocus |
-        ImGuiWindowFlags_NoNavFocus;
-
-    if (ImGui::Begin("Sharpon Editor", nullptr, windowFlags)) {
+    LibUI::Shell::BeginMainHostWindow("Sharpon Editor", LibUI::Shell::MainHostFlags_SharponEditor());
         // Menu bar
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem("New", "Ctrl+N")) {
+                if (LibUI::Icons::MenuItemWithIcon(LibUI::Icons::Id::New, "New", "Ctrl+N")) {
                     // Create new untitled tab
                     Tab newTab(state.NextTabId++, "");
                     newTab.CodeBuffer = "-- New file\n";
@@ -1320,7 +1242,7 @@ void RenderEditor(EditorState& state) {
                 if (ImGui::MenuItem("Open", "Ctrl+O")) {
                     // File browser is always visible in sidebar
                 }
-                if (ImGui::MenuItem("Save", "Ctrl+S")) {
+                if (LibUI::Icons::MenuItemWithIcon(LibUI::Icons::Id::Save, "Save", "Ctrl+S")) {
                     Tab* activeTab = GetActiveTab(state);
                     if (activeTab) {
                         if (activeTab->FilePath.empty()) {
@@ -1341,7 +1263,7 @@ void RenderEditor(EditorState& state) {
                         }
                     }
                 }
-                if (ImGui::MenuItem("Save As...", "Ctrl+Shift+S")) {
+                if (LibUI::Icons::MenuItemWithIcon(LibUI::Icons::Id::Save, "Save As...", "Ctrl+Shift+S")) {
                     Tab* activeTab = GetActiveTab(state);
                     if (activeTab) {
                         state.DialogParentPath = activeTab->FilePath.empty() ? state.FileBrowserRootPath : std::filesystem::path(activeTab->FilePath).parent_path().string();
@@ -1362,10 +1284,10 @@ void RenderEditor(EditorState& state) {
             }
             if (ImGui::BeginMenu("Edit")) {
                 Tab* edTab = GetActiveTab(state);
-                if (ImGui::MenuItem("Undo", "Ctrl+Z", false, edTab && !edTab->UndoStack.empty())) {
+                if (ImGui::MenuItem("Undo", "Ctrl+Z", false, edTab && edTab->CodeUndo.CanUndo())) {
                     SharponApplyUndo(state);
                 }
-                if (ImGui::MenuItem("Redo", "Ctrl+Y", false, edTab && !edTab->RedoStack.empty())) {
+                if (ImGui::MenuItem("Redo", "Ctrl+Y", false, edTab && edTab->CodeUndo.CanRedo())) {
                     SharponApplyRedo(state);
                 }
                 ImGui::Separator();
@@ -1398,16 +1320,28 @@ void RenderEditor(EditorState& state) {
                 }
                 ImGui::EndMenu();
             }
+            if (ImGui::BeginMenu("View")) {
+                ImGui::MenuItem("Profiler", nullptr, &state.ShowProfilerPanel);
+                ImGui::MenuItem("Plugins", nullptr, &state.ShowPluginsPanel);
+                ImGui::Separator();
+                if (ImGui::MenuItem("Open workspace folder…") && g_SharponSdlWindow) {
+                    const char* defLoc =
+                        state.FileBrowserRootPath.empty() ? nullptr : state.FileBrowserRootPath.c_str();
+                    SDL_ShowOpenFolderDialog(OnWorkspaceFolderPick, nullptr, g_SharponSdlWindow, defLoc, false);
+                }
+                ImGui::EndMenu();
+            }
             if (ImGui::BeginMenu("Tools")) {
                 ImGui::MenuItem("Narrative JSON...", nullptr, &state.ShowNarrativePanel);
                 ImGui::MenuItem("Cutscene JSON...", nullptr, &state.ShowCutscenePanel);
                 ImGui::Separator();
-                ImGui::MenuItem("Plugins window", nullptr, &state.ShowPluginsPanel);
-                ImGui::MenuItem("Console window", nullptr, &state.ShowConsolePanel);
-                ImGui::MenuItem("Performance / profiler", nullptr, &state.ShowProfilerPanel);
+                ImGui::MenuItem("Watch active script file", nullptr, &state.WatchActiveScriptFile);
                 ImGui::EndMenu();
             }
             if (ImGui::BeginMenu("Help")) {
+                if (LibUI::Icons::MenuItemWithIcon(LibUI::Icons::Id::About, "About Sharpon")) {
+                    state.ShowAboutPanel = true;
+                }
                 if (ImGui::MenuItem("Open documentation folder")) {
                     TryOpenRepositoryDocsFolder();
                 }
@@ -1520,10 +1454,10 @@ void RenderEditor(EditorState& state) {
 
             // Right-click context menu for editor
             if (ImGui::BeginPopupContextWindow("##editor_context", ImGuiPopupFlags_MouseButtonRight)) {
-                if (ImGui::MenuItem("Undo", "Ctrl+Z", false, !activeTab->UndoStack.empty())) {
+                if (ImGui::MenuItem("Undo", "Ctrl+Z", false, activeTab->CodeUndo.CanUndo())) {
                     SharponApplyUndo(state);
                 }
-                if (ImGui::MenuItem("Redo", "Ctrl+Y", false, !activeTab->RedoStack.empty())) {
+                if (ImGui::MenuItem("Redo", "Ctrl+Y", false, activeTab->CodeUndo.CanRedo())) {
                     SharponApplyRedo(state);
                 }
                 ImGui::Separator();
@@ -1600,17 +1534,28 @@ void RenderEditor(EditorState& state) {
 
             if (ImGui::BeginTabItem("Script Output")) {
                 state.SelectedTab = 1;
-    ImVec2 outputSize = ImGui::GetContentRegionAvail();
+                ImVec2 outputSize = ImGui::GetContentRegionAvail();
                 // Only show scrollbars when content overflows
                 ImGuiWindowFlags outputFlags = ImGuiWindowFlags_HorizontalScrollbar;
                 if (ImGui::BeginChild("##script_output", outputSize, true, outputFlags)) {
                     ImGui::TextUnformatted(state.ScriptOutput.c_str());
-            // Auto-scroll to bottom
+                    // Auto-scroll to bottom
                     if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 5.0f) {
-                ImGui::SetScrollHereY(1.0f);
+                        ImGui::SetScrollHereY(1.0f);
+                    }
+                }
+                ImGui::EndChild();
+                ImGui::EndTabItem();
             }
-        }
-        ImGui::EndChild();
+
+            if (ImGui::BeginTabItem("Console")) {
+                state.SelectedTab = 2;
+                std::error_code ecShell;
+                std::filesystem::path shellCwd = state.FileBrowserRootPath;
+                if (shellCwd.empty() || !std::filesystem::is_directory(shellCwd, ecShell)) {
+                    shellCwd = std::filesystem::current_path(ecShell);
+                }
+                Sharpon_DrawSystemShellTab(state.SystemShell, shellCwd);
                 ImGui::EndTabItem();
             }
 
@@ -1620,8 +1565,7 @@ void RenderEditor(EditorState& state) {
         ImGui::EndChild(); // End output section
         ImGui::EndChild(); // End editor_output_split
         ImGui::EndChild(); // End main_split
-    }
-    ImGui::End();
+    LibUI::Shell::EndMainHostWindow();
 }
 
 // Render directory tree recursively
@@ -1790,77 +1734,56 @@ void RenderFileBrowser(EditorState& state) {
 }
 
 int main(int argc, char* argv[]) {
-    // Initialize SDL
-    int sdlInitResult = SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS);
-    if (sdlInitResult < 0) {
+    (void)argc;
+    (void)argv;
+
+#ifdef _WIN32
+    LibUI::Tools::Win32InitCrashDiagnostics();
+    LibUI::Tools::Win32InstallUtilityTopLevelFilter("Sharpon");
+#endif
+
+    if (!LibUI::Shell::InitUtilitySdlVideo()) {
         std::cerr << "SDL initialization failed: " << SDL_GetError() << std::endl;
         return -1;
     }
 
-    // Set OpenGL attributes BEFORE creating the window
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
-    SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
-
-    // Create window
-    SDL_Window* window = SDL_CreateWindow("Sharpon - Script Editor", 1280, 720, SDL_WINDOW_RESIZABLE | SDL_WINDOW_OPENGL);
-    if (!window) {
-        std::cerr << "Window creation failed: " << SDL_GetError() << std::endl;
-        SDL_Quit();
+    LibUI::Shell::GlWindow gw{};
+    const std::string sharponTitle =
+        std::string("Sharpon — Solstice Moonwalk — ") + Solstice::Utilities::kVersionDisplaySuffix;
+    if (!LibUI::Shell::CreateUtilityGlWindow(gw, sharponTitle.c_str(), 1280, 720,
+            static_cast<SDL_WindowFlags>(SDL_WINDOW_RESIZABLE | SDL_WINDOW_MAXIMIZED), 1)) {
+        std::cerr << "Window / OpenGL creation failed: " << SDL_GetError() << std::endl;
+        LibUI::Shell::DestroyUtilityGlWindow(gw);
+        LibUI::Shell::ShutdownUtilitySdlVideo();
         return -1;
     }
+    SDL_Window* window = gw.window;
+    SDL_GLContext glContext = gw.glContext;
     g_SharponSdlWindow = window;
 
-    // Create OpenGL context
-    SDL_GLContext glContext = SDL_GL_CreateContext(window);
-    if (!glContext) {
-        std::cerr << "OpenGL context creation failed: " << SDL_GetError() << std::endl;
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return -1;
-    }
-
-    // Make the OpenGL context current (required before initializing ImGui OpenGL3 renderer)
-    if (!SDL_GL_MakeCurrent(window, glContext)) {
-        std::cerr << "Failed to make OpenGL context current: " << SDL_GetError() << std::endl;
-        SDL_GL_DestroyContext(glContext);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
-        return -1;
-    }
-
-    // Enable vsync
-    SDL_GL_SetSwapInterval(1);
-
-    // Verify context is current before initializing LibUI
-    SDL_Window* verifyWindow = SDL_GL_GetCurrentWindow();
-    SDL_GLContext verifyContext = SDL_GL_GetCurrentContext();
-    if (verifyWindow != window || verifyContext != glContext) {
+    if (!LibUI::Shell::VerifyUtilityGlWindowCurrent(gw)) {
         std::cerr << "ERROR: OpenGL context verification failed!" << std::endl;
-        std::cerr << "  Expected window: " << window << ", got: " << verifyWindow << std::endl;
-        std::cerr << "  Expected context: " << glContext << ", got: " << verifyContext << std::endl;
-        SDL_GL_DestroyContext(glContext);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
+        LibUI::Shell::DestroyUtilityGlWindow(gw);
+        LibUI::Shell::ShutdownUtilitySdlVideo();
         return -1;
     }
-    // Initialize LibUI
+    SharponPlugins_LoadDefault();
+
+    if (!LibUI::Shell::UtilityGlWindowMakeCurrent(gw)) {
+        std::cerr << "SDL_GL_MakeCurrent failed after plugins: " << SDL_GetError() << std::endl;
+        LibUI::Shell::DestroyUtilityGlWindow(gw);
+        LibUI::Shell::ShutdownUtilitySdlVideo();
+        return -1;
+    }
+
     if (!LibUI::Core::Initialize(window)) {
         std::cerr << "LibUI initialization failed" << std::endl;
-        SDL_GL_DestroyContext(glContext);
-        SDL_DestroyWindow(window);
-        SDL_Quit();
+        LibUI::Shell::DestroyUtilityGlWindow(gw);
+        LibUI::Shell::ShutdownUtilitySdlVideo();
         return -1;
     }
+    (void)Solstice::EditorAudio::Init();
 
-    // Load font
-    LoadFont();
-
-    // Load Solstice engine
     bool engineLoaded = LoadSolsticeEngine();
     if (engineLoaded) {
         std::cout << "Solstice engine loaded successfully" << std::endl;
@@ -1869,11 +1792,10 @@ int main(int argc, char* argv[]) {
         std::cout << "Warning: Solstice engine not loaded (editor will still work)" << std::endl;
     }
 
-    SharponPlugins_LoadDefault();
-
     // Editor state
     EditorState editorState;
-    editorState.CompilationOutput = "Sharpon Script Editor v0.1.0\n";
+    editorState.CompilationOutput =
+        std::string("Sharpon Script Editor ") + Solstice::Utilities::kVersionDisplaySuffix + "\n";
     editorState.ScriptOutput = "";
     if (engineLoaded) {
         editorState.CompilationOutput += "✓ Solstice engine loaded\n";
@@ -1900,14 +1822,32 @@ int main(int argc, char* argv[]) {
       "choices": []
     }
   ],
-  "provenance": { "source": "json" }
+  "provenance": { "source": "json"     }
 })";
 
+    const char* sdlBaseForSettings = SDL_GetBasePath();
+    Solstice::SettingsStore::Store sharponSettings(Solstice::SettingsStore::PathNextToExecutable(sdlBaseForSettings, "sharpon"));
+    sharponSettings.Load();
+    g_SharponSettings = &sharponSettings;
+    if (!sharponSettings.GetString(Solstice::SettingsStore::kKeyFileBrowserRoot)) {
+        const std::string leg = LoadLegacySharponWorkspaceTxt();
+        if (!leg.empty()) {
+            sharponSettings.SetString(Solstice::SettingsStore::kKeyFileBrowserRoot, leg);
+            sharponSettings.SetString(Solstice::SettingsStore::kKeyFormatVersion, "1");
+            sharponSettings.Save();
+            std::error_code ec;
+            std::filesystem::remove(SharponWritableStateDir() / "sharpon_workspace.txt", ec);
+        }
+    }
     {
-        std::string ws = LoadSharponWorkspaceFile();
         std::error_code ec;
-        if (!ws.empty() && std::filesystem::is_directory(ws, ec)) {
-            editorState.FileBrowserRootPath = ws;
+        if (auto w = sharponSettings.GetString(Solstice::SettingsStore::kKeyFileBrowserRoot)) {
+            if (!w->empty() && std::filesystem::is_directory(*w, ec)) {
+                editorState.FileBrowserRootPath = *w;
+            }
+        }
+        if (auto wb = sharponSettings.GetBool(Solstice::SettingsStore::kKeyWatchActiveScriptFile)) {
+            editorState.WatchActiveScriptFile = *wb;
         }
     }
 
@@ -1919,10 +1859,62 @@ int main(int argc, char* argv[]) {
   ]
 })";
 
+    Solstice::FileWatch::FileWatcher scriptFileWatch(std::chrono::milliseconds(400));
+    std::optional<std::string> lastScriptWatchPath;
+    scriptFileWatch.SetCallback([&](const std::string& p) {
+        Tab* tab = nullptr;
+        for (auto& t : editorState.Tabs) {
+            if (t.Id == editorState.ActiveTabId) {
+                tab = &t;
+                break;
+            }
+        }
+        if (!tab || tab->FilePath != p) {
+            return;
+        }
+        if (!tab->UnsavedChanges) {
+            std::ifstream in(p, std::ios::binary);
+            if (in) {
+                std::ostringstream ss;
+                ss << in.rdbuf();
+                tab->CodeBuffer = ss.str();
+                tab->ResetEditorHistory();
+            }
+        } else {
+            editorState.ShowScriptDiskReloadModal = true;
+        }
+    });
+
     // Main loop
     bool running = true;
+    int sharponLastDrawableW = 1280;
+    int sharponLastDrawableH = 720;
     while (running) {
+        const bool watchBeforeFrame = editorState.WatchActiveScriptFile;
         DrainSharponPendingQueues(editorState);
+
+        if (editorState.WatchActiveScriptFile) {
+            scriptFileWatch.SetEnabled(true);
+            Tab* at = nullptr;
+            for (auto& t : editorState.Tabs) {
+                if (t.Id == editorState.ActiveTabId) {
+                    at = &t;
+                    break;
+                }
+            }
+            std::optional<std::string> curWatch =
+                (at && !at->FilePath.empty()) ? std::optional<std::string>(at->FilePath) : std::nullopt;
+            if (curWatch != lastScriptWatchPath) {
+                scriptFileWatch.ClearPaths();
+                if (curWatch) {
+                    scriptFileWatch.AddPath(*curWatch);
+                }
+                lastScriptWatchPath = curWatch;
+            }
+            scriptFileWatch.Poll();
+        } else {
+            scriptFileWatch.SetEnabled(false);
+        }
 
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
@@ -1943,24 +1935,65 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // New frame
-        LibUI::Core::NewFrame();
+        if (!SDL_GL_MakeCurrent(window, glContext)) {
+            editorState.CompilationOutput += std::string("SDL_GL_MakeCurrent failed before NewFrame: ") + SDL_GetError() + "\n";
+        }
+        LibUI::Shell::BeginUtilityImGuiFrame(window, sharponLastDrawableW, sharponLastDrawableH);
         SharponProfiler_TickAutoFrame();
 
         // Render UI (single fullscreen window)
         RenderEditor(editorState);
+
+        if (editorState.WatchActiveScriptFile != watchBeforeFrame) {
+            PersistSharponSettings(editorState);
+        }
+
+        LibUI::Tools::DrawFileChangedOnDiskModal(
+            "Sharpon_ScriptDisk", &editorState.ShowScriptDiskReloadModal, "The active script file changed on disk.",
+            "Reload from disk", "Keep editor buffer", 220.f,
+            [&]() {
+                Tab* tab = nullptr;
+                for (auto& t : editorState.Tabs) {
+                    if (t.Id == editorState.ActiveTabId) {
+                        tab = &t;
+                        break;
+                    }
+                }
+                if (tab && !tab->FilePath.empty()) {
+                    std::ifstream in(tab->FilePath, std::ios::binary);
+                    if (in) {
+                        std::ostringstream ss;
+                        ss << in.rdbuf();
+                        tab->CodeBuffer = ss.str();
+                        tab->UnsavedChanges = false;
+                        tab->ResetEditorHistory();
+                    }
+                }
+            },
+            []() {},
+            [&]() {
+                scriptFileWatch.ClearPaths();
+                lastScriptWatchPath.reset();
+            });
+
         RenderNarrativePanel(editorState);
         RenderCutscenePanel(editorState);
-        if (editorState.ShowConsolePanel) {
-            Sharpon_DrawConsolePanel(editorState.ConsoleScrollback, editorState.ConsoleInputBuf,
-                                     sizeof(editorState.ConsoleInputBuf), OnConsoleLine, &editorState,
-                                     &editorState.ShowConsolePanel);
-        }
+        editorState.SystemShell.pump();
         if (editorState.ShowProfilerPanel) {
             SharponProfiler_DrawPanel(&editorState.ShowProfilerPanel);
         }
         if (editorState.ShowPluginsPanel) {
             SharponPlugins_DrawPanel(&editorState.ShowPluginsPanel);
+        }
+        if (editorState.ShowAboutPanel) {
+            LibUI::Tools::AboutWindowContent about{};
+            about.windowTitle = "About Sharpon";
+            about.headline = Solstice::Utilities::kAboutHeadline;
+            about.subtitle = "Solstice Moonwalk script workspace";
+            about.body =
+                "Edit and compile Moonwalk scripts against SolsticeEngine, with optional Narrative/Cutscene JSON tools "
+                "and native plugins from ./plugins next to Sharpon.";
+            LibUI::Tools::DrawAboutWindow(&editorState.ShowAboutPanel, about, ImVec2(460, 220));
         }
 
         // Render file operation dialogs
@@ -1981,10 +2014,10 @@ int main(int argc, char* argv[]) {
     // Cleanup
     SharponPlugins_UnloadAll();
     UnloadSolsticeEngine();
+    Solstice::EditorAudio::Shutdown();
     LibUI::Core::Shutdown();
-    SDL_GL_DestroyContext(glContext);
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    LibUI::Shell::DestroyUtilityGlWindow(gw);
+    LibUI::Shell::ShutdownUtilitySdlVideo();
 
     return 0;
 }

@@ -1,12 +1,13 @@
 #pragma once
 
+#include <Solstice.hxx>
 #include <sstream>
 #include <string>
 #include <utility>
 
 namespace Solstice::Core {
 
-class DebugLogger {
+class SOLSTICE_API DebugLogger {
 public:
     static void Initialize();
     static void LogMessage(const std::string& message);

@@ -9,7 +9,7 @@ target_link_libraries(Avalanche
 
 # Set output directory
 set_target_properties(Avalanche PROPERTIES
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_EXECUTABLE_OUTPUT_DIR}"
 )
 
 # MSVC static analysis (if available)

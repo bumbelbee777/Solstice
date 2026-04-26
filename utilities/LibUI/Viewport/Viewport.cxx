@@ -18,8 +18,11 @@ bool BeginHost(const char* str_id, const ImVec2& size, bool border) {
         return false;
     }
     try {
-        return ImGui::BeginChild(str_id, size, border,
+        // BeginChild may return false when clipped/collapsed; ImGui still requires EndChild() every time (see imgui.h).
+        // Do not return that bool to callers — skipping EndHost() corrupts the window stack (End vs EndChild mismatch).
+        ImGui::BeginChild(str_id, size, border ? ImGuiChildFlags_Borders : ImGuiChildFlags_None,
             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings);
+        return true;
     } catch (...) {
         return false;
     }

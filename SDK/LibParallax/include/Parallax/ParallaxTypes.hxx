@@ -4,9 +4,12 @@
 #include <Math/Matrix.hxx>
 #include <Math/Quaternion.hxx>
 #include <Math/Vector.hxx>
+#include <Skeleton/Skeleton.hxx>
+#include <array>
 #include <cstdint>
 #include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <functional>
 #include <string>
 #include <unordered_map>
@@ -17,9 +20,15 @@ namespace Solstice::Parallax {
 
 class IAssetResolver;
 
+/// Timeline channel attribute names for `EvaluateScene` facial sampling (additive ActorElement channels).
+inline constexpr const char* kChannelFacialMoodName = "FacialMoodName";
+inline constexpr const char* kChannelFacialMoodWeight = "FacialMoodWeight";
+inline constexpr const char* kChannelFacialVisemeId = "FacialVisemeId";
+inline constexpr const char* kChannelFacialVisemeWeight = "FacialVisemeWeight";
+
 constexpr uint32_t PARALLAX_MAGIC = 0x50524C58u; // 'PRLX'
 constexpr uint16_t PARALLAX_FORMAT_VERSION_MAJOR = 1;
-constexpr uint16_t PARALLAX_FORMAT_VERSION_MINOR = 1; // v1.1: ZSTD compresses tail only (after 92-byte header)
+constexpr uint16_t PARALLAX_FORMAT_VERSION_MINOR = 0;
 constexpr uint32_t PARALLAX_INVALID_INDEX = 0xFFFFFFFFu;
 
 enum class ParallaxError {
@@ -96,12 +105,24 @@ struct AssetData {
     uint16_t HintType{0};
 };
 
+/// Parallax per-keyframe **ease-in** (segment ending at this key) matches historical `Easing` byte.
+enum class KeyframeInterpolation : uint8_t {
+    Eased = 0, ///< Parametric `Ease` on normalized time, then lerp.
+    Hold = 1,  ///< Value stays at previous key until this key’s tick (float/vec3/color).
+    Linear = 2, ///< Lerp, ignoring parametric Ease.
+    Bezier = 3 ///< 1D value-space cubic; tangents in `KeyframeRecord` (float channels only; vec uses eased lerp as fallback).
+};
+
+#pragma pack(push, 1)
 struct KeyframeHeader {
     uint64_t TimeTicks{0};
     uint8_t EasingType{0};
     uint8_t Flags{0};
-    uint16_t Reserved{0};
+    uint8_t EaseOut{0xFF}; ///< Outgoing ease on the segment *after* this key (0xFF = inherit: use the next key’s EaseIn at runtime).
+    uint8_t Interp{0};
 };
+static_assert(sizeof(KeyframeHeader) == 12, "keyframe header disk layout");
+#pragma pack(pop)
 
 #pragma pack(push, 1)
 
@@ -278,10 +299,86 @@ struct MGDisplayList {
     float GlobalAlpha{1.0f};
 };
 
+/** Sort key for root `MGDisplayList::Entries` when compositing (MovieMaker CPU raster + ImGui compositor). */
+inline float MGEntryCompositeDepth(const MGDisplayList::Entry& e) {
+    auto it = e.Attributes.find("Depth");
+    if (it == e.Attributes.end()) {
+        return 0.f;
+    }
+    if (const auto* f = std::get_if<float>(&it->second)) {
+        return *f;
+    }
+    return 0.f;
+}
+
+/// Matches `SmmFluidVolumeElement` for viewport overlay / authoring; interior cell count should stay within `kParallaxFluidInteriorCellBudget` when possible.
+struct FluidVolumeState {
+    ElementIndex Element{PARALLAX_INVALID_INDEX};
+    std::string Name;
+    bool Enabled{true};
+    bool EnableMacCormack{true};
+    bool EnableBoussinesq{false};
+    bool VolumeVisualizationClip{false};
+    Math::Vec3 BoundsMin{};
+    Math::Vec3 BoundsMax{1.f, 1.f, 1.f};
+    int Nx{32};
+    int Ny{32};
+    int Nz{32};
+    float Diffusion{0.0001f};
+    float Viscosity{0.0001f};
+    float ReferenceDensity{1000.f};
+    int PressureRelaxationIterations{32};
+    float BuoyancyStrength{1.f};
+    float Prandtl{0.71f};
+};
+
+/// Same budget as Jackhammer’s SMF fluid authoring (see `Smf::kSmfFluidInteriorCellBudget` in the map SDK).
+inline constexpr int64_t kParallaxFluidInteriorCellBudget = 262144;
+
+/// Parallax `SceneRoot` sky cubemap (matches Jackhammer `.smf` / `SmfSkybox` path semantics: +X, −X, +Y, −Y, +Z, −Z).
+struct SkyboxAuthoringState {
+    bool Enabled{false};
+    float Brightness{1.f};
+    /// World Y-up: rotates the skybox around +Y (degrees).
+    float YawDegrees{0.f};
+    std::array<std::string, 6> FacePaths{};
+};
+
+/// Evaluated facial pose for one actor (named bone deltas + logical morph weights). Runtime maps names to rig bones.
+struct ActorFacialPose {
+    ElementIndex Element{PARALLAX_INVALID_INDEX};
+    std::unordered_map<std::string, Solstice::Skeleton::BoneTransform> BoneDeltasByName;
+    /// Hash ids align with `Solstice::Arzachel::MorphNameHash` for string keys.
+    std::unordered_map<uint32_t, float> MorphWeights;
+};
+
+/// Rigid-mesh + Arzachel variation hooks authored on `ActorElement` (runtime may feed `Arzachel::Damaged`, LOD, or clip names).
+struct ActorArzachelAuthoring {
+    ElementIndex Element{PARALLAX_INVALID_INDEX};
+    /// 0 = none; (0,1] drives `Arzachel::Damaged(baseMesh, seed, amount)`-style destruction for rigid props.
+    float RigidBodyDamage{0.f};
+    /// World-space distance beyond which a coarser representation may be used (0 = engine default / unused).
+    float LodDistanceHigh{0.f};
+    /// Maximum draw distance for this actor (0 = engine default / unused).
+    float LodDistanceLow{0.f};
+    /// Free-form animation preset label (pairs with `AnimationClip` / engine runners).
+    std::string AnimationClipPreset;
+    /// Label for a paired destruction / breakup animation or Arzachel recipe (authoring; engine-defined).
+    std::string DestructionAnimPreset;
+};
+
 struct SceneEvaluationResult {
     std::vector<ElementTransform> ElementTransforms;
     std::vector<LightState> LightStates;
     std::vector<AudioSourceState> AudioStates;
+    /// Populated for `SmmFluidVolumeElement` rows (MovieMaker + runtime visualization).
+    std::vector<FluidVolumeState> FluidVolumes;
+    /// Filled from `SceneRoot` on element 0 when the schema is `SceneRoot` (SMM + exporters).
+    std::optional<SkyboxAuthoringState> EnvironmentSkybox;
+    /// One row per `ActorElement` with Arzachel / LOD / preset fields (for tooling and runtime).
+    std::vector<ActorArzachelAuthoring> ActorArzachelAuthoring;
+    /// One row per `ActorElement` in element order when facial channels are present or proc flags are set.
+    std::vector<ActorFacialPose> ActorFacialPoses;
     MGDisplayList MotionGraphics;
     std::unordered_map<std::string, AttributeValue> ScriptOutputs;
 };

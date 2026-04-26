@@ -11,6 +11,7 @@
 #include "../UI/PauseMenu.hxx"
 #include "../../Entity/Registry.hxx"
 #include "../../Entity/Scheduler.hxx"
+#include "../Networking/NetworkSessionCoordinator.hxx"
 #include <Render/Scene/Camera.hxx>
 #include <memory>
 
@@ -56,6 +57,10 @@ protected:
     bool m_ShowWeaponHUD{true};
     bool m_ShowMinimap{false};
     bool m_ShowKillFeed{false};
+
+    /// When true, `ConfigureECSPhases` registers `NetworkSessionCoordinator` Simulation systems (default off).
+    bool m_EnableMultiplayerECS{false};
+    std::unique_ptr<NetworkSessionCoordinator> m_NetworkSession;
 
 protected:
     // Override these in derived classes if needed

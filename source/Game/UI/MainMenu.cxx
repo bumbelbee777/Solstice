@@ -302,13 +302,6 @@ void MainMenu::Render(int ScreenWidth, int ScreenHeight, float DeltaTime) {
     ImGui::End();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(2);
-
-    // 5. Build Info - Use drawList for text
-    ImVec2 buildInfoPos(static_cast<float>(ScreenWidth) - 200.0f, static_cast<float>(ScreenHeight) - 50.0f);
-    ImU32 buildInfoColor = IM_COL32(128, 128, 153, 102); // 0.4f alpha
-    char buildText[256];
-    snprintf(buildText, sizeof(buildText), "Development Build (Solstive v%s)", SOLSTICE_VERSION);
-    drawList->AddText(nullptr, 14.0f, buildInfoPos, buildInfoColor, buildText);
 }
 
 void MainMenu::RenderLoadGameMenu(int ScreenWidth, int ScreenHeight) {

@@ -25,6 +25,7 @@ uniform mat4 u_reflectionInvViewProj;
 uniform vec4 u_cameraPos;
 uniform vec4 u_taaParams; // x: blend, y: clampStrength, z: sharpenAmount, w: historyValid
 uniform vec4 u_taaJitter; // xy: current jitter ndc, zw: previous jitter ndc
+uniform vec4 u_fxaaParams; // x: enabled (>0.5), y: strength 0..1, zw: unused
 
 // Narkowicz ACES (cheaper)
 vec3 aces(vec3 x) {
@@ -86,6 +87,71 @@ float luminance(vec3 color) {
     return dot(color, vec3(0.2126, 0.7152, 0.0722));
 }
 
+// Unsharp after TAA: scale by local edge response so flat areas stay clean and crisp edges
+// (zoomed-out planes, grid lines) get more strength without global halos.
+vec3 applyAdaptiveTaaUnsharp(
+    vec3 center,
+    vec3 n1, vec3 n2, vec3 n3, vec3 n4,
+    vec3 nd1, vec3 nd2, vec3 nd3, vec3 nd4,
+    float taaSharpen) {
+    if (taaSharpen < 0.0001) {
+        return center;
+    }
+    vec3 blur = (n1 + n2 + n3 + n4) * 0.25;
+    float cL = luminance(center);
+    float l1 = luminance(n1);
+    float l2 = luminance(n2);
+    float l3 = luminance(n3);
+    float l4 = luminance(n4);
+    float l5 = luminance(nd1);
+    float l6 = luminance(nd2);
+    float l7 = luminance(nd3);
+    float l8 = luminance(nd4);
+    float lmin = min(min(min(l1, l2), min(l3, l4)), min(min(l5, l6), min(l7, l8)));
+    float lmax = max(max(max(l1, l2), max(l3, l4)), max(max(l5, l6), max(l7, l8)));
+    float lrange = lmax - lmin;
+    float lap = abs(4.0 * cL - l1 - l2 - l3 - l4);
+    // Relative response: stable across HDR exposure; stronger on true edges vs noise.
+    float relRange = lrange / max(cL, 0.02);
+    float relLap = lap / max(cL, 0.02);
+    float edge = max(
+        smoothstep(0.006, 0.14, lrange) * smoothstep(0.0, 0.35, relRange),
+        smoothstep(0.004, 0.10, relLap) * 0.85
+    );
+    edge = clamp(edge, 0.0, 1.0);
+    float k = taaSharpen * (0.04 + 0.96 * edge);
+    return center + (center - blur) * k;
+}
+
+// Cheap FXAA on HDR linear color (after exposure / TAA / motion blur, before grading).
+vec3 applyFxaaPass(vec3 rgbCenter, vec2 uv, vec2 rcpFrame, float exposureMul, float strength) {
+    vec3 u = texture2D(s_texColor, uv + vec2(0.0, -rcpFrame.y)).rgb * exposureMul;
+    vec3 d = texture2D(s_texColor, uv + vec2(0.0, rcpFrame.y)).rgb * exposureMul;
+    vec3 l = texture2D(s_texColor, uv + vec2(-rcpFrame.x, 0.0)).rgb * exposureMul;
+    vec3 r = texture2D(s_texColor, uv + vec2(rcpFrame.x, 0.0)).rgb * exposureMul;
+    vec3 nw = texture2D(s_texColor, uv + vec2(-rcpFrame.x, -rcpFrame.y)).rgb * exposureMul;
+    vec3 ne = texture2D(s_texColor, uv + vec2(rcpFrame.x, -rcpFrame.y)).rgb * exposureMul;
+    vec3 sw = texture2D(s_texColor, uv + vec2(-rcpFrame.x, rcpFrame.y)).rgb * exposureMul;
+    vec3 se = texture2D(s_texColor, uv + vec2(rcpFrame.x, rcpFrame.y)).rgb * exposureMul;
+
+    float lC = luminance(rgbCenter);
+    float lU = luminance(u), lD = luminance(d), lL = luminance(l), lR = luminance(r);
+    float lNW = luminance(nw), lNE = luminance(ne), lSW = luminance(sw), lSE = luminance(se);
+
+    float lMin = min(lC, min(min(lU, lD), min(min(lL, lR), min(min(lNW, lNE), min(lSW, lSE)))));
+    float lMax = max(lC, max(max(lU, lD), max(max(lL, lR), max(max(lNW, lNE), max(lSW, lSE)))));
+
+    float contrast = lMax - lMin;
+    float threshold = max(0.065 * lC, 0.00025);
+    if (contrast <= threshold) {
+        return rgbCenter;
+    }
+
+    vec3 avg = (u + d + l + r + nw + ne + sw + se) * 0.125;
+    float edgeBlend = clamp((contrast - threshold) / max(contrast, 1e-5), 0.0, 1.0);
+    return mix(rgbCenter, avg, edgeBlend * strength * 0.62);
+}
+
 void main()
 {
     // Optimized post-processing for CPU/iGPU with HDR support
@@ -94,11 +160,8 @@ void main()
 
     // 1. HDR Exposure adjustment
     float exposure = u_hdrExposure.x;
-    if (exposure > 0.001) {
-        color *= exposure;
-    } else {
-        color *= 1.25; // Default exposure fallback
-    }
+    float expMul = (exposure > 0.001) ? exposure : 1.25;
+    color *= expMul;
 
     // 2. Temporal AA (balanced quality/cost)
     float taaBlend = clamp(u_taaParams.x, 0.0, 0.95);
@@ -138,15 +201,22 @@ void main()
         historyColor = clamp(historyColor, clampMin, clampMax);
 
         float lumaDelta = abs(luminance(color) - luminance(historyColor));
-        float historyWeight = taaBlend * (1.0 - clamp(lumaDelta * 4.0, 0.0, 1.0));
-        historyWeight *= hasVelocity ? 1.0 : 0.8;
+        float historyWeight = taaBlend * (1.0 - clamp(lumaDelta * 3.0, 0.0, 1.0));
+        float velMag = length(screenVelUv);
+        // Reduce history aggressively during lateral/object motion to avoid soft trailing blur.
+        float motionRejection = hasVelocity ? clamp(velMag * 200.0, 0.0, 0.45) : 0.0;
+        historyWeight *= (hasVelocity ? 0.75 : 1.0);
+        historyWeight *= (1.0 - motionRejection);
+        historyWeight = clamp(historyWeight, 0.0, taaBlend);
         color = mix(color, historyColor, historyWeight);
 
-        // Tiny unsharp mask to recover detail after TAA.
+        // Diagonal taps only for adaptive unsharp (saves 4 texture fetches when sharpen is off).
         if (taaSharpen > 0.001) {
-            vec3 center = color;
-            vec3 blur = (n1 + n2 + n3 + n4) * 0.25;
-            color = center + (center - blur) * taaSharpen;
+            vec3 nd1 = texture2D(s_texColor, TexCoord + vec2(texel.x, texel.y)).rgb;
+            vec3 nd2 = texture2D(s_texColor, TexCoord + vec2(-texel.x, texel.y)).rgb;
+            vec3 nd3 = texture2D(s_texColor, TexCoord + vec2(texel.x, -texel.y)).rgb;
+            vec3 nd4 = texture2D(s_texColor, TexCoord + vec2(-texel.x, -texel.y)).rgb;
+            color = applyAdaptiveTaaUnsharp(color, n1, n2, n3, n4, nd1, nd2, nd3, nd4, taaSharpen);
         }
     }
 
@@ -189,6 +259,12 @@ void main()
                 color = blurColor / totalWeight;
             }
         }
+    }
+
+    if (u_fxaaParams.x > 0.5) {
+        vec2 rcpFrame = vec2(1.0, 1.0) / max(u_viewportSize.xy, vec2(1.0, 1.0));
+        float fxaaStrength = clamp(u_fxaaParams.y, 0.0, 1.0);
+        color = applyFxaaPass(color, TexCoord, rcpFrame, expMul, fxaaStrength);
     }
 
     // 3. Optimized sharpening (removed - too expensive, minimal visual impact)

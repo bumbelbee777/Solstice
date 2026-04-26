@@ -2,7 +2,6 @@
 #include <Render/Scene/Scene.hxx>
 #include <Material/Material.hxx>
 #include <Core/Debug/Debug.hxx>
-#include <Core/System/Async.hxx>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -232,7 +231,23 @@ void Raytracing::Initialize(uint32_t width, uint32_t height,
                ", AO: " + std::to_string(m_AOWidth) + "x" + std::to_string(m_AOHeight));
 }
 
+void Raytracing::DrainAsyncJobs() {
+    for (std::future<void>& f : m_AsyncJobs) {
+        if (f.valid()) {
+            f.wait();
+        }
+    }
+    m_AsyncJobs.clear();
+    m_RaytracingInProgress.store(false, std::memory_order_release);
+}
+
+void Raytracing::WaitForPendingAsyncJobs() {
+    DrainAsyncJobs();
+}
+
 void Raytracing::Shutdown() {
+    DrainAsyncJobs();
+
     if (bgfx::isValid(m_ShadowTexture)) {
         bgfx::destroy(m_ShadowTexture);
         m_ShadowTexture = BGFX_INVALID_HANDLE;
@@ -1210,32 +1225,16 @@ void Raytracing::UpdateAsync() {
 }
 
 void Raytracing::UpdateAsync(const std::vector<Physics::LightSource>& lights, const Scene& scene) {
-    // Don't start new raytracing if previous is still running
-    if (m_RaytracingInProgress.load()) {
+    // Must run on the thread that owns bgfx (same as SoftwareRenderer). `UploadTextures` calls
+    // `bgfx::updateTexture2D`; bgfx API is not safe from JobSystem worker threads.
+    if (m_RaytracingInProgress.load(std::memory_order_acquire)) {
         return;
     }
 
-    // Use JobSystem for async raytracing update
-    try {
-        m_RaytracingInProgress = true;
-
-        auto shadowFuture = Core::JobSystem::Instance().SubmitAsync([this, lights, &scene]() {
-            TraceShadowRays(lights, scene);
-            m_RaytracingInProgress = false;
-        });
-
-        auto aoFuture = Core::JobSystem::Instance().SubmitAsync([this, &scene]() {
-            TraceAORays(scene, m_AORadius, m_AOSamples);
-        });
-
-        m_AsyncJobs.push_back(std::move(shadowFuture));
-        m_AsyncJobs.push_back(std::move(aoFuture));
-    } catch (...) {
-        // JobSystem not initialized, fall back to synchronous
-        m_RaytracingInProgress = false;
-        TraceShadowRays(lights, scene);
-        TraceAORays(scene, m_AORadius, m_AOSamples);
-    }
+    m_RaytracingInProgress.store(true, std::memory_order_release);
+    TraceShadowRays(lights, scene);
+    TraceAORays(scene, m_AORadius, m_AOSamples);
+    m_RaytracingInProgress.store(false, std::memory_order_release);
 }
 
 void Raytracing::UpdateUniforms() {

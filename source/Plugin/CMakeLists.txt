@@ -8,7 +8,7 @@ add_library(Plugin STATIC
     SubsystemHooks.cxx
 )
 target_include_directories(Plugin PUBLIC ${SOURCE_DIR})
-target_link_libraries(Plugin PUBLIC Core)
+target_link_libraries(Plugin PUBLIC Core LibNativeLoad)
 if(CMAKE_DL_LIBS)
     target_link_libraries(Plugin PRIVATE ${CMAKE_DL_LIBS})
 endif()

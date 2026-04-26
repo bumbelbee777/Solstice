@@ -305,9 +305,16 @@ bool SaveSceneToBytes(const ParallaxScene& scene, std::vector<std::byte>& out, b
             kh.TimeTicks = kf.TimeTicks;
             kh.EasingType = kf.Easing;
             kh.Flags = kf.Flags;
+            kh.EaseOut = kf.EaseOut;
+            kh.Interp = kf.Interp;
             channelBlob.insert(channelBlob.end(), reinterpret_cast<const std::byte*>(&kh),
                                reinterpret_cast<const std::byte*>(&kh) + sizeof(kh));
             WriteAttributeValue(channelBlob, ch.ValueType, kf.Value);
+            if (ch.ValueType == AttributeType::Float && static_cast<KeyframeInterpolation>(kf.Interp) == KeyframeInterpolation::Bezier) {
+                const float t[] = {kf.TangentOut, kf.TangentIn};
+                channelBlob.insert(
+                    channelBlob.end(), reinterpret_cast<const std::byte*>(t), reinterpret_cast<const std::byte*>(t) + 8);
+            }
         }
 
         ChannelIndexEntryDisk ce{};
@@ -635,8 +642,21 @@ bool LoadSceneFromBytes(ParallaxScene& scene, std::span<const std::byte> data, P
             kr.TimeTicks = kh.TimeTicks;
             kr.Easing = kh.EasingType;
             kr.Flags = kh.Flags;
+            kr.EaseOut = kh.EaseOut;
+            kr.Interp = kh.Interp;
+            kr.TangentIn = 1.f / 3.f;
+            kr.TangentOut = 1.f / 3.f;
             if (!ReadAttributeValue(cdata, cend, cr.ValueType, kr.Value)) {
                 break;
+            }
+            if (cr.ValueType == AttributeType::Float && static_cast<KeyframeInterpolation>(kr.Interp) == KeyframeInterpolation::Bezier) {
+                if (static_cast<size_t>(cend - cdata) < 8) {
+                    break;
+                }
+                std::memcpy(&kr.TangentOut, cdata, 4);
+                cdata += 4;
+                std::memcpy(&kr.TangentIn, cdata, 4);
+                cdata += 4;
             }
             cr.Keyframes.push_back(std::move(kr));
         }
@@ -663,6 +683,8 @@ bool LoadSceneFromBytes(ParallaxScene& scene, std::span<const std::byte> data, P
         loaded.SetMGGlobalAlpha(mgh.GlobalAlpha);
         loaded.SetMGGlobalAlphaChannelIndex(mgh.GlobalAlphaChannelIndex);
     }
+
+    MergeBuiltinSchemaAttributes(loaded);
 
     scene = std::move(loaded);
     if (err) {

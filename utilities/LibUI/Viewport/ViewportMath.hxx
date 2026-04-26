@@ -49,4 +49,19 @@ LIBUI_API bool IntersectRayPlane(float originX, float originY, float originZ, fl
 LIBUI_API bool ScreenToXZPlane(const Mat4Col& view, const Mat4Col& proj, const ImVec2& panel_min,
     const ImVec2& panel_max, const ImVec2& screen_pos, float planeY, float& outX, float& outZ);
 
+/// Plane ``dot(n,p) = planeD`` with ``(planeNx, planeNy, planeNz)`` normalized. Outputs full world hit point.
+LIBUI_API bool ScreenToWorldOnPlane(const Mat4Col& view, const Mat4Col& proj, const ImVec2& panel_min,
+    const ImVec2& panel_max, const ImVec2& screen_pos, float planeNx, float planeNy, float planeNz, float planeD,
+    float& outX, float& outY, float& outZ);
+
+/// World-space delta on the horizontal plane ``y = planeY`` between two **panel** pixel positions (e.g. drag).
+LIBUI_API bool WorldDeltaOnHorizontalPlane(const Mat4Col& view, const Mat4Col& proj, const ImVec2& panel_min,
+    const ImVec2& panel_max, const ImVec2& prev_screen, const ImVec2& cur_screen, float planeY, float& outDeltaX,
+    float& outDeltaZ);
+
+/// Ray (origin + ``t`` * direction, **unit** direction) vs axis-aligned box ``[bmin, bmax]``. Returns nearest
+/// forward hit distance in ``outT`` (0 if the ray starts inside the box).
+LIBUI_API bool IntersectRayAxisAlignedBox(float originX, float originY, float originZ, float dirX, float dirY,
+    float dirZ, float bminX, float bminY, float bminZ, float bmaxX, float bmaxY, float bmaxZ, float& outT);
+
 } // namespace LibUI::Viewport

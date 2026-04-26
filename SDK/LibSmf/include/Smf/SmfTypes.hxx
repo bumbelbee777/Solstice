@@ -11,7 +11,10 @@ namespace Solstice::Smf {
 
 constexpr uint32_t SMF_MAGIC = 0x00464D53u; // 'S' 'M' 'F' '\0' little-endian
 constexpr uint16_t SMF_FORMAT_VERSION_MAJOR = 1;
-constexpr uint16_t SMF_FORMAT_VERSION_MINOR = 1; // v1.1: optional ZSTD tail after header
+/// Declared format **1.0** (active development; not a production stability guarantee).
+constexpr uint16_t SMF_FORMAT_VERSION_MINOR = 0;
+/// Load accepts on-disk minors through this value (older dev builds may still have minor 2–3).
+constexpr uint16_t SMF_MAX_SUPPORTED_LOAD_FORMAT_MINOR = 3;
 constexpr uint32_t SMF_INVALID_INDEX = 0xFFFFFFFFu;
 
 enum class SmfError {
@@ -119,6 +122,9 @@ struct SmfFileHeader {
     uint32_t TriggerSize{0};
     uint32_t PathTableOffset{0};
     uint32_t PathTableSize{0};
+    /// Optional ``SMAL`` gameplay extras blob (acoustic zones + authoring lights); zero when using legacy 88-byte on-disk headers only.
+    uint32_t ExtrasOffset{0};
+    uint32_t ExtrasSize{0};
 };
 #pragma pack(pop)
 

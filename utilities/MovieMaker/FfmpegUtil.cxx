@@ -12,7 +12,17 @@
 
 SolsticeFfmpegRunResult SolsticeRunProcessCapture(const std::string& executable, const std::string& arguments) {
     SolsticeFfmpegRunResult r;
-    std::string cmd = "\"" + executable + "\" " + arguments;
+    std::string exe = executable;
+    while (!exe.empty() && (exe.front() == ' ' || exe.front() == '\t' || exe.front() == '\r' || exe.front() == '\n')) {
+        exe.erase(exe.begin());
+    }
+    while (!exe.empty() && (exe.back() == ' ' || exe.back() == '\t' || exe.back() == '\r' || exe.back() == '\n')) {
+        exe.pop_back();
+    }
+    if (exe.size() >= 2 && ((exe.front() == '"' && exe.back() == '"') || (exe.front() == '\'' && exe.back() == '\''))) {
+        exe = exe.substr(1, exe.size() - 2);
+    }
+    std::string cmd = "\"" + exe + "\" " + arguments;
 #ifdef _WIN32
     FILE* pipe = _popen(cmd.c_str(), "rb");
 #else

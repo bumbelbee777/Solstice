@@ -141,9 +141,79 @@ namespace Solstice::Core::Audio {
         SOLSTICE_LOG("Audio Subsystem Initialized");
     }
 
+    void AudioManager::ClearZoneDrivenMedia() {
+        if (!m_ZoneDrivenMusicPath.empty()) {
+            StopMusic();
+            m_ZoneDrivenMusicPath.clear();
+        }
+        if (m_ZoneAmbienceEmitter != 0) {
+            const AudioEmitterHandle h = m_ZoneAmbienceEmitter;
+            m_ZoneAmbienceEmitter = 0;
+            m_ZoneDrivenAmbiencePath.clear();
+            DestroyEmitter(h);
+        } else {
+            m_ZoneDrivenAmbiencePath.clear();
+        }
+    }
+
+    void AudioManager::UpdateZoneDrivenMedia() {
+        std::optional<AcousticZone> z;
+        {
+            LockGuard Guard(m_Lock);
+            z = EvaluateZoneAt(m_Listener.Position);
+        }
+        if (!z) {
+            if (!m_ZoneDrivenMusicPath.empty()) {
+                StopMusic();
+                m_ZoneDrivenMusicPath.clear();
+            }
+            if (m_ZoneAmbienceEmitter != 0) {
+                const AudioEmitterHandle h = m_ZoneAmbienceEmitter;
+                m_ZoneAmbienceEmitter = 0;
+                m_ZoneDrivenAmbiencePath.clear();
+                DestroyEmitter(h);
+            }
+            return;
+        }
+        if (z->MusicPath.empty()) {
+            if (!m_ZoneDrivenMusicPath.empty()) {
+                StopMusic();
+                m_ZoneDrivenMusicPath.clear();
+            }
+        } else if (z->MusicPath != m_ZoneDrivenMusicPath) {
+            PlayMusic(z->MusicPath.c_str(), -1);
+            m_ZoneDrivenMusicPath = z->MusicPath;
+        }
+        if (z->AmbiencePath.empty()) {
+            if (m_ZoneAmbienceEmitter != 0) {
+                const AudioEmitterHandle h = m_ZoneAmbienceEmitter;
+                m_ZoneAmbienceEmitter = 0;
+                m_ZoneDrivenAmbiencePath.clear();
+                DestroyEmitter(h);
+            }
+        } else if (z->AmbiencePath != m_ZoneDrivenAmbiencePath || m_ZoneAmbienceEmitter == 0) {
+            if (m_ZoneAmbienceEmitter != 0) {
+                const AudioEmitterHandle h = m_ZoneAmbienceEmitter;
+                m_ZoneAmbienceEmitter = 0;
+                DestroyEmitter(h);
+            }
+            m_ZoneDrivenAmbiencePath = z->AmbiencePath;
+            m_ZoneAmbienceEmitter = CreateEmitter(z->AmbiencePath.c_str(), z->Center, 1.0e6f, true);
+            if (m_ZoneAmbienceEmitter == 0) {
+                m_ZoneDrivenAmbiencePath.clear();
+            }
+        } else {
+            UpdateEmitterTransform(m_ZoneAmbienceEmitter, z->Center);
+        }
+    }
+
     void AudioManager::Shutdown() {
         LockGuard Guard(m_Lock);
         if (!m_Initialized) return;
+
+        m_ZoneAmbienceEmitter = 0;
+        m_ZoneDrivenMusicPath.clear();
+        m_ZoneDrivenAmbiencePath.clear();
 
         // Destroy active emitter tracks before mixer teardown.
         for (auto& [_, source] : m_Emitters) {
@@ -205,6 +275,8 @@ namespace Solstice::Core::Audio {
             LockGuard Guard(m_Lock);
             m_Listener = listenerCopy;
         }
+
+        UpdateZoneDrivenMedia();
     }
 
     MIX_Audio* AudioManager::LoadAudio(const char* Path) {
@@ -1089,11 +1161,13 @@ namespace Solstice::Core::Audio {
     }
 
     void AudioManager::SetAcousticZones(const std::vector<AcousticZone>& Zones) {
+        ClearZoneDrivenMedia();
         LockGuard Guard(m_Lock);
         m_AcousticZones = Zones;
     }
 
     void AudioManager::ClearAcousticZones() {
+        ClearZoneDrivenMedia();
         LockGuard Guard(m_Lock);
         m_AcousticZones.clear();
     }

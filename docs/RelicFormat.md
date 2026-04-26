@@ -22,7 +22,7 @@ RELIC is Solstice's native asset packaging format for slow-drive friendliness, s
 
 ## RELIC container layout
 
-- **Header** (fixed size): Magic (`RELIC`), format version, container type (content/music), tag set, manifest offset/size, dependency table offset/size, data blob offset.
+- **Header** (fixed size, 68 bytes for format version 1): Magic (`RELI`), format version, container type (content/music), reserved, tag set, reserved, manifest offset/size, dependency table offset/size, data blob offset, path table offset/size (0 when no path table). Legacy containers may use a **52-byte** header only: `ManifestOffset` is **52** and the manifest immediately follows; path table fields are absent (read as zero). New writers use **68** bytes of header and set `ManifestOffset` to **68**.
 - **Manifest**: Contiguous array of manifest entries. Each entry ≤ 48 bytes:
   - Asset hash (64-bit)
   - Byte offset into data blob (64-bit)
@@ -33,12 +33,13 @@ RELIC is Solstice's native asset packaging format for slow-drive friendliness, s
   - Dependency list offset (32) — byte offset into dependency table
   - Cluster ID (32) — for prefetch grouping
 - **Dependency table**: Contiguous blob. Per-asset list at `DependencyListOffset`: uint32_t count, then count × uint64_t asset hashes.
+- **Path table** (optional): At `PathTableOffset` with byte size `PathTableSize`. Layout: `uint32_t entryCount`, then per entry `uint16_t pathLen`, UTF-8 path (`pathLen` bytes), `uint64_t assetHash`. Placed after the dependency table and before the data blob in newly written files.
 - **Data blob**: Starts at data blob offset. Assets stored in cluster order. Compression per entry (flags): none, LZ4, zstd.
 
 ## Compression
 
 - **LZ4** — Streaming assets; in-house implementation in `Core/System/LZ4.cxx`. Block format (no frame).
-- **Zstd** — One-shot assets (UI, global audio, cutscenes); external lib (decompress only).
+- **Zstd** — One-shot assets (UI, global audio, cutscenes); external lib (compress and decompress in tooling; runtime may decompress only).
 
 ## Delta / variant assets
 

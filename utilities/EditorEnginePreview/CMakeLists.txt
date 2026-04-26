@@ -9,7 +9,8 @@ target_include_directories(EditorEnginePreview PUBLIC
     "${CMAKE_SOURCE_DIR}/utilities"
 )
 
-target_link_libraries(EditorEnginePreview PUBLIC LibUI SolsticeEngine)
+# Material (SmatBinary / ReadSmat) is not exported from SolsticeEngine.dll; link the static lib for tools.
+target_link_libraries(EditorEnginePreview PUBLIC LibUI SolsticeEngine Material)
 
 target_compile_features(EditorEnginePreview PUBLIC cxx_std_20)
 
