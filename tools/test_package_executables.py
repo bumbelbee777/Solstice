@@ -40,6 +40,13 @@ def _import_parse():
     return parse_fst
 
 
+def _import_default_out():
+    sys.path.insert(0, str(REPO / "tools"))
+    from package_executables import _default_out  # type: ignore
+
+    return _default_out
+
+
 def _write_minimal_fst(path: Path) -> None:
     # Cross-platform: one file row, current OS
     if sys.platform == "win32":
@@ -60,6 +67,11 @@ file\t{src}\t\tall\troot\tno
 
 
 class TestPackageExecutables(unittest.TestCase):
+    def test_default_output_path_uses_packaged_bins_utility(self) -> None:
+        default_out = _import_default_out()
+        out = Path(default_out("zip", "Sharpon"))
+        self.assertEqual(out.as_posix(), "packaged_bins/UTILITY/Sharpon.zip")
+
     def test_parse_sharpon_fst(self) -> None:
         parse_fst = _import_parse()
         doc = parse_fst(SHARPON_FST)

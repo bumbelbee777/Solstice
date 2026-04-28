@@ -33,8 +33,8 @@ endif()
 set(SOLSTICE_STAGING_DIR "${_solstice_staging_out}")
 
 # --- Post-build utility zips (package_executables.py) ---
-set(SOLSTICE_BUILD_PACKAGEDIR "${CMAKE_BINARY_DIR}/packages" CACHE PATH
-    "Output directory for utility packaging zips (default: CMAKE_BINARY_DIR/packages). Relative paths resolve against CMAKE_BINARY_DIR.")
+set(SOLSTICE_BUILD_PACKAGEDIR "${CMAKE_SOURCE_DIR}/packaged_bins/UTILITY" CACHE PATH
+    "Output directory for utility packaging zips (default: CMAKE_SOURCE_DIR/packaged_bins/UTILITY). Relative paths resolve against CMAKE_BINARY_DIR.")
 
 set(_solstice_pkg_out "${SOLSTICE_BUILD_PACKAGEDIR}")
 if(NOT IS_ABSOLUTE "${_solstice_pkg_out}")

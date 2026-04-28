@@ -46,7 +46,12 @@ struct UnifiedViewportSettings {
     float lowPolyAOPreview{0.42f};
     /// If non-null, applied each frame to `EditorEnginePreview` 3D capture (`fs_post` chroma / smear / fog dither).
     const Solstice::EditorEnginePreview::CinematicViewStatePod* cinematicView3D{nullptr};
+    /// If non-null and `*enginePreviewSessionDisabled` is true, skip GPU capture for the session (CPU MG fallback only).
+    bool* enginePreviewSessionDisabled{nullptr};
 };
+
+/// Call after creating or replacing the Parallax scene so the first frames avoid immediate bgfx capture (startup/new-scene stability).
+void ResetUnifiedViewportEnginePreviewWarmup();
 
 void DrawScene3dSchematicPanel(SDL_Window* window, const Solstice::Parallax::ParallaxScene& scene, uint64_t timeTicks,
     LibUI::Graphics::PreviewTextureRgba& previewTexture, float preferredHeight = 200.0f);

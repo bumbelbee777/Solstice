@@ -16,8 +16,17 @@ namespace Jackhammer::ViewportDraw {
 
 namespace {
 
-std::unordered_map<std::string, ImU32> g_BspPlaneTexTintCache;
-std::unordered_map<std::string, ImU32> g_BspPlaneTexBackTintCache;
+static std::unordered_map<std::string, ImU32>& BspPlaneTexTintCache() {
+    static std::unordered_map<std::string, ImU32> cache;
+    return cache;
+}
+#define g_BspPlaneTexTintCache (BspPlaneTexTintCache())
+
+static std::unordered_map<std::string, ImU32>& BspPlaneTexBackTintCache() {
+    static std::unordered_map<std::string, ImU32> cache;
+    return cache;
+}
+#define g_BspPlaneTexBackTintCache (BspPlaneTexBackTintCache())
 
 } // namespace
 

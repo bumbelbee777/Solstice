@@ -17,6 +17,9 @@ LIBUI_API void Win32InstallUtilityTopLevelFilter(const char* appLabelUtf8);
 /// Initializes dbghelp symbol resolution (call once near startup, before relying on ``Win32LogExceptionStack``).
 LIBUI_API void Win32InitCrashDiagnostics();
 
+/// Marks process as intentionally shutting down; fatal crash logging becomes silent after this point.
+LIBUI_API void Win32CrashDiagEnterShutdownMode();
+
 /// Async-safe enough for a top-level SEH filter: uses stack buffers, `WriteFile` + `OutputDebugStringA` only.
 /// Does not call `DiagLogLine`. Optional full minidump when env `SOLSTICE_FULL_DUMP` is truthy.
 LIBUI_API void Win32LogExceptionStack(struct _EXCEPTION_POINTERS* ep);
@@ -24,6 +27,7 @@ LIBUI_API void Win32LogExceptionStack(struct _EXCEPTION_POINTERS* ep);
 #else
 
 inline void Win32InitCrashDiagnostics() {}
+inline void Win32CrashDiagEnterShutdownMode() {}
 inline void Win32LogExceptionStack(void*) {}
 
 #endif

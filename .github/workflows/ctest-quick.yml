@@ -40,7 +40,7 @@ jobs:
 
       - name: Configure (Windows)
         if: runner.os == 'Windows'
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DSOLSTICE_BUILD_EXAMPLES=OFF -DSOLSTICE_BUILD_UTILITIES=ON
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DSOLSTICE_BUILD_EXAMPLES=OFF -DSOLSTICE_BUILD_UTILITIES=ON -DSOLSTICE_PACKAGE_UTILITIES_POSTBUILD=ON -DSOLSTICE_BUILD_PACKAGEDIR=${{ github.workspace }}/packaged_bins/UTILITY/${{ runner.os }}
 
       - name: Configure (Linux)
         if: runner.os == 'Linux'
@@ -62,7 +62,9 @@ jobs:
           # ccache is picked up automatically (see root CMakeLists.txt) when on PATH before project().
           cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release \
             -DSOLSTICE_BUILD_EXAMPLES=OFF \
-            -DSOLSTICE_BUILD_UTILITIES=ON
+            -DSOLSTICE_BUILD_UTILITIES=ON \
+            -DSOLSTICE_PACKAGE_UTILITIES_POSTBUILD=ON \
+            -DSOLSTICE_BUILD_PACKAGEDIR="${{ github.workspace }}/packaged_bins/UTILITY/${{ runner.os }}"
 
       # Windows: phased targets + low parallelism — full parallel MSBuild often OOMs after shader step on hosted runners.
       - name: Build third-party deps (Windows)
@@ -120,6 +122,13 @@ jobs:
 
       - name: CTest quick
         run: ctest --test-dir build -C Release -L quick --output-on-failure
+
+      - name: Upload packaged utilities
+        uses: actions/upload-artifact@v4
+        with:
+          name: packaged-utility-${{ runner.os }}
+          path: packaged_bins/UTILITY/${{ runner.os }}/
+          if-no-files-found: error
 
 # Optional local / nightly stress + fuzz (build first):
 #   ctest --test-dir build -C Release -L stress --output-on-failure

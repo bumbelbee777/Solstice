@@ -259,9 +259,11 @@ bool EnsureInitialized() {
     // is created, and flagging OpenGL on a second window can interfere with the main app's GL context.
     g_Window = SDL_CreateWindow("SolsticeEditorPreview", 256, 256, SDL_WINDOW_HIDDEN);
     if (!g_Window) {
+        LibUI::Tools::DiagLogLine("[EditorEnginePreview] EnsureInitialized: SDL_CreateWindow failed.");
         return false;
     }
 
+    try {
     // Offscreen capture does not need CPU voxel raytracing; that path uses OpenMP + bgfx uploads and has been fragile on some drivers.
     // Sixth arg: disable backbuffer MSAA on bgfx::reset — Intel UHD + D3D11 has faulted on MSAA swapchains for hidden preview windows.
     g_Renderer = std::make_unique<SoftwareRenderer>(256, 256, 16, g_Window, false, true);
@@ -283,6 +285,23 @@ bool EnsureInitialized() {
 
     g_Inited = true;
     return true;
+    } catch (const std::exception& ex) {
+        LibUI::Tools::DiagLogLine(std::string("[EditorEnginePreview] EnsureInitialized: SoftwareRenderer failed: ") + ex.what());
+        g_Renderer.reset();
+        if (g_Window) {
+            SDL_DestroyWindow(g_Window);
+            g_Window = nullptr;
+        }
+        return false;
+    } catch (...) {
+        LibUI::Tools::DiagLogLine("[EditorEnginePreview] EnsureInitialized: SoftwareRenderer failed (non-C++ exception).");
+        g_Renderer.reset();
+        if (g_Window) {
+            SDL_DestroyWindow(g_Window);
+            g_Window = nullptr;
+        }
+        return false;
+    }
 }
 
 void Shutdown() {

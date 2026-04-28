@@ -21,6 +21,16 @@ void WriteCrashChunk(const char* data, int len) {
     if (hErr != nullptr && hErr != INVALID_HANDLE_VALUE) {
         WriteFile(hErr, data, static_cast<DWORD>(len), &written, nullptr);
     }
+    char tmpPath[MAX_PATH * 2]{};
+    const DWORD n = GetTempPathA(static_cast<DWORD>(sizeof(tmpPath)), tmpPath);
+    if (n > 0 && n < sizeof(tmpPath) && strcat_s(tmpPath, sizeof(tmpPath), "SolsticeCrash.log") == 0) {
+        const HANDLE hFile = CreateFileA(tmpPath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+            OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hFile != INVALID_HANDLE_VALUE) {
+            WriteFile(hFile, data, static_cast<DWORD>(len), &written, nullptr);
+            CloseHandle(hFile);
+        }
+    }
     OutputDebugStringA(data);
 }
 
@@ -188,9 +198,52 @@ void LogStackX64(_EXCEPTION_POINTERS* ep) {
 } // namespace
 
 static const char* s_UtilitySehTag = "Solstice";
+static PVOID s_VectoredHandlerHandle = nullptr;
+static volatile LONG s_ShutdownMode = 0;
+
+bool IsBenignFirstChanceCode(DWORD code) {
+    switch (code) {
+    case 0x40010006u: // DBG_PRINTEXCEPTION_C
+    case 0x406D1388u: // MSVC thread naming exception
+    case 0x80000003u: // breakpoint (assert/debug trap)
+    case 0xE06D7363u: // C++ exception
+        return true;
+    default:
+        return false;
+    }
+}
+
+LONG WINAPI Win32VectoredCrashLogger(struct _EXCEPTION_POINTERS* ep) {
+    if (InterlockedCompareExchange(&s_ShutdownMode, 0, 0) != 0) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    if (!ep || !ep->ExceptionRecord) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    if (IsBenignFirstChanceCode(ep->ExceptionRecord->ExceptionCode)) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    static volatile LONG once = 0;
+    if (InterlockedCompareExchange(&once, 1, 0) != 0) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    char buf[384]{};
+    _snprintf_s(buf, sizeof(buf), _TRUNCATE, "%s VECTORED FATAL: code=0x%08lX addr=%p\r\n",
+        s_UtilitySehTag ? s_UtilitySehTag : "Solstice",
+        static_cast<unsigned long>(ep->ExceptionRecord->ExceptionCode), ep->ExceptionRecord->ExceptionAddress);
+    WriteCrashLine(buf);
+    Win32LogExceptionStack(ep);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 
 LONG WINAPI Win32UtilityTopLevelExceptionFilter(_EXCEPTION_POINTERS* ep) {
+    if (InterlockedCompareExchange(&s_ShutdownMode, 0, 0) != 0) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
     if (!ep || !ep->ExceptionRecord) {
+        return EXCEPTION_CONTINUE_SEARCH;
+    }
+    if (IsBenignFirstChanceCode(ep->ExceptionRecord->ExceptionCode)) {
         return EXCEPTION_CONTINUE_SEARCH;
     }
     char buf[384]{};
@@ -215,6 +268,13 @@ LIBUI_API void Win32InstallUtilityTopLevelFilter(const char* appLabelUtf8) {
 LIBUI_API void Win32InitCrashDiagnostics() {
     SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES | SYMOPT_FAIL_CRITICAL_ERRORS);
     SymInitialize(GetCurrentProcess(), nullptr, TRUE);
+    if (!s_VectoredHandlerHandle) {
+        s_VectoredHandlerHandle = AddVectoredExceptionHandler(1, Win32VectoredCrashLogger);
+    }
+}
+
+LIBUI_API void Win32CrashDiagEnterShutdownMode() {
+    InterlockedExchange(&s_ShutdownMode, 1);
 }
 
 LIBUI_API void Win32LogExceptionStack(_EXCEPTION_POINTERS* ep) {

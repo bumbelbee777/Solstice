@@ -2,6 +2,7 @@
 
 #include "Editing/SmmParticleEditor.hxx"
 #include "EditorEnginePreview/EditorEnginePreview.hxx"
+#include "LibUI/Tools/DiagLog.hxx"
 #include "LibUI/Tools/ViewportSpatialPick.hxx"
 #include "LibUI/Viewport/Viewport.hxx"
 #include "LibUI/Viewport/ViewportGizmo.hxx"
@@ -23,6 +24,10 @@
 #include <span>
 #include <string>
 #include <vector>
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 namespace Solstice::MovieMaker::UI::Panels {
 
@@ -135,7 +140,35 @@ static int CountMgSprites(const Solstice::Parallax::MGDisplayList& list) {
     return n;
 }
 
+#if defined(_WIN32)
+static bool CaptureOrbitRgbSafe(LibUI::Viewport::OrbitPanZoomState& nav, float cx, float cy, float cz, float fovYDeg, float aspect,
+    int viewportW, int viewportH, const Solstice::EditorEnginePreview::PreviewEntity* entities, size_t entityCount,
+    const Solstice::Physics::LightSource* lights, size_t lightCount, std::vector<std::byte>& outRgba, int& outW, int& outH,
+    unsigned long& outSehCode) {
+    outSehCode = 0;
+    __try {
+        return Solstice::EditorEnginePreview::CaptureOrbitRgb(nav, cx, cy, cz, fovYDeg, aspect, viewportW, viewportH, entities,
+            entityCount, lights, lightCount, outRgba, outW, outH);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        outSehCode = GetExceptionCode();
+        return false;
+    }
+}
+#endif
+
 } // namespace
+
+/// First frames after scene create / replace skip bgfx capture (Windows driver init ordering).
+static int s_unifiedGpuWarmupFramesRemaining = 0;
+/// After repeated `CaptureOrbitRgb` failures, optional session disables GPU preview (reset on app restart).
+static int s_unifiedCaptureFailStreak = 0;
+static constexpr int kUnifiedWarmupFrames = 3;
+static constexpr int kUnifiedFailsBeforeSessionDisable = 3;
+
+void ResetUnifiedViewportEnginePreviewWarmup() {
+    s_unifiedGpuWarmupFramesRemaining = kUnifiedWarmupFrames;
+    s_unifiedCaptureFailStreak = 0;
+}
 
 void DrawScene3dSchematicPanel(SDL_Window* window, const Solstice::Parallax::ParallaxScene& scene, uint64_t timeTicks,
     LibUI::Graphics::PreviewTextureRgba& previewTexture, float preferredHeight) {
@@ -301,6 +334,20 @@ void DrawUnifiedViewportPanel(SDL_Window* window, const Solstice::Parallax::Para
     }
 
     if (LibUI::Viewport::PollFrame(vp) && vp.draw_list) {
+#if defined(_WIN32)
+        if (LibUI::Tools::EnvVarTruthy("SOLSTICE_SMM_DISABLE_ENGINE_PREVIEW")) {
+            // Hard safety mode for Windows crash triage: avoid all preview capture/upload paths.
+            LibUI::Viewport::DrawCheckerboard(
+                vp.draw_list, vp.min, vp.max, 14.f, IM_COL32(32, 32, 42, 255), IM_COL32(24, 24, 30, 255));
+            LibUI::Viewport::DrawViewportLabel(
+                vp.draw_list, vp.min, vp.max, "Unified viewport (safe mode): engine preview disabled", ImVec2(1.0f, 0.0f));
+            LibUI::Viewport::DrawViewportLabel(
+                vp.draw_list, vp.min, vp.max, "Unset SOLSTICE_SMM_DISABLE_ENGINE_PREVIEW to re-enable", ImVec2(0.0f, 1.0f));
+            LibUI::Viewport::ApplyOrbitPanZoom(nav, vp);
+            LibUI::Viewport::EndHost();
+            return;
+        }
+#endif
         {
             const Solstice::EditorEnginePreview::CinematicViewStatePod z{};
             const Solstice::EditorEnginePreview::CinematicViewStatePod& cv = settings.cinematicView3D ? *settings.cinematicView3D : z;
@@ -385,23 +432,108 @@ void DrawUnifiedViewportPanel(SDL_Window* window, const Solstice::Parallax::Para
             lights.push_back(pl);
         }
 
+        const bool sessionGpuOff
+            = settings.enginePreviewSessionDisabled != nullptr && *settings.enginePreviewSessionDisabled;
+#if defined(_WIN32)
+        // Windows Intel/D3D11 preview path has been crash-prone during startup/new-scene capture.
+        // Allow forcing MG/CPU viewport for debugging, while keeping engine preview enabled by default.
+        const bool forceCpuPreview = LibUI::Tools::EnvVarTruthy("SOLSTICE_SMM_DISABLE_ENGINE_PREVIEW");
+#else
+        const bool forceCpuPreview = false;
+#endif
+        const bool warmupGpuSkip = (!sessionGpuOff) && (s_unifiedGpuWarmupFramesRemaining > 0);
+        const bool skipGpuCapture = sessionGpuOff || forceCpuPreview || warmupGpuSkip;
+        if (warmupGpuSkip && s_unifiedGpuWarmupFramesRemaining > 0) {
+            --s_unifiedGpuWarmupFramesRemaining;
+        }
+
         std::vector<std::byte> capture;
         int capW = 0;
         int capH = 0;
         bool capOk = false;
-        try {
-            capOk = Solstice::EditorEnginePreview::CaptureOrbitRgb(nav, 0.f, 0.f, 0.f, 55.f, aspect, scW, scH, entities.data(),
-                entities.size(), lights.data(), lights.size(), capture, capW, capH);
-        } catch (const std::exception& ex) {
-            WriteSink(settings.enginePreviewErrorSink, settings.enginePreviewErrorSinkBytes,
-                (std::string("3D preview (exception): ") + ex.what()).c_str());
-        } catch (...) {
-            WriteSink(
-                settings.enginePreviewErrorSink, settings.enginePreviewErrorSinkBytes, "3D preview failed (non-C++ exception).");
+        bool usedGpuCapture = false;
+
+        if (skipGpuCapture) {
+            try {
+                capture.resize(static_cast<size_t>(scW) * static_cast<size_t>(scH) * 4u);
+                Solstice::Parallax::RasterizeMGDisplayList(mgList, &resolver, static_cast<uint32_t>(scW),
+                    static_cast<uint32_t>(scH), std::span<std::byte>(capture.data(), capture.size()));
+                capW = scW;
+                capH = scH;
+                capOk = !capture.empty();
+            } catch (const std::exception& ex) {
+                WriteSink(settings.enginePreviewErrorSink, settings.enginePreviewErrorSinkBytes,
+                    (std::string("MG-only preview (exception): ") + ex.what()).c_str());
+            } catch (...) {
+                WriteSink(settings.enginePreviewErrorSink, settings.enginePreviewErrorSinkBytes,
+                    "MG-only preview failed (non-C++ exception).");
+            }
+        } else {
+            try {
+#if defined(_WIN32)
+                unsigned long sehCode = 0;
+                capOk = CaptureOrbitRgbSafe(nav, 0.f, 0.f, 0.f, 55.f, aspect, scW, scH, entities.data(), entities.size(), lights.data(),
+                    lights.size(), capture, capW, capH, sehCode);
+                if (sehCode != 0) {
+                    ++s_unifiedCaptureFailStreak;
+                    char err[256]{};
+                    std::snprintf(err, sizeof(err), "3D preview disabled after native exception 0x%08lX in CaptureOrbitRgb.",
+                        sehCode);
+                    WriteSink(settings.enginePreviewErrorSink, settings.enginePreviewErrorSinkBytes, err);
+                    if (settings.enginePreviewSessionDisabled) {
+                        *settings.enginePreviewSessionDisabled = true;
+                        s_unifiedCaptureFailStreak = 0;
+                    }
+                    capOk = false;
+                }
+#else
+                capOk = Solstice::EditorEnginePreview::CaptureOrbitRgb(nav, 0.f, 0.f, 0.f, 55.f, aspect, scW, scH, entities.data(),
+                    entities.size(), lights.data(), lights.size(), capture, capW, capH);
+#endif
+                usedGpuCapture = true;
+                if (capOk) {
+                    s_unifiedCaptureFailStreak = 0;
+                } else {
+                    ++s_unifiedCaptureFailStreak;
+                    if (s_unifiedCaptureFailStreak >= kUnifiedFailsBeforeSessionDisable && settings.enginePreviewSessionDisabled) {
+                        *settings.enginePreviewSessionDisabled = true;
+                        s_unifiedCaptureFailStreak = 0;
+                        WriteSink(settings.enginePreviewErrorSink, settings.enginePreviewErrorSinkBytes,
+                            "3D preview disabled after repeated GPU capture failures — using MG/CPU viewport. Restart app to retry "
+                            "CaptureOrbitRgb.");
+                    } else if (settings.enginePreviewErrorSink && settings.enginePreviewErrorSinkBytes > 0
+                        && settings.enginePreviewErrorSink[0] == '\0') {
+                        WriteSink(settings.enginePreviewErrorSink, settings.enginePreviewErrorSinkBytes,
+                            "3D preview: GPU capture failed or returned empty (reduce panel size if this persists).");
+                    }
+                }
+            } catch (const std::exception& ex) {
+                ++s_unifiedCaptureFailStreak;
+                WriteSink(settings.enginePreviewErrorSink, settings.enginePreviewErrorSinkBytes,
+                    (std::string("3D preview (exception): ") + ex.what()).c_str());
+                if (s_unifiedCaptureFailStreak >= kUnifiedFailsBeforeSessionDisable && settings.enginePreviewSessionDisabled) {
+                    *settings.enginePreviewSessionDisabled = true;
+                    s_unifiedCaptureFailStreak = 0;
+                    WriteSink(settings.enginePreviewErrorSink, settings.enginePreviewErrorSinkBytes,
+                        "3D preview disabled after repeated exceptions — MG/CPU only until restart.");
+                }
+            } catch (...) {
+                ++s_unifiedCaptureFailStreak;
+                WriteSink(
+                    settings.enginePreviewErrorSink, settings.enginePreviewErrorSinkBytes, "3D preview failed (non-C++ exception).");
+                if (s_unifiedCaptureFailStreak >= kUnifiedFailsBeforeSessionDisable && settings.enginePreviewSessionDisabled) {
+                    *settings.enginePreviewSessionDisabled = true;
+                    s_unifiedCaptureFailStreak = 0;
+                }
+            }
         }
+
         if (capOk) {
-            ClearSink(settings.enginePreviewErrorSink, settings.enginePreviewErrorSinkBytes);
-            if (mgOverlayAlpha > 1e-3f) {
+            // Preserve stable error strings for MG-only / warmup frames (do not erase "disabled" banners).
+            if (usedGpuCapture) {
+                ClearSink(settings.enginePreviewErrorSink, settings.enginePreviewErrorSinkBytes);
+            }
+            if (usedGpuCapture && mgOverlayAlpha > 1e-3f) {
                 try {
                     std::vector<std::byte> mgRgba(static_cast<size_t>(capW) * static_cast<size_t>(capH) * 4u);
                     Solstice::Parallax::RasterizeMGDisplayList(mgList, &resolver, static_cast<uint32_t>(capW),
@@ -417,12 +549,6 @@ void DrawUnifiedViewportPanel(SDL_Window* window, const Solstice::Parallax::Para
             }
             previewTexture.SetSizeUpload(window, static_cast<uint32_t>(capW), static_cast<uint32_t>(capH), capture.data(),
                 capture.size());
-        } else {
-            if (settings.enginePreviewErrorSink && settings.enginePreviewErrorSinkBytes > 0
-                && settings.enginePreviewErrorSink[0] == '\0') {
-                WriteSink(settings.enginePreviewErrorSink, settings.enginePreviewErrorSinkBytes,
-                    "3D preview: GPU capture failed or returned empty (reduce panel size if this persists).");
-            }
         }
 
         if (previewTexture.Valid()) {
@@ -636,19 +762,25 @@ void DrawUnifiedViewportPanel(SDL_Window* window, const Solstice::Parallax::Para
             Solstice::Parallax::GetParallaxSceneSummary(scene, sum);
             std::vector<Solstice::Parallax::ParallaxValidationMessage> val{};
             Solstice::Parallax::ValidateParallaxSceneEditing(scene, val);
+            const float fps = ImGui::GetIO().Framerate;
+            const float frameMs = (fps > 1e-4f) ? (1000.0f / fps) : 0.0f;
             char health[360]{};
             if (!val.empty()) {
                 const char* t = val[0].Text.c_str();
                 const int budget = 280;
                 if (static_cast<int>(val[0].Text.size()) > budget) {
-                    std::snprintf(health, sizeof(health), "Scene: %zu el, %zu ch  |  first issue: %.*s…", sum.ElementCount, sum.ChannelCount,
-                        budget, t);
+                    std::snprintf(health, sizeof(health),
+                        "Scene: %zu el, %zu ch  |  first issue: %.*s…  |  %.1f FPS (%.2f ms)",
+                        sum.ElementCount, sum.ChannelCount, budget, t, fps, frameMs);
                 } else {
-                    std::snprintf(health, sizeof(health), "Scene: %zu el, %zu ch  |  %s", sum.ElementCount, sum.ChannelCount, t);
+                    std::snprintf(health, sizeof(health),
+                        "Scene: %zu el, %zu ch  |  %s  |  %.1f FPS (%.2f ms)",
+                        sum.ElementCount, sum.ChannelCount, t, fps, frameMs);
                 }
             } else {
-                std::snprintf(health, sizeof(health), "Scene: %zu elements · %zu channels · %zu lights · %zu fluid volumes  |  no issues",
-                    sum.ElementCount, sum.ChannelCount, eval.LightStates.size(), eval.FluidVolumes.size());
+                std::snprintf(health, sizeof(health),
+                    "Scene: %zu elements · %zu channels · %zu lights · %zu fluid volumes  |  no issues  |  %.1f FPS (%.2f ms)",
+                    sum.ElementCount, sum.ChannelCount, eval.LightStates.size(), eval.FluidVolumes.size(), fps, frameMs);
             }
             LibUI::Viewport::DrawViewportLabel(vp.draw_list, vp.min, vp.max, health, ImVec2(0.0f, 1.0f));
         }

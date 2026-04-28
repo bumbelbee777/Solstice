@@ -96,13 +96,13 @@ int main() {
         assert(sev.EnvironmentSkybox->Enabled);
         assert(std::abs(sev.EnvironmentSkybox->Brightness - 1.5f) < 1e-3f);
         assert(sev.EnvironmentSkybox->FacePaths[0] == "a/px.png");
-        assert(!sev.ActorArzachelAuthoring.empty());
-        const auto& a0 = sev.ActorArzachelAuthoring[0];
+        assert(!sev.ActorArzachelAuthorings.empty());
+        const auto& a0 = sev.ActorArzachelAuthorings[0];
         assert(std::abs(a0.RigidBodyDamage - 0.4f) < 1e-3f);
         assert(a0.AnimationClipPreset == "Walk");
         assert(a0.DestructionAnimPreset == "BreakA");
         assert(std::abs(a0.LodDistanceHigh - 80.f) < 1e-3f);
-        assert(sev.ActorFacialPoses.size() == sev.ActorArzachelAuthoring.size());
+        assert(sev.ActorFacialPoses.size() == sev.ActorArzachelAuthorings.size());
         assert(sev.ActorFacialPoses.size() == 1u);
         assert(sev.ActorFacialPoses[0].Element == a0.Element);
 
@@ -198,10 +198,16 @@ int main() {
         assert(fp && std::abs(*fp) < 1e-5f);
     }
 
+    // Re-serialize root `scene` — it grew after fluid save (skybox / actor authoring block above).
+    bytes.clear();
+    assert(SaveSceneToBytes(*scene, bytes, false, &err));
+
     {
-        ParallaxPlaybackSession play;
+        ParallaxPlaybackSession play{};
         assert(play.LoadFromBytes(bytes, &err));
-        assert(play.GetScene().GetElements().size() == scene->GetElements().size());
+        ParallaxScene roundTrip{};
+        assert(LoadSceneFromBytes(roundTrip, bytes, &err));
+        assert(play.GetScene().GetElements().size() == roundTrip.GetElements().size());
         SceneEvaluationResult pev{};
         play.Evaluate(pev, false);
         (void)pev;

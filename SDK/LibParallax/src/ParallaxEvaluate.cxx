@@ -253,7 +253,7 @@ void EvaluateScene(const ParallaxScene& scene, uint64_t timeTicks, SceneEvaluati
     outResult.FluidVolumes.clear();
     outResult.ScriptOutputs.clear();
     outResult.EnvironmentSkybox.reset();
-    outResult.ActorArzachelAuthoring.clear();
+    outResult.ActorArzachelAuthorings.clear();
     outResult.ActorFacialPoses.clear();
     outResult.MotionGraphics = EvaluateMG(scene, timeTicks);
 
@@ -337,7 +337,7 @@ void EvaluateScene(const ParallaxScene& scene, uint64_t timeTicks, SceneEvaluati
                     ar.DestructionAnimPreset = *s;
                 }
             }
-            outResult.ActorArzachelAuthoring.push_back(std::move(ar));
+            outResult.ActorArzachelAuthorings.push_back(std::move(ar));
 
             ActorFacialPose face{};
             face.Element = ei;

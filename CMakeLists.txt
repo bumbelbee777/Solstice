@@ -57,7 +57,7 @@ project(Solstice VERSION 1.0.0 LANGUAGES C CXX)
 include("${CMAKE_SOURCE_DIR}/cmake/SolsticeBuildOptions.cmake")
 
 option(SOLSTICE_BUILD_UTILITIES "Build LibUI, Sharpon, LevelEditor, MovieMaker, and Refulgent" ON)
-option(SOLSTICE_PACKAGE_UTILITIES_POSTBUILD "After each utility build, run tools/package_executables.py (zip in build/packages)" OFF)
+option(SOLSTICE_PACKAGE_UTILITIES_POSTBUILD "After each utility build, run tools/package_executables.py (zip in SOLSTICE_PACKAGES_DIR)" OFF)
 if(SOLSTICE_PACKAGE_UTILITIES_POSTBUILD)
     message(STATUS "Utility post-build packaging: ON (zips: ${SOLSTICE_PACKAGES_DIR}/*-<Config>.zip)")
 endif()

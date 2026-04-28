@@ -38,14 +38,19 @@ bgfx::ShaderHandle ShaderLoader::LoadShader(const std::string& name) {
 
     // If not found, log detailed error information
     if (!file.is_open()) {
-        char cwd[1024];
+        char cwd[1024]{};
+        std::string cwdStr = "<unknown>";
 #if defined(_WIN32)
-        GetCurrentDirectoryA(sizeof(cwd), cwd);
+        if (GetCurrentDirectoryA(sizeof(cwd), cwd) > 0) {
+            cwdStr = cwd;
+        }
 #else
-        getcwd(cwd, sizeof(cwd));
+        if (getcwd(cwd, sizeof(cwd)) != nullptr) {
+            cwdStr = cwd;
+        }
 #endif
         SIMPLE_LOG("ShaderLoader: Failed to open shader file: " + name);
-        SIMPLE_LOG("  Current Working Directory: " + std::string(cwd));
+        SIMPLE_LOG("  Current Working Directory: " + cwdStr);
         SIMPLE_LOG("  Tried paths:");
         for (const auto& prefix : searchPaths) {
             SIMPLE_LOG("    " + prefix + name);

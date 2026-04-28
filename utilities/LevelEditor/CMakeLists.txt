@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(LevelEditor)
 
 add_executable(LevelEditor
+    EarlyCrashDiag.cxx
     Main.cxx
     JackhammerApp.cxx
     JackhammerSpatial.cxx
@@ -27,7 +28,7 @@ if(MSVC)
     # Synchronized PDB writes when /MP or parallel MSBuild cl.exe share vc*.pdb (avoids C1041).
     target_compile_options(LevelEditor PRIVATE /FS)
     # Console subsystem so stdout/stderr from fprintf / DiagLog / std::cerr show in Cursor's integrated terminal.
-    target_link_options(LevelEditor PRIVATE /SUBSYSTEM:CONSOLE)
+    target_link_options(LevelEditor PRIVATE /SUBSYSTEM:CONSOLE "/MAP:$<TARGET_FILE_DIR:LevelEditor>/LevelEditor.map")
 endif()
 
 if(WIN32)

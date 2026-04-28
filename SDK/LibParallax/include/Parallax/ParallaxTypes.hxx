@@ -397,7 +397,7 @@ struct SceneEvaluationResult {
     /// Filled from `SceneRoot` on element 0 when the schema is `SceneRoot` (SMM + exporters).
     std::optional<SkyboxAuthoringState> EnvironmentSkybox;
     /// One row per `ActorElement` with Arzachel / LOD / preset fields (for tooling and runtime).
-    std::vector<ActorArzachelAuthoring> ActorArzachelAuthoring;
+    std::vector<ActorArzachelAuthoring> ActorArzachelAuthorings;
     /// One row per `ActorElement` in element order when facial channels are present or proc flags are set.
     std::vector<ActorFacialPose> ActorFacialPoses;
     MGDisplayList MotionGraphics;

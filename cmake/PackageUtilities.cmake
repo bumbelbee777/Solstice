@@ -16,11 +16,11 @@ function(solstice_utility_postbuild_package _target _fst_relpath)
         message(FATAL_ERROR "solstice_utility_postbuild_package: Python3_EXECUTABLE is not set")
     endif()
     set(_script "${CMAKE_SOURCE_DIR}/tools/package_executables.py")
-    set(_out "${CMAKE_BINARY_DIR}/packages/${_target}-$<CONFIG>.zip")
+    set(_out "${SOLSTICE_PACKAGES_DIR}/${_target}-$<CONFIG>.zip")
     add_custom_command(
         TARGET ${_target}
         POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/packages"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${SOLSTICE_PACKAGES_DIR}"
         COMMAND
             ${Python3_EXECUTABLE}
             "${_script}"

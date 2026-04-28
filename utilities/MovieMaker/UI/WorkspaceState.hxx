@@ -60,6 +60,8 @@ struct WorkspaceState {
     /// Schematic 3D preview: fake baked ambient occlusion strength on default materials (unified + split schematic if used).
     float schematicBakedAO{0.42f};
     char enginePreviewLastError[512]{};
+    /// When true, unified viewport skips bgfx `CaptureOrbitRgb` (MG/CPU-only) after repeated GPU failures.
+    bool enginePreviewSessionDisabled{false};
 
     Smm::Editing::KeyframeEditUiState keyframeEditState{};
 };

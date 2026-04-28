@@ -498,9 +498,7 @@ def _default_out(fmt: str, app_name: str) -> str:
     ext = {"zip": ".zip", "tar": ".tar.gz", "tar.gz": ".tar.gz", "msi": ".msi", "deb": ".deb"}.get(
         fmt, ".zip"
     )
-    if fmt in ("tar", "tar.gz") and not ext:
-        return f"{app_name}{ext}"
-    return f"{app_name}{ext}"
+    return str(Path("packaged_bins") / "UTILITY" / f"{app_name}{ext}")
 
 
 def main() -> int:

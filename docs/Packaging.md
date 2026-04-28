@@ -53,11 +53,11 @@ python tools/package_executables.py --fst tools/packaging/Sharpon.fst --build-di
 
 Configure with **`SOLSTICE_PACKAGE_UTILITIES_POSTBUILD=ON`**. On each link of **Sharpon**, **LevelEditor**, or **MovieMaker**, CMake runs the packager (after DLL/shader/font post-build steps) and writes, for the active configuration (e.g. `Debug` / `Release` with Visual Studio, or the single `CMAKE_BUILD_TYPE` with single-config generators):
 
-- `${CMAKE_BINARY_DIR}/packages/Sharpon-<Config>.zip`
-- `${CMAKE_BINARY_DIR}/packages/LevelEditor-<Config>.zip`
-- `${CMAKE_BINARY_DIR}/packages/MovieMaker-<Config>.zip`
+- `${SOLSTICE_PACKAGES_DIR}/Sharpon-<Config>.zip`
+- `${SOLSTICE_PACKAGES_DIR}/LevelEditor-<Config>.zip`
+- `${SOLSTICE_PACKAGES_DIR}/MovieMaker-<Config>.zip`
 
-The implementation is [`cmake/PackageUtilities.cmake`](../cmake/PackageUtilities.cmake) (`solstice_utility_postbuild_package`). **Default is OFF** so normal edit–build cycles are not slowed by Python zipping on every link.
+The implementation is [`cmake/PackageUtilities.cmake`](../cmake/PackageUtilities.cmake) (`solstice_utility_postbuild_package`). `SOLSTICE_PACKAGES_DIR` defaults to `./packaged_bins/UTILITY` (repo root). **Default is OFF** so normal edit–build cycles are not slowed by Python zipping on every link.
 
 **CTest:** the **`package_executables_selftest`** test (`-L quick` and `-L tools`) runs [`tools/test_package_executables.py`](../tools/test_package_executables.py) — it loads the Sharpon FST, runs a small end-to-end zip, and needs no full engine build.
 

@@ -102,9 +102,17 @@ constexpr int kJhEntityListMaxDisplayedRows = 16384;
 constexpr size_t kJhEntityListMaxScanEntities = 100000;
 constexpr size_t kJhMaxTextureTintCacheEntries = 512;
 
-static Jackhammer::MeshOps::JhTriangleMesh s_jhMeshWorkshop;
+static Jackhammer::MeshOps::JhTriangleMesh& JhMeshWorkshopState() {
+    static Jackhammer::MeshOps::JhTriangleMesh mesh;
+    return mesh;
+}
+#define s_jhMeshWorkshop (JhMeshWorkshopState())
 static char s_jhMeshWorkshopLine[288] = "";
-static std::vector<std::pair<Solstice::Smf::SmfVec3, Solstice::Smf::SmfVec3>> s_jhBspCsgPieces;
+static std::vector<std::pair<Solstice::Smf::SmfVec3, Solstice::Smf::SmfVec3>>& JhBspCsgPiecesState() {
+    static std::vector<std::pair<Solstice::Smf::SmfVec3, Solstice::Smf::SmfVec3>> pieces;
+    return pieces;
+}
+#define s_jhBspCsgPieces (JhBspCsgPiecesState())
 // 0=none, 1=block drag (LMB in viewport; use RMB to orbit)
 static int s_jhGeoTool = 0;
 static bool s_jhBlockDragActive = false;
@@ -144,9 +152,17 @@ static int s_jhMwVLast = -1;
 // Edit → Add Arzachel prop: uniform scale and isosphere subdivision (other shapes reuse Parametric * sliders).
 static float s_jhArzUniformScale = 1.f;
 static int s_jhArzIsoSubdiv = 2;
-static LibUI::Viewport::Mat4Col s_jhOrbitViewLast{};
+static LibUI::Viewport::Mat4Col& JhOrbitViewLastState() {
+    static LibUI::Viewport::Mat4Col m{};
+    return m;
+}
+#define s_jhOrbitViewLast (JhOrbitViewLastState())
 static bool s_jhOrbitViewValid = false;
-static Jackhammer::ViewportGeo::MeasureState s_jhMeasure{};
+static Jackhammer::ViewportGeo::MeasureState& JhMeasureState() {
+    static Jackhammer::ViewportGeo::MeasureState m{};
+    return m;
+}
+#define s_jhMeasure (JhMeasureState())
 static float s_jhTerrainBrushR = 2.f;
 static float s_jhTerrainRaise = 0.04f; // per-frame while LMB down in terrain tool
 static float s_jhMwVertSnap = 0.f;     // 0 = off; grid snap for workshop vertex apply + Snap all
@@ -309,7 +325,6 @@ static const LibUI::FileDialogs::FileFilter kJhHookPathBrowseFilters[] = {
     {"Any", "*"},
     {"Moonwalk", "*.mw"},
     {"JSON", "*.json"},
-    {nullptr, nullptr},
 };
 
 static const LibUI::FileDialogs::FileFilter kJhImageFileFilters[] = {
@@ -541,17 +556,53 @@ struct JhAcousticImportOp {
     int ZoneIndex{-1};
 };
 
-std::mutex g_FileOpMutex;
-std::optional<std::string> g_PendingOpenPath;
-std::optional<std::string> g_PendingSavePath;
-std::optional<std::string> g_PendingRelicImportPath;
-std::optional<std::string> g_PendingRelicExportPath;
-std::optional<std::string> g_PendingGltfImportPath;
-std::optional<std::string> g_PendingGltfExportPath;
-std::optional<JhAcousticImportOp> g_PendingAcousticImport;
+static std::mutex& JhFileOpMutexState() {
+    static std::mutex m;
+    return m;
+}
+#define g_FileOpMutex (JhFileOpMutexState())
+static std::optional<std::string>& JhPendingOpenPathState() {
+    static std::optional<std::string> v;
+    return v;
+}
+#define g_PendingOpenPath (JhPendingOpenPathState())
+static std::optional<std::string>& JhPendingSavePathState() {
+    static std::optional<std::string> v;
+    return v;
+}
+#define g_PendingSavePath (JhPendingSavePathState())
+static std::optional<std::string>& JhPendingRelicImportPathState() {
+    static std::optional<std::string> v;
+    return v;
+}
+#define g_PendingRelicImportPath (JhPendingRelicImportPathState())
+static std::optional<std::string>& JhPendingRelicExportPathState() {
+    static std::optional<std::string> v;
+    return v;
+}
+#define g_PendingRelicExportPath (JhPendingRelicExportPathState())
+static std::optional<std::string>& JhPendingGltfImportPathState() {
+    static std::optional<std::string> v;
+    return v;
+}
+#define g_PendingGltfImportPath (JhPendingGltfImportPathState())
+static std::optional<std::string>& JhPendingGltfExportPathState() {
+    static std::optional<std::string> v;
+    return v;
+}
+#define g_PendingGltfExportPath (JhPendingGltfExportPathState())
+static std::optional<JhAcousticImportOp>& JhPendingAcousticImportState() {
+    static std::optional<JhAcousticImportOp> v;
+    return v;
+}
+#define g_PendingAcousticImport (JhPendingAcousticImportState())
 
 constexpr std::size_t kMaxMapUndo = 48;
-LibUI::Undo::SnapshotStack<SmfMap> g_mapUndo{kMaxMapUndo};
+static LibUI::Undo::SnapshotStack<SmfMap>& JhMapUndoState() {
+    static LibUI::Undo::SnapshotStack<SmfMap> undo{kMaxMapUndo};
+    return undo;
+}
+#define g_mapUndo (JhMapUndoState())
 
 static void ClampEntitySelection(const SmfMap& map, int& selectedEntity) {
     if (map.Entities.empty()) {
@@ -589,11 +640,19 @@ void RedoMap(SmfMap& map, int& selectedEntity, bool& dirty) {
     SyncSmfGameplayToEngine(map);
 }
 
-Solstice::UtilityPluginHost::UtilityPluginHost g_LevelPlugins;
-std::vector<std::pair<std::string, std::string>> g_LevelPluginLoadErrors;
+static std::vector<std::pair<std::string, std::string>>& LevelPluginLoadErrorsState() {
+    static std::vector<std::pair<std::string, std::string>> errs;
+    return errs;
+}
+#define g_LevelPluginLoadErrors (LevelPluginLoadErrorsState())
+
+static Solstice::UtilityPluginHost::UtilityPluginHost& LevelEditorPlugins() {
+    // Function-local static avoids startup work before crash diagnostics are installed in main().
+    static Solstice::UtilityPluginHost::UtilityPluginHost host;
+    return host;
+}
 
 void LoadLevelEditorPlugins() {
-    g_LevelPlugins.UnloadAll();
     g_LevelPluginLoadErrors.clear();
     try {
         const char* base = SDL_GetBasePath();
@@ -602,7 +661,9 @@ void LoadLevelEditorPlugins() {
         abi.GetName = SOLSTICE_UTILITY_ABI_LEVEL_EDITOR_GETNAME;
         abi.OnLoad = SOLSTICE_UTILITY_ABI_LEVEL_EDITOR_ONLOAD;
         abi.OnUnload = SOLSTICE_UTILITY_ABI_LEVEL_EDITOR_ONUNLOAD;
-        g_LevelPlugins.LoadAllFromDirectory(dir.string(), abi, g_LevelPluginLoadErrors);
+        auto& plugins = LevelEditorPlugins();
+        plugins.UnloadAll();
+        plugins.LoadAllFromDirectory(dir.string(), abi, g_LevelPluginLoadErrors);
     } catch (const std::exception& ex) {
         g_LevelPluginLoadErrors.push_back({"plugins/", std::string("Reload failed: ") + ex.what()});
     } catch (...) {
@@ -611,7 +672,7 @@ void LoadLevelEditorPlugins() {
 }
 
 void LevelEditorPluginsDrawPanel(bool* pOpen) {
-    Solstice::UtilityPluginHost::DrawPluginManagerWindow(g_LevelPlugins, pOpen, "Plugins##Jackhammer", "LevelEditor",
+    Solstice::UtilityPluginHost::DrawPluginManagerWindow(LevelEditorPlugins(), pOpen, "Plugins##Jackhammer", "LevelEditor",
         g_LevelPluginLoadErrors, [] { LoadLevelEditorPlugins(); });
 }
 
@@ -903,6 +964,22 @@ SolsticeV1_ResultCode JackhammerCallEngineSmfProc(JackhammerEngineSmfFn fn, cons
         return SolsticeV1_ResultFailure;
     }
     return r;
+}
+
+bool JackhammerCaptureOrbitRgbSeh(LibUI::Viewport::OrbitPanZoomState& nav, float cx, float cy, float cz, float fovYDeg,
+    float aspect, int viewportW, int viewportH, const Solstice::EditorEnginePreview::PreviewEntity* entities,
+    size_t entityCount, const Solstice::Physics::LightSource* lights, size_t lightCount, std::vector<std::byte>& outRgba,
+    int& outW, int& outH, unsigned long& outSehCode) noexcept {
+    outSehCode = 0ul;
+    bool ok = false;
+    __try {
+        ok = Solstice::EditorEnginePreview::CaptureOrbitRgb(nav, cx, cy, cz, fovYDeg, aspect, viewportW, viewportH, entities,
+            entityCount, lights, lightCount, outRgba, outW, outH);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        outSehCode = GetExceptionCode();
+        return false;
+    }
+    return ok;
 }
 } // namespace
 
@@ -1798,6 +1875,8 @@ int RunApp(int argc, char** argv) {
         static int s_jhBspOverlayMaxDepth = 12;
         static int s_jhOctOverlayMaxDepth = 8;
         static bool s_jhEngineCaptureFailBannerShown = false;
+        static bool s_jhEnginePreviewDisabledByFault = false;
+        static int s_jhEngineCaptureFailStreak = 0;
         static bool s_jhPreviewUseSmat = false;
         static bool s_jhPreviewSmatSelectedOnly = false;
         static bool s_jhPreviewBindMaterialMaps = false;
@@ -2564,6 +2643,17 @@ int RunApp(int argc, char** argv) {
         ImGui::DragInt("Grid lines##jhgridhalf", &s_jhGridHalfCount, 0.5f, 4, 128);
         ImGui::Separator();
         ImGui::TextUnformatted("Material preview (EditorEnginePreview)");
+        if (s_jhEnginePreviewDisabledByFault) {
+            ImGui::TextColored(ImVec4(1.f, 0.55f, 0.3f, 1.f), "Engine preview disabled for this session after a native fault.");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Re-enable##jhprevreenable")) {
+                s_jhEnginePreviewDisabledByFault = false;
+                s_jhEngineCaptureFailBannerShown = false;
+                s_jhEngineCaptureFailStreak = 0;
+                jhBannerViewport.clear();
+                jackhammerEnginePreviewTex.Destroy();
+            }
+        }
         ImGui::Checkbox("Preview .smat##jh", &s_jhPreviewUseSmat);
         ImGui::SameLine();
         ImGui::Checkbox("Selected entity only##jhsmatsel", &s_jhPreviewSmatSelectedOnly);
@@ -2759,9 +2849,34 @@ int RunApp(int argc, char** argv) {
                 std::vector<std::byte> capRgba;
                 int cw = 0;
                 int ch = 0;
-                try {
-                    if (Solstice::EditorEnginePreview::CaptureOrbitRgb(s_engineViewportNav, 0.f, 0.f, 0.f, 55.f, aspect,
-                            engW, engH, engEnts.data(), engEnts.size(), lightPtr, lightCount, capRgba, cw, ch)) {
+                if (s_jhEnginePreviewDisabledByFault) {
+                    // Don't keep showing stale GPU frames once preview is in fault-disable mode.
+                    jackhammerEnginePreviewTex.Destroy();
+                    jhBannerViewport =
+                        "Engine viewport disabled after native preview fault; restart Jackhammer after changing driver/preview settings.";
+                } else try {
+                    bool previewOk = false;
+#if defined(_WIN32)
+                    unsigned long previewSeh = 0ul;
+                    previewOk = JackhammerCaptureOrbitRgbSeh(s_engineViewportNav, 0.f, 0.f, 0.f, 55.f, aspect, engW, engH,
+                        engEnts.data(), engEnts.size(), lightPtr, lightCount, capRgba, cw, ch, previewSeh);
+                    if (previewSeh != 0ul) {
+                        s_jhEnginePreviewDisabledByFault = true;
+                        s_jhEngineCaptureFailBannerShown = true;
+                        s_jhEngineCaptureFailStreak = 0;
+                        jackhammerEnginePreviewTex.Destroy();
+                        char e[176]{};
+                        std::snprintf(e, sizeof(e),
+                            "Engine viewport: native exception 0x%08lX in CaptureOrbitRgb. Disable preview or reduce panel size.",
+                            previewSeh);
+                        jhBannerViewport = e;
+                    }
+#else
+                    previewOk = Solstice::EditorEnginePreview::CaptureOrbitRgb(s_engineViewportNav, 0.f, 0.f, 0.f, 55.f, aspect,
+                        engW, engH, engEnts.data(), engEnts.size(), lightPtr, lightCount, capRgba, cw, ch);
+#endif
+                    if (previewOk) {
+                        s_jhEngineCaptureFailStreak = 0;
                         s_jhEngineCaptureFailBannerShown = false;
                         // bgfx may leave the main thread without a current GL context; ImGui + preview texture need it.
                         if (!SDL_GL_MakeCurrent(window, glContext)) {
@@ -2773,15 +2888,25 @@ int RunApp(int argc, char** argv) {
                             jhBannerViewport.clear();
                         }
                     } else if (!s_jhEngineCaptureFailBannerShown) {
+                        ++s_jhEngineCaptureFailStreak;
+                        if (s_jhEngineCaptureFailStreak >= 1) {
+                            s_jhEnginePreviewDisabledByFault = true;
+                            jackhammerEnginePreviewTex.Destroy();
+                        }
                         s_jhEngineCaptureFailBannerShown = true;
                         jhBannerViewport =
-                            "Engine viewport: GPU capture timed out (offscreen readback). Try a smaller panel, or set "
+                            "Engine viewport: GPU capture failed; preview disabled for this session. Use Re-enable to retry. "
+                            "Try a smaller panel, or set "
                             "SOLSTICE_PREVIEW_POST_PRESENT_SYNC_FRAME=1 if your driver needs an extra sync frame "
                             "(may fault on some Intel iGPUs).";
                     }
                 } catch (const std::bad_alloc&) {
+                    ++s_jhEngineCaptureFailStreak;
+                    s_jhEnginePreviewDisabledByFault = true;
                     jhBannerViewport = "Engine viewport: out of memory (reduce panel size).";
                 } catch (const std::exception& ex) {
+                    ++s_jhEngineCaptureFailStreak;
+                    s_jhEnginePreviewDisabledByFault = true;
                     jhBannerViewport = std::string("Engine viewport: ") + ex.what();
                 }
                 // CaptureOrbitRgb runs bgfx (and may fail); always restore the main GL context for ImGui + user textures.

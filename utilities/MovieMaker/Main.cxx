@@ -72,9 +72,13 @@
 #include <cstdint>
 #include <functional>
 #include <cstring>
+#include <csignal>
+#include <cstdlib>
 
 #ifdef _WIN32
 #include <windows.h>
+#include <DbgHelp.h>
+#pragma comment(lib, "Dbghelp.lib")
 #endif
 
 namespace {
@@ -107,18 +111,80 @@ void DrainImports(Solstice::Parallax::DevSessionAssetResolver& resolver, std::ve
     }
 }
 
-Solstice::UtilityPluginHost::UtilityPluginHost g_MovieMakerPlugins;
 std::vector<std::pair<std::string, std::string>> g_MovieMakerPluginLoadErrors;
+static Solstice::UtilityPluginHost::UtilityPluginHost& MovieMakerPlugins() {
+    static Solstice::UtilityPluginHost::UtilityPluginHost host;
+    return host;
+}
 
 static std::vector<Smm::Keyframe::KeyframeCurvePreset> g_smmKeyframePresets;
 static std::vector<Smm::Timeline::RangePreset> g_smmRangePresets;
+static const char* g_smmCrashStage = "startup";
+static uint64_t g_smmCrashFrame = 0;
+
+static void SmmSetCrashStage(const char* stage) {
+    g_smmCrashStage = stage ? stage : "(null)";
+}
+
+#if defined(_WIN32)
+static void SmmLogNativeStackTrace(const char* reason) {
+    HANDLE process = GetCurrentProcess();
+    SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
+    (void)SymInitialize(process, nullptr, TRUE);
+
+    void* frames[64]{};
+    const USHORT frameCount = CaptureStackBackTrace(0, 64, frames, nullptr);
+    LibUI::Tools::DiagLogLine(std::string("[SMM][CRASH] ") + (reason ? reason : "unknown"));
+    LibUI::Tools::DiagLogLine(
+        "[SMM][CRASH] stage=" + std::string(g_smmCrashStage ? g_smmCrashStage : "(null)")
+        + " frame=" + std::to_string(static_cast<unsigned long long>(g_smmCrashFrame)));
+
+    for (USHORT i = 0; i < frameCount; ++i) {
+        DWORD64 address = reinterpret_cast<DWORD64>(frames[i]);
+        char storage[sizeof(SYMBOL_INFO) + 512]{};
+        auto* symbol = reinterpret_cast<SYMBOL_INFO*>(storage);
+        symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+        symbol->MaxNameLen = 511;
+        DWORD64 displacement = 0;
+        if (SymFromAddr(process, address, &displacement, symbol)) {
+            LibUI::Tools::DiagLogLine(
+                "[SMM][STACK] #" + std::to_string(i) + " " + symbol->Name + " +0x" + std::to_string(displacement));
+        } else {
+            LibUI::Tools::DiagLogLine("[SMM][STACK] #" + std::to_string(i) + " 0x" + std::to_string(address));
+        }
+    }
+}
+
+LONG WINAPI SmmUnhandledExceptionFilter(EXCEPTION_POINTERS* info) {
+    uint32_t code = info && info->ExceptionRecord ? static_cast<uint32_t>(info->ExceptionRecord->ExceptionCode) : 0u;
+    const std::string msg = "Unhandled SEH exception code=0x" + std::to_string(code);
+    SmmLogNativeStackTrace(msg.c_str());
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
+void SmmSignalCrashHandler(int sig) {
+    const std::string msg = "Signal " + std::to_string(sig);
+    SmmLogNativeStackTrace(msg.c_str());
+    std::_Exit(128 + sig);
+}
+
+void SmmInstallCrashDiagnostics() {
+    SetUnhandledExceptionFilter(SmmUnhandledExceptionFilter);
+    std::signal(SIGABRT, SmmSignalCrashHandler);
+    std::signal(SIGSEGV, SmmSignalCrashHandler);
+}
+#else
+void SmmInstallCrashDiagnostics() {}
+#endif
 
 static std::vector<std::filesystem::path> SmmBuildPresetSearchRoots(const std::filesystem::path& smmJsonPath) {
     std::vector<std::filesystem::path> roots;
     const char* bp = SDL_GetBasePath();
     if (bp) {
         roots.push_back(std::filesystem::path(bp) / "presets");
+#if !defined(_WIN32)
         SDL_free((void*)bp);
+#endif
     }
     if (!smmJsonPath.empty()) {
         roots.push_back(smmJsonPath.parent_path() / "presets");
@@ -139,18 +205,27 @@ static void SmmOnReloadIniPresets(void* user) {
 }
 
 void LoadMovieMakerPlugins() {
-    g_MovieMakerPlugins.UnloadAll();
     g_MovieMakerPluginLoadErrors.clear();
-    const char* base = SDL_GetBasePath();
-    std::filesystem::path dir = base ? std::filesystem::path(base) / "plugins" : std::filesystem::path("plugins");
-    if (base) {
-        SDL_free((void*)base);
+    try {
+        const char* base = SDL_GetBasePath();
+        std::filesystem::path dir = base ? std::filesystem::path(base) / "plugins" : std::filesystem::path("plugins");
+        if (base) {
+#if !defined(_WIN32)
+            SDL_free((void*)base);
+#endif
+        }
+        Solstice::UtilityPluginHost::PluginAbiSymbols abi{};
+        abi.GetName = SOLSTICE_UTILITY_ABI_MOVIE_MAKER_GETNAME;
+        abi.OnLoad = SOLSTICE_UTILITY_ABI_MOVIE_MAKER_ONLOAD;
+        abi.OnUnload = SOLSTICE_UTILITY_ABI_MOVIE_MAKER_ONUNLOAD;
+        auto& plugins = MovieMakerPlugins();
+        plugins.UnloadAll();
+        plugins.LoadAllFromDirectory(dir.string(), abi, g_MovieMakerPluginLoadErrors);
+    } catch (const std::exception& ex) {
+        g_MovieMakerPluginLoadErrors.push_back({"plugins/", std::string("Reload failed: ") + ex.what()});
+    } catch (...) {
+        g_MovieMakerPluginLoadErrors.push_back({"plugins/", "Reload failed: unknown exception."});
     }
-    Solstice::UtilityPluginHost::PluginAbiSymbols abi{};
-    abi.GetName = SOLSTICE_UTILITY_ABI_MOVIE_MAKER_GETNAME;
-    abi.OnLoad = SOLSTICE_UTILITY_ABI_MOVIE_MAKER_ONLOAD;
-    abi.OnUnload = SOLSTICE_UTILITY_ABI_MOVIE_MAKER_ONUNLOAD;
-    g_MovieMakerPlugins.LoadAllFromDirectory(dir.string(), abi, g_MovieMakerPluginLoadErrors);
 }
 
 void MovieMakerPluginsDrawPanel(bool* pOpen) {
@@ -171,7 +246,7 @@ void MovieMakerPluginsDrawPanel(bool* pOpen) {
             ImGui::Separator();
         }
         std::vector<Solstice::UtilityPluginHost::ModuleSummary> mods;
-        g_MovieMakerPlugins.EnumerateModules(mods);
+        MovieMakerPlugins().EnumerateModules(mods);
         if (mods.empty()) {
             ImGui::TextUnformatted("No plugins loaded.");
         }
@@ -625,12 +700,16 @@ static bool SmmRunVideoExportTry(Solstice::Parallax::ParallaxScene& scene, Solst
 int main(int argc, char* argv[]) {
     (void)argc;
     (void)argv;
+    SmmInstallCrashDiagnostics();
+    SmmSetCrashStage("main.begin");
 
+    SmmSetCrashStage("sdl.init");
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
         std::cerr << "SDL_Init failed: " << SDL_GetError() << std::endl;
         return 1;
     }
 
+    SmmSetCrashStage("window.create");
     LibUI::Shell::GlWindow glWindow;
     if (!LibUI::Shell::CreateUtilityGlWindow(
             glWindow, "Solstice Movie Maker — Technology Preview 1", 1280, 720, SDL_WINDOW_RESIZABLE, 1)) {
@@ -640,24 +719,39 @@ int main(int argc, char* argv[]) {
     }
     SDL_Window* window = glWindow.window;
 
+    SmmSetCrashStage("libui.init");
     if (!LibUI::Core::Initialize(window)) {
         std::cerr << "LibUI::Core::Initialize failed" << std::endl;
         LibUI::Shell::DestroyUtilityGlWindow(glWindow);
         SDL_Quit();
         return 1;
     }
+    SmmSetCrashStage("audio.init");
     if (!Solstice::EditorAudio::Init()) {
         LibUI::Tools::DiagLogLine("[SMM] EditorAudio::Init failed (waveform / scrub preview will be disabled).");
     }
     LibUI::Tools::DiagLogLine("[SMM] LibUI initialized.");
 
-    LoadMovieMakerPlugins();
-    LibUI::Tools::DiagLogLine("[SMM] Plugins loaded.");
+#if defined(_WIN32)
+    const bool loadMovieMakerPlugins = !LibUI::Tools::EnvVarTruthy("SOLSTICE_SMM_DISABLE_PLUGINS");
+#else
+    const bool loadMovieMakerPlugins = true;
+#endif
+    SmmSetCrashStage("plugins.load");
+    if (loadMovieMakerPlugins) {
+        LoadMovieMakerPlugins();
+        LibUI::Tools::DiagLogLine("[SMM] Plugins loaded.");
+    } else {
+        LibUI::Tools::DiagLogLine("[SMM] Plugins skipped (SOLSTICE_SMM_DISABLE_PLUGINS=1).");
+    }
 
     Solstice::Parallax::DevSessionAssetResolver resolver;
     std::vector<LibUI::AssetBrowser::Entry> assetEntries;
+    SmmSetCrashStage("scene.create");
     auto scene = Solstice::Parallax::CreateScene(6000);
+    Solstice::MovieMaker::UI::Panels::ResetUnifiedViewportEnginePreviewWarmup();
     LibUI::Tools::DiagLogLine("[SMM] Scene created.");
+    LibUI::Tools::DiagLogLine("[SMM][TRACE] Post-scene init begin.");
     int assetSelected = -1;
     uint64_t timeTicks = 0;
     char folderPathBuf[512] = "";
@@ -715,6 +809,7 @@ int main(int argc, char* argv[]) {
                 compressPrlx, recentPrlxPaths, activeProjectPath, smmRecoveryIntervalSecU32);
         }
     }
+    LibUI::Tools::DiagLogLine("[SMM][TRACE] Boot project state loaded.");
 
     Smm::Authoring::SessionState smmAuthoringSession;
     {
@@ -722,6 +817,7 @@ int main(int argc, char* argv[]) {
         (void)Smm::Authoring::LoadSessionAuthoring(Smm::Authoring::AuthoringSidecarPathForProject(activeProjectPath), smmAuthoringSession, &authErr);
     }
     ReloadSmmWorkspaceIniPresets(activeProjectPath);
+    LibUI::Tools::DiagLogLine("[SMM][TRACE] Authoring session + presets loaded.");
 
     auto persistMovieMakerProjectFields = [&](std::string* error = nullptr) -> bool {
         MovieMakerProjectState pst;
@@ -749,6 +845,7 @@ int main(int argc, char* argv[]) {
         }
         return true;
     };
+    LibUI::Tools::DiagLogLine("[SMM][TRACE] Lambda persistMovieMakerProjectFields ready.");
 
     auto requestSaveMovieMakerProject = [&]() {
         if (!projectPathChosen) {
@@ -806,6 +903,7 @@ int main(int argc, char* argv[]) {
             ffmpegLog = "Save failed: " + saveError + "\n" + ffmpegLog;
         }
     };
+    LibUI::Tools::DiagLogLine("[SMM][TRACE] Lambda requestSaveMovieMakerProject ready.");
 
     auto requestOpenMovieMakerProject = [&]() {
         LibUI::FileDialogs::ShowOpenFile(
@@ -825,6 +923,7 @@ int main(int argc, char* argv[]) {
             },
             std::span<const LibUI::FileDialogs::FileFilter>(kSmmProjectFilters));
     };
+    LibUI::Tools::DiagLogLine("[SMM][TRACE] Lambda requestOpenMovieMakerProject ready.");
 
     auto requestExportParallaxScene = [&]() {
         LibUI::FileDialogs::ShowSaveFile(
@@ -837,6 +936,7 @@ int main(int argc, char* argv[]) {
                 g_PendingPrlxExportPath = std::filesystem::path(*path);
             });
     };
+    LibUI::Tools::DiagLogLine("[SMM][TRACE] Lambda requestExportParallaxScene ready.");
 
     auto performPrlxImportFromBuffers = [&]() -> bool {
         Solstice::Parallax::ParallaxError err = Solstice::Parallax::ParallaxError::None;
@@ -856,11 +956,15 @@ int main(int argc, char* argv[]) {
         timeTicks = Solstice::MovieMaker::Workflow::ClampPlayhead(timeTicks, scene->GetTimelineDurationTicks());
         return true;
     };
+    LibUI::Tools::DiagLogLine("[SMM][TRACE] Lambda performPrlxImportFromBuffers ready.");
 
     auto commitNewParallaxScene = [&]() {
         Smm::ClearSceneUndo();
         Smm::Editing::ResetParticleEditUndo();
         scene = Solstice::Parallax::CreateScene(6000);
+        Smm::Particles::LoadParticleEditorFromScene(*scene, smmWorkspace.particleEditorState);
+        Solstice::MovieMaker::UI::Panels::ResetUnifiedViewportEnginePreviewWarmup();
+        smmWorkspace.enginePreviewSessionDisabled = false;
         timeTicks = 0;
         elementSelected = scene->GetElements().empty() ? -1 : 0;
         mgElementSelected = scene->GetMGElements().empty() ? -1 : 0;
@@ -875,21 +979,37 @@ int main(int argc, char* argv[]) {
             commitNewParallaxScene();
         }
     };
+    LibUI::Tools::DiagLogLine("[SMM][TRACE] Lambda requestNewParallaxScene ready.");
 
     std::string smmSdlBasePathUtf8;
     {
         const char* sdlB = SDL_GetBasePath();
         if (sdlB) {
             smmSdlBasePathUtf8 = sdlB;
+#if !defined(_WIN32)
             SDL_free((void*)sdlB);
+#endif
         }
     }
-    const std::filesystem::path smmRecoveryDir = Solstice::EditorAudio::FileRecovery::RecoveryDir(
-        smmSdlBasePathUtf8.empty() ? nullptr : smmSdlBasePathUtf8.c_str(), "smm");
-    bool smmPrlxRecoveryOpen = !Solstice::EditorAudio::FileRecovery::List(smmRecoveryDir, "prlx").empty();
+#if defined(_WIN32)
+    const bool smmEnableRecovery = !LibUI::Tools::EnvVarTruthy("SOLSTICE_SMM_DISABLE_RECOVERY");
+#else
+    const bool smmEnableRecovery = true;
+#endif
+    LibUI::Tools::DiagLogLine(std::string("[SMM][TRACE] Recovery mode: ") + (smmEnableRecovery ? "enabled" : "disabled"));
+    const std::filesystem::path smmRecoveryDir = smmEnableRecovery
+        ? Solstice::EditorAudio::FileRecovery::RecoveryDir(smmSdlBasePathUtf8.empty() ? nullptr : smmSdlBasePathUtf8.c_str(), "smm")
+        : std::filesystem::path{};
+    LibUI::Tools::DiagLogLine("[SMM][TRACE] Recovery dir resolved.");
+    bool smmPrlxRecoveryOpen
+        = smmEnableRecovery && !Solstice::EditorAudio::FileRecovery::List(smmRecoveryDir, "prlx").empty();
+    LibUI::Tools::DiagLogLine("[SMM][TRACE] Recovery list scanned.");
     double smmRecoveryAccumSec = 0.0;
 
     auto tryWritePrlxRecoverySnapshot = [&]() {
+        if (!smmEnableRecovery) {
+            return;
+        }
         if (!scene) {
             return;
         }
@@ -926,12 +1046,16 @@ int main(int argc, char* argv[]) {
     };
 
     bool running = true;
+    LibUI::Tools::DiagLogLine("[SMM][TRACE] Entering main loop.");
     while (running) {
+        ++g_smmCrashFrame;
+        SmmSetCrashStage("frame.begin");
         static bool firstFrameTrace = true;
         if (firstFrameTrace) {
             LibUI::Tools::DiagLogLine("[SMM] Entering first frame.");
             firstFrameTrace = false;
         }
+        SmmSetCrashStage("frame.poll_events");
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             LibUI::Core::ProcessEvent(&e);
@@ -944,6 +1068,7 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        SmmSetCrashStage("frame.drain_pending_project");
         DrainPendingMovieMakerProject(exportPathBuf, sizeof(exportPathBuf), importPathBuf, sizeof(importPathBuf),
             folderPathBuf, sizeof(folderPathBuf), ffmpegExeBuf, sizeof(ffmpegExeBuf), videoExportPathBuf,
             sizeof(videoExportPathBuf), videoW, videoH, videoFps, videoMp4, videoStartTick, videoEndTick, compressPrlx,
@@ -1011,6 +1136,7 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        SmmSetCrashStage("frame.newframe");
         LibUI::Core::NewFrame();
 
         ImGuiIO& io_mm = ImGui::GetIO();
@@ -1021,12 +1147,14 @@ int main(int argc, char* argv[]) {
             tryWritePrlxRecoverySnapshot();
         }
 
+        SmmSetCrashStage("frame.imgui_root");
         ImGuiViewport* vp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(vp->Pos);
         ImGui::SetNextWindowSize(vp->Size);
         ImGui::Begin("SMMRoot", nullptr,
             ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
-                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
+                ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus |
+                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("File")) {
@@ -1305,6 +1433,7 @@ int main(int argc, char* argv[]) {
             ImGui::TableSetupColumn("Left", ImGuiTableColumnFlags_WidthFixed, 330.0f);
             ImGui::TableSetupColumn("Main", ImGuiTableColumnFlags_WidthStretch, 1.0f);
             ImGui::TableNextColumn();
+            ImGui::BeginChild("SMM_LeftPane", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_None);
             if (LibUI::Widgets::BeginTabBar("SMM_LeftTabs")) {
                 if (LibUI::Widgets::BeginTabItem("Properties")) {
                     Solstice::Parallax::ParallaxSceneSummary sum{};
@@ -1331,7 +1460,7 @@ int main(int argc, char* argv[]) {
                         }
                         ImGui::EndListBox();
                     }
-                    if (ImGui::Button("Duplicate selected") && elementSelected >= 0 &&
+                    if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Duplicate, "Duplicate") && elementSelected >= 0 &&
                         static_cast<size_t>(elementSelected) < scene->GetElements().size()) {
                         const auto& el = scene->GetElements()[static_cast<size_t>(elementSelected)];
                         const auto& schemas = scene->GetSchemas();
@@ -1381,22 +1510,22 @@ int main(int argc, char* argv[]) {
                         scene->SetTicksPerSecond(tps);
                         sceneDirty = true;
                     }
-                    if (ImGui::Button("Add Light")) {
+                    if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::New, "Light")) {
                         Solstice::Parallax::AddElement(*scene, "LightElement", "Light", 0);
                         sceneDirty = true;
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button("Add Camera")) {
+                    if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::New, "Camera")) {
                         Solstice::Parallax::AddElement(*scene, "CameraElement", "Camera", 0);
                         sceneDirty = true;
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button("Add Actor")) {
+                    if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::New, "Actor")) {
                         Solstice::Parallax::AddElement(*scene, "ActorElement", "Actor", 0);
                         sceneDirty = true;
                     }
                     ImGui::SameLine();
-                    if (ImGui::Button("Add Audio")) {
+                    if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::New, "Audio")) {
                         const Solstice::Parallax::ElementIndex ai =
                             Solstice::Parallax::AddElement(*scene, "AudioSourceElement", "Audio", 0);
                         if (ai != Solstice::Parallax::PARALLAX_INVALID_INDEX) {
@@ -1409,7 +1538,7 @@ int main(int argc, char* argv[]) {
                     ImGui::Separator();
                     ImGui::TextUnformatted("Motion graphics");
                     Smm::DrawMg2DCompTools(*scene, mgElementSelected, sceneDirty, compressPrlx, smmNominalCompW, smmNominalCompH);
-                    if (ImGui::Button("Add MG Sprite")) {
+                    if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::New, "MG Sprite")) {
                         const Solstice::Parallax::MGIndex idx = Solstice::Parallax::AddMGElement(*scene, "MGSpriteElement", "Sprite",
                             Solstice::Parallax::PARALLAX_INVALID_INDEX);
                         if (idx != Solstice::Parallax::PARALLAX_INVALID_INDEX) {
@@ -1634,74 +1763,113 @@ int main(int argc, char* argv[]) {
                 }
                 LibUI::Widgets::EndTabBar();
             }
+            ImGui::EndChild();
 
             ImGui::TableNextColumn();
-            ImGui::TextUnformatted("Viewer");
-            ImGui::SameLine();
-            ImGui::SliderFloat("MG overlay", &smmWorkspace.mgOverlayAlpha, 0.f, 1.f, "%.2f");
-            ImGui::SameLine();
-            const char* projLabels[] = {"Perspective", "Ortho top", "Ortho front", "Ortho side"};
-            int projMode = static_cast<int>(smmWorkspace.unifiedViewportCamera.projection);
-            ImGui::SetNextItemWidth(150);
-            if (ImGui::Combo("##smmproj", &projMode, projLabels, IM_ARRAYSIZE(projLabels))) {
-                smmWorkspace.unifiedViewportCamera.projection = static_cast<LibUI::Viewport::OrbitProjectionMode>(projMode);
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Reset view")) {
-                smmWorkspace.unifiedViewportCamera = {};
-            }
-            ImGui::Checkbox("Preview .smat on cubes", &smmWorkspace.previewUseSmat);
-            ImGui::SameLine();
-            ImGui::Checkbox("Actors only##smat", &smmWorkspace.previewSmatActorsOnly);
-            ImGui::SameLine();
-            ImGui::Checkbox("Selected element only##smat", &smmWorkspace.previewSmatSelectedOnly);
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90.0f);
-            ImGui::InputTextWithHint("##smatpath", ".smat path (UTF-8)", smmWorkspace.previewSmatPath,
-                sizeof(smmWorkspace.previewSmatPath));
-            ImGui::SameLine();
-            if (ImGui::Button("Browse##smat")) {
-                LibUI::FileDialogs::ShowOpenFile(
-                    window, "Open Solstice material", [&smmWorkspace](std::optional<std::string> path) {
-                        if (path) {
-                            std::strncpy(smmWorkspace.previewSmatPath, path->c_str(),
-                                sizeof(smmWorkspace.previewSmatPath) - 1);
-                            smmWorkspace.previewSmatPath[sizeof(smmWorkspace.previewSmatPath) - 1] = '\0';
-                        }
-                    },
-                    std::span<const LibUI::FileDialogs::FileFilter>(kSmatFileFilters));
-            }
-            ImGui::Checkbox("Preview raster maps on cubes", &smmWorkspace.previewBindMaterialMaps);
-            ImGui::Checkbox("Fluid AABB overlay", &smmWorkspace.showFluidVolumeOverlay);
-            ImGui::Checkbox("Framing guides (unified view)", &smmWorkspace.showViewportFramingGuides);
-            ImGui::SliderFloat("Schematic baked AO (low-poly)", &smmWorkspace.schematicBakedAO, 0.0f, 1.0f, "%.2f");
-            ImGui::TextDisabled("Uses the same actor / selection filter as .smat above.");
-            auto drawMapRow = [&](const char* inputId, const char* hint, char* pathBuf, size_t pathCap, const char* browseId,
-                                  const char* dialogTitle) {
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 88.0f);
-                ImGui::InputTextWithHint(inputId, hint, pathBuf, pathCap);
+            ImGui::BeginChild(
+                "SMM_MainPane", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+            ImGui::PushID("SMM_ViewerToolbarScope");
+            if (ImGui::BeginTable("SMM_ViewerToolbar", 3,
+                    ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_NoSavedSettings | ImGuiTableFlags_BordersInnerV)) {
+                ImGui::TableSetupColumn("viewer", ImGuiTableColumnFlags_WidthFixed, 80.0f);
+                ImGui::TableSetupColumn("middle", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+                ImGui::TableSetupColumn("right", ImGuiTableColumnFlags_WidthFixed, 520.0f);
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted("Viewer");
+                ImGui::TableNextColumn();
+                if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Settings, "Overlays")) {
+                    ImGui::OpenPopup("SMM_ViewportOverlaysPopup");
+                }
                 ImGui::SameLine();
-                if (ImGui::Button(browseId)) {
+                if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Mesh, "Material")) {
+                    ImGui::OpenPopup("SMM_ViewportMaterialPopup");
+                }
+                ImGui::SameLine();
+                if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Shortcuts, "Ranges")) {
+                    ImGui::OpenPopup("SMM_TimelineRangesPopup");
+                }
+                ImGui::TableNextColumn();
+                ImGui::SetNextItemWidth(120.0f);
+                ImGui::SliderFloat("MG overlay", &smmWorkspace.mgOverlayAlpha, 0.f, 1.f, "%.2f");
+                ImGui::SameLine();
+                const char* projLabels[] = {"Perspective", "Ortho top", "Ortho front", "Ortho side"};
+                int projMode = static_cast<int>(smmWorkspace.unifiedViewportCamera.projection);
+                ImGui::SetNextItemWidth(145.0f);
+                if (ImGui::Combo("##smmproj", &projMode, projLabels, IM_ARRAYSIZE(projLabels))) {
+                    smmWorkspace.unifiedViewportCamera.projection = static_cast<LibUI::Viewport::OrbitProjectionMode>(projMode);
+                }
+                ImGui::SameLine();
+                if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Reload, "Reset")) {
+                    smmWorkspace.unifiedViewportCamera = {};
+                }
+                ImGui::EndTable();
+            }
+
+            if (ImGui::BeginPopup("SMM_ViewportOverlaysPopup")) {
+                ImGui::Checkbox("Fluid AABB overlay", &smmWorkspace.showFluidVolumeOverlay);
+                ImGui::Checkbox("Framing guides (unified view)", &smmWorkspace.showViewportFramingGuides);
+                ImGui::EndPopup();
+            }
+            if (ImGui::BeginPopup("SMM_ViewportMaterialPopup")) {
+                ImGui::Checkbox("Preview .smat on cubes", &smmWorkspace.previewUseSmat);
+                ImGui::SameLine();
+                ImGui::Checkbox("Actors only##smat", &smmWorkspace.previewSmatActorsOnly);
+                ImGui::SameLine();
+                ImGui::Checkbox("Selected element only##smat", &smmWorkspace.previewSmatSelectedOnly);
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90.0f);
+                ImGui::InputTextWithHint("##smatpath", ".smat path (UTF-8)", smmWorkspace.previewSmatPath,
+                    sizeof(smmWorkspace.previewSmatPath));
+                ImGui::SameLine();
+                if (ImGui::Button("Browse##smat")) {
                     LibUI::FileDialogs::ShowOpenFile(
-                        window, dialogTitle,
-                        [pathBuf, pathCap](std::optional<std::string> path) {
+                        window, "Open Solstice material", [&smmWorkspace](std::optional<std::string> path) {
                             if (path) {
-                                std::strncpy(pathBuf, path->c_str(), pathCap - 1);
-                                pathBuf[pathCap - 1] = '\0';
+                                std::strncpy(smmWorkspace.previewSmatPath, path->c_str(),
+                                    sizeof(smmWorkspace.previewSmatPath) - 1);
+                                smmWorkspace.previewSmatPath[sizeof(smmWorkspace.previewSmatPath) - 1] = '\0';
                             }
                         },
-                        std::span<const LibUI::FileDialogs::FileFilter>(Smm::Image::kRasterImportFilters));
+                        std::span<const LibUI::FileDialogs::FileFilter>(kSmatFileFilters));
                 }
-            };
-            drawMapRow("##mapAlbedo", "Albedo map (RGBA)", smmWorkspace.previewMaterialAlbedoPath,
-                sizeof(smmWorkspace.previewMaterialAlbedoPath), "Browse##mapAlbedo", "Open albedo texture");
-            drawMapRow("##mapNormal", "Normal map (optional)", smmWorkspace.previewMaterialNormalPath,
-                sizeof(smmWorkspace.previewMaterialNormalPath), "Browse##mapNormal", "Open normal map");
-            drawMapRow("##mapRough", "Roughness map (optional)", smmWorkspace.previewMaterialRoughnessPath,
-                sizeof(smmWorkspace.previewMaterialRoughnessPath), "Browse##mapRough", "Open roughness texture");
-            const float timelineHeight = 152.0f;
-            const float transportReserve = ImGui::GetFrameHeightWithSpacing() * 2.0f + ImGui::GetStyle().ItemSpacing.y * 3.0f;
-            const float controlsReserve = timelineHeight + transportReserve;
-            const float availableForViewport = ImGui::GetContentRegionAvail().y - controlsReserve;
+                ImGui::Checkbox("Preview raster maps on cubes", &smmWorkspace.previewBindMaterialMaps);
+                ImGui::SliderFloat("Schematic baked AO (low-poly)", &smmWorkspace.schematicBakedAO, 0.0f, 1.0f, "%.2f");
+                ImGui::TextDisabled("Uses the same actor / selection filter as .smat above.");
+                if (smmWorkspace.previewBindMaterialMaps) {
+                    auto drawMapRow = [&](const char* inputId, const char* hint, char* pathBuf, size_t pathCap, const char* browseId,
+                                          const char* dialogTitle) {
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 88.0f);
+                        ImGui::InputTextWithHint(inputId, hint, pathBuf, pathCap);
+                        ImGui::SameLine();
+                        if (ImGui::Button(browseId)) {
+                            LibUI::FileDialogs::ShowOpenFile(
+                                window, dialogTitle,
+                                [pathBuf, pathCap](std::optional<std::string> path) {
+                                    if (path) {
+                                        std::strncpy(pathBuf, path->c_str(), pathCap - 1);
+                                        pathBuf[pathCap - 1] = '\0';
+                                    }
+                                },
+                                std::span<const LibUI::FileDialogs::FileFilter>(Smm::Image::kRasterImportFilters));
+                        }
+                    };
+                    drawMapRow("##mapAlbedo", "Albedo map (RGBA)", smmWorkspace.previewMaterialAlbedoPath,
+                        sizeof(smmWorkspace.previewMaterialAlbedoPath), "Browse##mapAlbedo", "Open albedo texture");
+                    drawMapRow("##mapNormal", "Normal map (optional)", smmWorkspace.previewMaterialNormalPath,
+                        sizeof(smmWorkspace.previewMaterialNormalPath), "Browse##mapNormal", "Open normal map");
+                    drawMapRow("##mapRough", "Roughness map (optional)", smmWorkspace.previewMaterialRoughnessPath,
+                        sizeof(smmWorkspace.previewMaterialRoughnessPath), "Browse##mapRough", "Open roughness texture");
+                }
+                ImGui::EndPopup();
+            }
+            ImGui::PopID();
+            static bool s_timelineDockOpen = true;
+            const float dockHeaderH = ImGui::GetFrameHeightWithSpacing() + 4.0f;
+            const float availMainH = ImGui::GetContentRegionAvail().y;
+            const float timelineDockH = s_timelineDockOpen
+                ? std::clamp(availMainH * 0.28f, 132.0f, 210.0f)
+                : dockHeaderH;
+            const float statusBarH = ImGui::GetTextLineHeightWithSpacing() + 4.0f;
+            const float availableForViewport = ImGui::GetContentRegionAvail().y - timelineDockH - statusBarH - 2.0f;
             const float viewportHeight = std::max(180.0f, availableForViewport);
             if (ImGui::BeginChild("SMM_ViewportArea", ImVec2(0.0f, viewportHeight), ImGuiChildFlags_None,
                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings)) {
@@ -1719,6 +1887,23 @@ int main(int argc, char* argv[]) {
                         smmWorkspace.enginePreviewLastError[0] = '\0';
                     }
                 }
+#if defined(_WIN32)
+                const bool enableUnifiedViewport = !LibUI::Tools::EnvVarTruthy("SOLSTICE_SMM_DISABLE_ENGINE_PREVIEW");
+#else
+                const bool enableUnifiedViewport = true;
+#endif
+                if (!enableUnifiedViewport) {
+                    ImGui::TextDisabled("Unified viewport safe mode active (Windows).");
+                    ImGui::TextDisabled("Unset SOLSTICE_SMM_DISABLE_ENGINE_PREVIEW to re-enable live viewport path.");
+                    LibUI::Viewport::Frame safeVp{};
+                    if (LibUI::Viewport::BeginHost("smm_unified_viewport_safe", ImVec2(-1, viewportHeight - 8.0f), true)) {
+                        if (LibUI::Viewport::PollFrame(safeVp) && safeVp.draw_list) {
+                            LibUI::Viewport::DrawCheckerboard(
+                                safeVp.draw_list, safeVp.min, safeVp.max, 14.f, IM_COL32(32, 32, 42, 255), IM_COL32(24, 24, 30, 255));
+                        }
+                        LibUI::Viewport::EndHost();
+                    }
+                } else {
                 Solstice::Math::Vec3 particleEmitter{0.f, 1.2f, 0.f};
                 if (smmWorkspace.particleEditorState.attachToSceneElement && elementSelected >= 0) {
                     Solstice::Parallax::SceneEvaluationResult evPos{};
@@ -1747,13 +1932,14 @@ int main(int argc, char* argv[]) {
                 uv.lowPolyAOPreview = smmWorkspace.schematicBakedAO;
                 uv.enginePreviewErrorSink = smmWorkspace.enginePreviewLastError;
                 uv.enginePreviewErrorSinkBytes = sizeof(smmWorkspace.enginePreviewLastError);
+                uv.enginePreviewSessionDisabled = &smmWorkspace.enginePreviewSessionDisabled;
                 uv.cinematicView3D = &smmAuthoringSession.CinematicView;
                 Solstice::MovieMaker::UI::Panels::DrawUnifiedViewportPanel(window, *scene, resolver, timeTicks,
                     smmScene3dPreviewTex, viewportHeight - 8.0f, &smmWorkspace.particleEditorState, &smmParticleSpriteTex,
                     particleEmitter, smmWorkspace.mgOverlayAlpha, uv);
+                }
             }
             ImGui::EndChild();
-            ImGui::Separator();
             smmSession.mainWindow = window;
             smmSession.scene = scene.get();
             smmSession.resolver = &resolver;
@@ -1769,119 +1955,144 @@ int main(int argc, char* argv[]) {
             smmSession.reloadIniPresetsUser = &activeProjectPath;
             smmWorkspace.timelineState.playheadTick = timeTicks;
             Smm::Editing::BridgeSyncFromScene(*scene, smmWorkspace.timelineState, smmWorkspace.curveEditorState, smmBindings);
-            if (LibUI::Timeline::DrawAnimationTimeline(
-                    "SMM_AnimationTimeline", smmWorkspace.timelineState, ImVec2(0.0f, timelineHeight))) {
-                timeTicks = Solstice::MovieMaker::Workflow::ClampPlayhead(
-                    smmWorkspace.timelineState.playheadTick, scene->GetTimelineDurationTicks());
-            }
             LibUI::Timeline::TimelineClampNestedRange(smmWorkspace.timelineState);
-            ImGui::TextDisabled("Nested sub-timeline: zooms the track/curve to a [start,end) tick window for detailed edits.");
-            ImGui::Checkbox("Nested sub-range (timeline + curve)##nstd", &smmWorkspace.timelineState.nestedViewEnabled);
-            uint64_t nest0 = smmWorkspace.timelineState.nestedRangeStartTick;
-            uint64_t nest1 = smmWorkspace.timelineState.nestedRangeEndTick;
-            ImGui::SetNextItemWidth(200.f);
-            ImGui::InputScalar("Nested start tick##nstd", ImGuiDataType_U64, &nest0);
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(200.f);
-            ImGui::InputScalar("Nested end (exclusive)##nstd", ImGuiDataType_U64, &nest1);
-            smmWorkspace.timelineState.nestedRangeStartTick = nest0;
-            smmWorkspace.timelineState.nestedRangeEndTick = nest1;
-            if (ImGui::SmallButton("Nest: start = playhead##nstd")) {
-                smmWorkspace.timelineState.nestedRangeStartTick = timeTicks;
-            }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Nest: end = scene duration##nstd")) {
-                smmWorkspace.timelineState.nestedRangeEndTick = scene->GetTimelineDurationTicks();
-            }
-            if (!g_smmRangePresets.empty()) {
-                ImGui::TextUnformatted("Shot / act ranges (INI: presets/Timeline/ — optional; #include supported; project overrides shims)");
-                static int sSmmRng = 0;
-                sSmmRng = (std::clamp)(sSmmRng, 0, static_cast<int>(g_smmRangePresets.size()) - 1);
-                std::string rngItems;
-                for (const Smm::Timeline::RangePreset& p : g_smmRangePresets) {
-                    rngItems += (p.DisplayName.empty() ? p.Id : p.DisplayName);
-                    rngItems.push_back('\0');
-                }
-                rngItems.push_back('\0');
-                ImGui::SetNextItemWidth(300.f);
-                ImGui::Combo("##smmRngC", &sSmmRng, rngItems.c_str());
-                const Smm::Timeline::RangePreset& rng = g_smmRangePresets[static_cast<size_t>(sSmmRng)];
-                if (!rng.Description.empty() || !rng.Author.empty() || !rng.Tags.empty()) {
-                    if (!rng.Description.empty()) {
-                        ImGui::TextDisabled("%s", rng.Description.c_str());
-                    }
-                    if (!rng.Author.empty() || !rng.Tags.empty()) {
-                        std::string meta;
-                        if (!rng.Author.empty()) {
-                            meta = "Author: " + rng.Author;
-                        }
-                        if (!rng.Tags.empty()) {
-                            if (!meta.empty()) {
-                                meta += "  ·  ";
-                            }
-                            meta += "Tags: " + rng.Tags;
-                        }
-                        ImGui::TextDisabled("%s", meta.c_str());
-                    }
-                }
-                if (ImGui::SmallButton("Apply to nested sub-range##smmRng1")) {
-                    smmWorkspace.timelineState.nestedViewEnabled = true;
-                    smmWorkspace.timelineState.nestedRangeStartTick = rng.StartTick;
-                    smmWorkspace.timelineState.nestedRangeEndTick = rng.EndTick;
-                    LibUI::Timeline::TimelineClampNestedRange(smmWorkspace.timelineState);
+            if (ImGui::BeginPopup("SMM_TimelineRangesPopup")) {
+                ImGui::TextDisabled("Nested sub-timeline: zooms track/curve to a [start,end) tick window.");
+                ImGui::Checkbox("Nested sub-range (timeline + curve)##nstd", &smmWorkspace.timelineState.nestedViewEnabled);
+                uint64_t nest0 = smmWorkspace.timelineState.nestedRangeStartTick;
+                uint64_t nest1 = smmWorkspace.timelineState.nestedRangeEndTick;
+                ImGui::SetNextItemWidth(200.f);
+                ImGui::InputScalar("Nested start tick##nstd", ImGuiDataType_U64, &nest0);
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(200.f);
+                ImGui::InputScalar("Nested end (exclusive)##nstd", ImGuiDataType_U64, &nest1);
+                smmWorkspace.timelineState.nestedRangeStartTick = nest0;
+                smmWorkspace.timelineState.nestedRangeEndTick = nest1;
+                if (ImGui::SmallButton("Nest: start = playhead##nstd")) {
+                    smmWorkspace.timelineState.nestedRangeStartTick = timeTicks;
                 }
                 ImGui::SameLine();
-                if (ImGui::SmallButton("Jump playhead to range start##smmRng2")) {
-                    timeTicks = rng.StartTick;
-                    timeTicks = Solstice::MovieMaker::Workflow::ClampPlayhead(timeTicks, scene->GetTimelineDurationTicks());
+                if (ImGui::SmallButton("Nest: end = scene duration##nstd")) {
+                    smmWorkspace.timelineState.nestedRangeEndTick = scene->GetTimelineDurationTicks();
                 }
+                if (!g_smmRangePresets.empty()) {
+                    ImGui::TextUnformatted("Shot / act ranges (INI presets/Timeline)");
+                    static int sSmmRng = 0;
+                    sSmmRng = (std::clamp)(sSmmRng, 0, static_cast<int>(g_smmRangePresets.size()) - 1);
+                    std::string rngItems;
+                    for (const Smm::Timeline::RangePreset& p : g_smmRangePresets) {
+                        rngItems += (p.DisplayName.empty() ? p.Id : p.DisplayName);
+                        rngItems.push_back('\0');
+                    }
+                    rngItems.push_back('\0');
+                    ImGui::SetNextItemWidth(300.f);
+                    ImGui::Combo("##smmRngC", &sSmmRng, rngItems.c_str());
+                    const Smm::Timeline::RangePreset& rng = g_smmRangePresets[static_cast<size_t>(sSmmRng)];
+                    if (!rng.Description.empty() || !rng.Author.empty() || !rng.Tags.empty()) {
+                        if (!rng.Description.empty()) {
+                            ImGui::TextDisabled("%s", rng.Description.c_str());
+                        }
+                        if (!rng.Author.empty() || !rng.Tags.empty()) {
+                            std::string meta;
+                            if (!rng.Author.empty()) {
+                                meta = "Author: " + rng.Author;
+                            }
+                            if (!rng.Tags.empty()) {
+                                if (!meta.empty()) {
+                                    meta += "  ·  ";
+                                }
+                                meta += "Tags: " + rng.Tags;
+                            }
+                            ImGui::TextDisabled("%s", meta.c_str());
+                        }
+                    }
+                    if (ImGui::SmallButton("Apply to nested sub-range##smmRng1")) {
+                        smmWorkspace.timelineState.nestedViewEnabled = true;
+                        smmWorkspace.timelineState.nestedRangeStartTick = rng.StartTick;
+                        smmWorkspace.timelineState.nestedRangeEndTick = rng.EndTick;
+                        LibUI::Timeline::TimelineClampNestedRange(smmWorkspace.timelineState);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("Jump playhead to range start##smmRng2")) {
+                        timeTicks = rng.StartTick;
+                        timeTicks = Solstice::MovieMaker::Workflow::ClampPlayhead(timeTicks, scene->GetTimelineDurationTicks());
+                    }
+                }
+                ImGui::EndPopup();
             }
             smmPanelReg.DrawPanels();
-            if (ImGui::Button("-1 tick")) {
-                if (timeTicks > 0) {
-                    --timeTicks;
+            if (ImGui::BeginChild("SMM_TimelineDock", ImVec2(0.0f, timelineDockH), true,
+                    ImGuiWindowFlags_NoSavedSettings)) {
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 2.0f));
+                if (ImGui::SmallButton(s_timelineDockOpen ? "v Timeline & Tracks" : "> Timeline & Tracks")) {
+                    s_timelineDockOpen = !s_timelineDockOpen;
+                }
+                ImGui::PopStyleVar();
+                if (s_timelineDockOpen) {
+                    const float timelineInnerH = std::max(72.0f, ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing() * 2.0f);
+                    if (LibUI::Timeline::DrawAnimationTimeline(
+                            "SMM_AnimationTimeline", smmWorkspace.timelineState, ImVec2(0.0f, timelineInnerH))) {
+                        timeTicks = Solstice::MovieMaker::Workflow::ClampPlayhead(
+                            smmWorkspace.timelineState.playheadTick, scene->GetTimelineDurationTicks());
+                    }
+
+                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3.0f, 1.0f));
+                    if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Prev, "-1t")) {
+                        if (timeTicks > 0) {
+                            --timeTicks;
+                        }
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Step playhead back by 1 tick");
+                    }
+                    ImGui::SameLine();
+                    if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Next, "+1t")) {
+                        if (timeTicks < maxT) {
+                            ++timeTicks;
+                        }
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Step playhead forward by 1 tick");
+                    }
+                    ImGui::SameLine();
+                    if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Prev, "-1s")) {
+                        const uint64_t step = scene->GetTicksPerSecond();
+                        timeTicks = (timeTicks > step) ? (timeTicks - step) : 0;
+                    }
+                    ImGui::SameLine();
+                    if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Next, "+1s")) {
+                        const uint64_t step = scene->GetTicksPerSecond();
+                        timeTicks = std::min(maxT, timeTicks + step);
+                    }
+                    ImGui::SameLine();
+                    if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Prev, "|<")) {
+                        Solstice::MovieMaker::Workflow::JumpPlayheadToStart(timeTicks, scene->GetTimelineDurationTicks());
+                    }
+                    ImGui::SameLine();
+                    if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Next, ">|")) {
+                        Solstice::MovieMaker::Workflow::JumpPlayheadToEnd(timeTicks, scene->GetTimelineDurationTicks());
+                    }
+                    ImGui::SameLine();
+                    if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Validate, "Snap")) {
+                        timeTicks = Solstice::MovieMaker::Workflow::SnapTickToWholeSeconds(timeTicks, scene->GetTicksPerSecond());
+                    }
+                    ImGui::SameLine();
+                    if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Prev, "KF-1s")) {
+                        Solstice::MovieMaker::Workflow::ShiftSceneKeyframes(*scene,
+                            -static_cast<int64_t>(scene->GetTicksPerSecond()));
+                        sceneDirty = true;
+                    }
+                    ImGui::SameLine();
+                    if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Next, "KF+1s")) {
+                        Solstice::MovieMaker::Workflow::ShiftSceneKeyframes(*scene,
+                            static_cast<int64_t>(scene->GetTicksPerSecond()));
+                        sceneDirty = true;
+                    }
+                    ImGui::PopStyleVar();
                 }
             }
-            ImGui::SameLine();
-            if (ImGui::Button("+1 tick")) {
-                if (timeTicks < maxT) {
-                    ++timeTicks;
-                }
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("-1 s")) {
-                const uint64_t step = scene->GetTicksPerSecond();
-                timeTicks = (timeTicks > step) ? (timeTicks - step) : 0;
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("+1 s")) {
-                const uint64_t step = scene->GetTicksPerSecond();
-                timeTicks = std::min(maxT, timeTicks + step);
-            }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("|< start")) {
-                Solstice::MovieMaker::Workflow::JumpPlayheadToStart(timeTicks, scene->GetTimelineDurationTicks());
-            }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("end >|")) {
-                Solstice::MovieMaker::Workflow::JumpPlayheadToEnd(timeTicks, scene->GetTimelineDurationTicks());
-            }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Snap s")) {
-                timeTicks = Solstice::MovieMaker::Workflow::SnapTickToWholeSeconds(timeTicks, scene->GetTicksPerSecond());
-            }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("KF -1s")) {
-                Solstice::MovieMaker::Workflow::ShiftSceneKeyframes(*scene,
-                    -static_cast<int64_t>(scene->GetTicksPerSecond()));
-                sceneDirty = true;
-            }
-            ImGui::SameLine();
-            if (ImGui::SmallButton("KF +1s")) {
-                Solstice::MovieMaker::Workflow::ShiftSceneKeyframes(*scene,
-                    static_cast<int64_t>(scene->GetTicksPerSecond()));
-                sceneDirty = true;
-            }
+            ImGui::EndChild();
+            ImGui::EndChild();
             ImGui::EndTable();
         }
 
@@ -2184,16 +2395,24 @@ int main(int argc, char* argv[]) {
         glClearColor(0.1f, 0.1f, 0.12f, 1.f);
         glClear(GL_COLOR_BUFFER_BIT);
 
+        SmmSetCrashStage("frame.render");
         LibUI::Core::Render();
+        SmmSetCrashStage("frame.swap");
         SDL_GL_SwapWindow(window);
     }
 
+    SmmSetCrashStage("shutdown.textures");
     smmScene3dPreviewTex.Destroy();
     smmParticleSpriteTex.Destroy();
+    SmmSetCrashStage("shutdown.preview");
     Solstice::EditorEnginePreview::Shutdown();
+    SmmSetCrashStage("shutdown.audio");
     Solstice::EditorAudio::Shutdown();
+    SmmSetCrashStage("shutdown.libui");
     LibUI::Core::Shutdown();
+    SmmSetCrashStage("shutdown.window");
     LibUI::Shell::DestroyUtilityGlWindow(glWindow);
+    SmmSetCrashStage("shutdown.sdl");
     SDL_Quit();
     return 0;
 }

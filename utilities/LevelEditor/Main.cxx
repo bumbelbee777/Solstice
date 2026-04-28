@@ -7,5 +7,7 @@ int main(int argc, char** argv) {
 #if defined(_WIN32)
     LibUI::Tools::Win32InstallUtilityTopLevelFilter("Jackhammer");
 #endif
-    return Jackhammer::RunApp(argc, argv);
+    const int rc = Jackhammer::RunApp(argc, argv);
+    LibUI::Tools::Win32CrashDiagEnterShutdownMode();
+    return rc;
 }
