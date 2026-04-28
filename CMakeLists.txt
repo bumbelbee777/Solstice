@@ -97,6 +97,11 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# MSVC: parallel compilation of TUs that share one static library PDB can hit C1041; /FS serializes PDB updates.
+if(MSVC)
+    add_compile_options(/FS)
+endif()
+
 # Get git commit hash for versioning
 find_package(Git QUIET)
 if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
@@ -516,4 +521,5 @@ if(SOLSTICE_BUILD_EXAMPLES)
     add_subdirectory(example/Disco)
     add_subdirectory(example/ThermalPlume)
     add_subdirectory(example/MotionFusion)
+    add_subdirectory(example/WarsOfHeaven)
 endif()

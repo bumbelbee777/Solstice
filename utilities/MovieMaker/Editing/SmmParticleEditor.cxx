@@ -57,6 +57,11 @@ static void SpawnOne(ParticleEditorState& st, const Solstice::Math::Vec3& origin
     p.lifetime = (std::max)(st.lifetimeSec, 0.05f);
     p.age = 0.f;
     p.size = st.startSize;
+    p.ribbonCount = 0;
+    if (st.ribbonTrails) {
+        p.ribbon[0] = p.position;
+        p.ribbonCount = 1;
+    }
     st.particles.push_back(p);
 }
 } // namespace
@@ -293,6 +298,10 @@ void DrawParticleEditorPanel(const char* windowTitle, bool* visible, ParticleEdi
         }
         ImGui::TextDisabled("Export/save .prlx also merges the editor emitter automatically.");
     }
+    ImGui::Checkbox("Ribbon trails (unified viewport)", &st.ribbonTrails);
+    TrackParticleWidget(s_particleCommitted);
+    ImGui::SliderInt("Ribbon segments", &st.ribbonSegments, 2, 12);
+    TrackParticleWidget(s_particleCommitted);
     ImGui::TextDisabled("Preview: billboards in unified viewport (sprite or gradient disk).");
     if (!ImGui::IsAnyItemActive()) {
         s_particleCommitted = st;
@@ -376,6 +385,21 @@ void TickParticlePreview(ParticleEditorState& st, const Solstice::Math::Vec3& or
             p.velocity = p.velocity * dragK;
         }
         p.position = p.position + p.velocity * dt;
+        if (st.ribbonTrails) {
+            const int seg = std::clamp(st.ribbonSegments, 2, ParticleInstance::kMaxRibbon);
+            if (p.ribbonCount < static_cast<uint8_t>(seg)) {
+                p.ribbon[p.ribbonCount] = p.position;
+                ++p.ribbonCount;
+            } else {
+                for (int j = 0; j < seg - 1; ++j) {
+                    p.ribbon[static_cast<size_t>(j)] = p.ribbon[static_cast<size_t>(j + 1)];
+                }
+                p.ribbon[static_cast<size_t>(seg - 1)] = p.position;
+                p.ribbonCount = static_cast<uint8_t>(seg);
+            }
+        } else {
+            p.ribbonCount = 0;
+        }
         const float t = std::clamp(p.age / (std::max)(p.lifetime, 1e-4f), 0.f, 1.f);
         p.size = st.startSize + (st.endSize - st.startSize) * t;
     }

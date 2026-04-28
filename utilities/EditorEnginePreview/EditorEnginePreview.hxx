@@ -12,6 +12,18 @@ struct OrbitPanZoomState;
 
 namespace Solstice::EditorEnginePreview {
 
+/// Serialized in SMM authoring TSV and applied to 3D schematic capture (`fs_post` chroma / smear / fog dither).
+struct CinematicViewStatePod {
+    float ChromaticAberrationStrength{0.0f};
+    float ChromaticAberrationDepthScale{0.7f};
+    float ChromaticCenterU{0.5f};
+    float ChromaticCenterV{0.5f};
+    float SmearFrameStrength{0.0f};
+    float ScreenFogDither{0.1f};
+};
+
+void SetPendingCinematicViewState(const CinematicViewStatePod& s);
+
 /// Half-extent for schematic SMM/LevelEditor preview cubes and ImGui hit-test/selection (must match `PreviewEntity` passed to `CaptureOrbitRgb`).
 inline constexpr float kSchematicPreviewHalfExtent = 0.28f;
 
@@ -32,6 +44,8 @@ struct PreviewEntity {
     char PreviewAlbedoTexturePath[768]{};
     char PreviewNormalTexturePath[768]{};
     char PreviewRoughnessTexturePath[768]{};
+    /// 0 = off; 0-1 tints albedo to approximate **baked / cavity** shading on schematic preview cubes (no .smat).
+    float BakedAOPreview{0.f};
 };
 
 /// Creates hidden SDL window + `SoftwareRenderer` once (idempotent).

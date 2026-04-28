@@ -5,8 +5,10 @@
 #include <imgui.h>
 
 #include <Math/Vector.hxx>
+#include <Parallax/ParallaxTypes.hxx>
 #include <unordered_map>
 #include <algorithm>
+#include <cmath>
 #include <string_view>
 
 namespace Smm {
@@ -30,6 +32,40 @@ static Solstice::Math::Vec2 ReadVec2(const std::unordered_map<std::string, Solst
         return *p;
     }
     return dflt;
+}
+
+static float ReadF(const std::unordered_map<std::string, Solstice::Parallax::AttributeValue>& attrs, const char* k, float d) {
+    const auto it = attrs.find(k);
+    if (it == attrs.end()) {
+        return d;
+    }
+    if (const auto* f = std::get_if<float>(&it->second)) {
+        return *f;
+    }
+    return d;
+}
+
+static int ReadI(const std::unordered_map<std::string, Solstice::Parallax::AttributeValue>& attrs, const char* k, int d) {
+    const auto it = attrs.find(k);
+    if (it == attrs.end()) {
+        return d;
+    }
+    if (const auto* in = std::get_if<int32_t>(&it->second)) {
+        return static_cast<int>(*in);
+    }
+    return d;
+}
+
+static Solstice::Math::Vec3 ReadV3(
+    const std::unordered_map<std::string, Solstice::Parallax::AttributeValue>& attrs, const char* k, const Solstice::Math::Vec3& d) {
+    const auto it = attrs.find(k);
+    if (it == attrs.end()) {
+        return d;
+    }
+    if (const auto* p = std::get_if<Solstice::Math::Vec3>(&it->second)) {
+        return *p;
+    }
+    return d;
 }
 
 } // namespace
@@ -107,6 +143,59 @@ void DrawMg2DCompTools(
         return;
     }
     const std::string_view st = MgSchema(scene, scene.GetMGElements()[static_cast<size_t>(mgElementSelected)]);
+    if (st == "MotionGraphicsRootElement") {
+        auto& mgMut = scene.GetMGElements()[static_cast<size_t>(mgElementSelected)];
+        ImGui::Separator();
+        ImGui::TextUnformatted("Root (time scale, shake, post)");
+        {
+            float ts = ReadF(mgMut.Attributes, "MGTimeScale", 1.f);
+            if (ImGui::DragFloat("MG time scale", &ts, 0.01f, 0.f, 8.f)) {
+                Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                mgMut.Attributes["MGTimeScale"] = Solstice::Parallax::AttributeValue{ts};
+                sceneDirty = true;
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                ImGui::SetTooltip("All MG tracks use evalTick = wall time * this (linear; not full spline time-remap).");
+            }
+        }
+        {
+            float s2[2] = {ReadF(mgMut.Attributes, "ScreenShakeAmpX", 0.f), ReadF(mgMut.Attributes, "ScreenShakeAmpY", 0.f)};
+            if (ImGui::DragFloat2("Screen shake amp (px)", s2, 0.5f, 0.f, 200.f)) {
+                Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                mgMut.Attributes["ScreenShakeAmpX"] = Solstice::Parallax::AttributeValue{s2[0]};
+                mgMut.Attributes["ScreenShakeAmpY"] = Solstice::Parallax::AttributeValue{s2[1]};
+                sceneDirty = true;
+            }
+        }
+        {
+            float sh[2] = {ReadF(mgMut.Attributes, "ScreenShakeFrequency", 1.f), ReadF(mgMut.Attributes, "ScreenShakePhase", 0.f)};
+            if (ImGui::DragFloat2("Shake freq / phase", sh, 0.01f, -32.f, 32.f)) {
+                Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                mgMut.Attributes["ScreenShakeFrequency"] = Solstice::Parallax::AttributeValue{sh[0]};
+                mgMut.Attributes["ScreenShakePhase"] = Solstice::Parallax::AttributeValue{sh[1]};
+                sceneDirty = true;
+            }
+        }
+        float capx = ReadF(mgMut.Attributes, "ChromaticAberration", 0.f);
+        if (ImGui::DragFloat("Chromatic aberration (px)", &capx, 0.1f, 0.f, 12.f)) {
+            Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+            mgMut.Attributes["ChromaticAberration"] = Solstice::Parallax::AttributeValue{capx};
+            sceneDirty = true;
+        }
+        {
+            float g4[4] = {ReadF(mgMut.Attributes, "GradeExposure", 1.f), ReadF(mgMut.Attributes, "GradeSaturation", 1.f),
+                ReadF(mgMut.Attributes, "GradeContrast", 1.f), ReadF(mgMut.Attributes, "GradeLift", 0.f)};
+            if (ImGui::DragFloat4("Grade: exposure, sat, contrast, lift", g4, 0.01f, -0.5f, 4.f)) {
+                Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                mgMut.Attributes["GradeExposure"] = Solstice::Parallax::AttributeValue{g4[0]};
+                mgMut.Attributes["GradeSaturation"] = Solstice::Parallax::AttributeValue{g4[1]};
+                mgMut.Attributes["GradeContrast"] = Solstice::Parallax::AttributeValue{g4[2]};
+                mgMut.Attributes["GradeLift"] = Solstice::Parallax::AttributeValue{g4[3]};
+                sceneDirty = true;
+            }
+        }
+        return;
+    }
     if (st != "MGSpriteElement" && st != "MGTextElement") {
         return;
     }
@@ -188,6 +277,132 @@ void DrawMg2DCompTools(
         al("M", x, 0.5f * (compH - cSz.y));
         ImGui::SameLine();
         al("B", x, compH - cSz.y);
+
+        ImGui::Separator();
+        ImGui::TextUnformatted("Sprite FX (export + ImGui / CPU paths)");
+        const float rads = ReadF(mgMut.Attributes, "RotationZ", 0.f);
+        float degs = rads * 180.f / 3.14159265f;
+        if (ImGui::SliderFloat("Rotation Z (deg)", &degs, -180.f, 180.f)) {
+            Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+            mgMut.Attributes["RotationZ"] = Solstice::Parallax::AttributeValue{degs * 3.14159265f / 180.f};
+            sceneDirty = true;
+        }
+        int bbm = ReadI(mgMut.Attributes, "BillboardMode", 0);
+        if (ImGui::SliderInt("Billboard mode (0=off)", &bbm, 0, 2)) {
+            Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+            mgMut.Attributes["BillboardMode"] = Solstice::Parallax::AttributeValue{static_cast<int32_t>(bbm)};
+            sceneDirty = true;
+        }
+        int smear = ReadI(mgMut.Attributes, "SmearCount", 0);
+        float sfall = ReadF(mgMut.Attributes, "SmearFalloff", 0.65f);
+        if (ImGui::SliderInt("Smear count", &smear, 0, 8)) {
+            Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+            mgMut.Attributes["SmearCount"] = Solstice::Parallax::AttributeValue{static_cast<int32_t>(smear)};
+            sceneDirty = true;
+        }
+        {
+            float sm2[2] = {ReadF(mgMut.Attributes, "SmearDx", 0.f), ReadF(mgMut.Attributes, "SmearDy", 0.f)};
+            if (ImGui::DragFloat2("Smear dxy (px per ghost)", sm2, 0.25f, -256.f, 256.f)) {
+                Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                mgMut.Attributes["SmearDx"] = Solstice::Parallax::AttributeValue{sm2[0]};
+                mgMut.Attributes["SmearDy"] = Solstice::Parallax::AttributeValue{sm2[1]};
+                sceneDirty = true;
+            }
+        }
+        if (ImGui::SliderFloat("Smear falloff", &sfall, 0.05f, 0.99f)) {
+            Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+            mgMut.Attributes["SmearFalloff"] = Solstice::Parallax::AttributeValue{sfall};
+            sceneDirty = true;
+        }
+        {
+            float uv[2] = {ReadF(mgMut.Attributes, "UvScrollU", 0.f), ReadF(mgMut.Attributes, "UvScrollV", 0.f)};
+            if (ImGui::DragFloat2("UV scroll (wrap)", uv, 0.01f, -8.f, 8.f)) {
+                Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                mgMut.Attributes["UvScrollU"] = Solstice::Parallax::AttributeValue{uv[0]};
+                mgMut.Attributes["UvScrollV"] = Solstice::Parallax::AttributeValue{uv[1]};
+                sceneDirty = true;
+            }
+        }
+        {
+            float wv2[2] = {ReadF(mgMut.Attributes, "UvWaveU", 0.f), ReadF(mgMut.Attributes, "UvWaveV", 0.f)};
+            if (ImGui::DragFloat2("UV wave amp", wv2, 0.002f, 0.f, 0.5f)) {
+                Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                mgMut.Attributes["UvWaveU"] = Solstice::Parallax::AttributeValue{wv2[0]};
+                mgMut.Attributes["UvWaveV"] = Solstice::Parallax::AttributeValue{wv2[1]};
+                sceneDirty = true;
+            }
+        }
+        float wph = ReadF(mgMut.Attributes, "UvPhase", 0.f);
+        if (ImGui::DragFloat("UV phase (animate key)", &wph, 0.02f, -64.f, 64.f)) {
+            Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+            mgMut.Attributes["UvPhase"] = Solstice::Parallax::AttributeValue{wph};
+            sceneDirty = true;
+        }
+        float aoM = ReadF(mgMut.Attributes, "AOMultiply", 1.f);
+        float aoE = ReadF(mgMut.Attributes, "AOEdge", 0.f);
+        if (ImGui::SliderFloat("AO multiply", &aoM, 0.f, 2.f)) {
+            Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+            mgMut.Attributes["AOMultiply"] = Solstice::Parallax::AttributeValue{aoM};
+            sceneDirty = true;
+        }
+        if (ImGui::SliderFloat("AO edge (sprite)", &aoE, 0.f, 1.f)) {
+            Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+            mgMut.Attributes["AOEdge"] = Solstice::Parallax::AttributeValue{aoE};
+            sceneDirty = true;
+        }
+        {
+            ImGui::Separator();
+            ImGui::TextUnformatted("Key / rotoscope / zoom blur (CPU + export)");
+            Solstice::Math::Vec3 kc = ReadV3(mgMut.Attributes, "ChromaKeyColor", Solstice::Math::Vec3(0.f, 1.f, 0.f));
+            float c3[3] = {kc.x, kc.y, kc.z};
+            if (ImGui::ColorEdit3("Chroma key (linear RGB, tol>0=on)", c3, ImGuiColorEditFlags_Float)) {
+                Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                mgMut.Attributes["ChromaKeyColor"] = Solstice::Parallax::AttributeValue{
+                    Solstice::Math::Vec3(c3[0], c3[1], c3[2])};
+                sceneDirty = true;
+            }
+            float ckt = ReadF(mgMut.Attributes, "ChromaKeyTolerance", 0.f);
+            float ckf = ReadF(mgMut.Attributes, "ChromaKeyFeather", 0.05f);
+            if (ImGui::DragFloat("Chroma key tolerance (0=off)", &ckt, 0.01f, 0.f, 1.f)) {
+                Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                mgMut.Attributes["ChromaKeyTolerance"] = Solstice::Parallax::AttributeValue{ckt};
+                sceneDirty = true;
+            }
+            if (ImGui::DragFloat("Chroma key feather", &ckf, 0.01f, 0.001f, 0.5f)) {
+                Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                mgMut.Attributes["ChromaKeyFeather"] = Solstice::Parallax::AttributeValue{ckf};
+                sceneDirty = true;
+            }
+        }
+        {
+            float rs = ReadF(mgMut.Attributes, "RotoscopeStrength", 0.f);
+            float re = ReadF(mgMut.Attributes, "RotoscopeEdgePx", 2.f);
+            if (ImGui::DragFloat("Rotoscope strength (alpha edge darkening)", &rs, 0.02f, 0.f, 2.f)) {
+                Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                mgMut.Attributes["RotoscopeStrength"] = Solstice::Parallax::AttributeValue{rs};
+                sceneDirty = true;
+            }
+            if (ImGui::DragFloat("Rotoscope edge (texture px scale)", &re, 0.1f, 0.1f, 12.f)) {
+                Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                mgMut.Attributes["RotoscopeEdgePx"] = Solstice::Parallax::AttributeValue{re};
+                sceneDirty = true;
+            }
+        }
+        {
+            float zb = ReadF(mgMut.Attributes, "ZoomBlur", 0.f);
+            float z2[2] = {ReadF(mgMut.Attributes, "ZoomBlurCenterU", 0.5f), ReadF(mgMut.Attributes, "ZoomBlurCenterV", 0.5f)};
+            if (ImGui::DragFloat("Zoom / radial blur", &zb, 0.01f, 0.f, 1.f)) {
+                Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                mgMut.Attributes["ZoomBlur"] = Solstice::Parallax::AttributeValue{zb};
+                sceneDirty = true;
+            }
+            if (ImGui::DragFloat2("Blur center UV (0-1 texture)", z2, 0.01f, 0.f, 1.f)) {
+                Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                mgMut.Attributes["ZoomBlurCenterU"] = Solstice::Parallax::AttributeValue{z2[0]};
+                mgMut.Attributes["ZoomBlurCenterV"] = Solstice::Parallax::AttributeValue{z2[1]};
+                sceneDirty = true;
+            }
+        }
     } else {
         if (ImGui::Button("Center in comp (anchor ~ center)##altxt")) {
             Smm::PushSceneUndoSnapshot(scene, compressPrlx);

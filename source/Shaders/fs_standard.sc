@@ -3,6 +3,7 @@ $input PixelPosition, PixelNormal, ShadowCoord, TexCoord, PixelTangent, PixelBit
 
 uniform vec4 u_AlbedoColor; // RGB + roughness
 uniform vec4 u_MaterialParams; // x: metallic, y: roughness (if not from texture), z: IOR (Index of Refraction), w: unused
+uniform vec4 u_stylize;        // x: cel bands 0=off, 2..8, y: rim overdrive, z/w: wobble (used in vs)
 uniform vec4 u_Emission; // rgb: emission color, w: emission strength
 uniform vec4 u_LightDir;    // xyz: light direction (normalized) - Directional Light (Sun)
 uniform vec4 u_LightColor;   // rgb: light color, w: intensity - Directional Light (Sun)
@@ -191,8 +192,12 @@ void main()
     float AmbientFactor = mix(0.15, 0.25, HemiMix);
     vec3 Ambient = mix(GroundColor, SkyColor, HemiMix) * AmbientFactor;
 
-    // Diffuse lighting - standard PBR approach
+    // Diffuse lighting - standard PBR approach (optional cel / toon banding on key light)
     float Diff = max(dot(N_Final, SunLightDir), 0.0);
+    if (u_stylize.x > 1.0) {
+        float bands = clamp(u_stylize.x, 2.0, 8.0);
+        Diff = floor(Diff * bands + 0.5) / bands;
+    }
     vec3 Diffuse = Diff * SunLightColor;
 
     // View direction
@@ -287,10 +292,14 @@ void main()
     float Denominator = 4.0 * NdotV * NdotL + 0.001;
     vec3 Specular = (Numerator / Denominator) * SunLightColor;
 
-    // Rim Light
+    // Rim light (Fresnel-style); y overdrives for stylized "hot" edges
     float Rim = 1.0 - max(dot(N_Final, ViewDir), 0.0);
     Rim = pow(Rim, 3.0);
-    vec3 RimColor = vec3(0.5, 0.6, 0.8) * Rim * 0.5;
+    float rimScale = 0.5;
+    if (u_stylize.y > 0.0001) {
+        rimScale = 0.25 + 0.75 * u_stylize.y;
+    }
+    vec3 RimColor = vec3(0.5, 0.6, 0.8) * Rim * rimScale;
 
     // Fresnel
     float Fresnel = pow(1.0 - max(dot(N_Final, ViewDir), 0.0), 2.0);

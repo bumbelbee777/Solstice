@@ -1,6 +1,7 @@
 #include "Solstice.hxx"
 #include "Core/Debug/Debug.hxx"
 #include "Core/System/Async.hxx"
+#include "Core/System/ContentBasePath.hxx"
 #include "Core/Audio/Audio.hxx"
 #include "Core/Relic/Relic.hxx"
 #include "UI/Core/UISystem.hxx"
@@ -27,11 +28,15 @@ SOLSTICE_API bool Initialize() {
         // 1. Initialize logging first (if not already done)
         Core::DebugLogger::Initialize();
 
-        // 2. RELIC bootstrap (game.data.relic): parse and build virtual table before any asset load
+        // 2. RELIC bootstrap (game.data.relic next to executable, or CWD): merged virtual table; assets load via
+        //    AssetService::LoadByHash which decompresses entries on demand (see Core/Relic/AssetService.cxx).
         {
-            std::filesystem::path basePath = std::filesystem::current_path();
-            if (Core::Relic::Initialize(basePath)) {
-                SIMPLE_LOG("Solstice: RELIC initialized from " + basePath.string());
+            const std::filesystem::path exeDir = Core::GetExecutableDirectory();
+            const std::filesystem::path cwd = std::filesystem::current_path();
+            if (!exeDir.empty() && Core::Relic::Initialize(exeDir)) {
+                SIMPLE_LOG("Solstice: RELIC initialized from executable directory " + exeDir.string());
+            } else if (Core::Relic::Initialize(cwd)) {
+                SIMPLE_LOG("Solstice: RELIC initialized from working directory " + cwd.string());
             }
         }
 

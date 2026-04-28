@@ -286,6 +286,25 @@ struct AudioSourceState {
     float Pitch{1.0f};
 };
 
+/// Per-frame 2D post from the first `MotionGraphicsRootElement` in the list. Screen shake is a draw origin offset
+/// in CPU raster and the ImGui compositor. Chromatic aberration and color grade run inside `RasterizeMGDisplayList`
+/// (2D static preview, frame export). The GL+ImGui path applies shake in layout; call `ApplyMGPostProcessRgba` on the
+/// readback if that path should match CPU grade/CA.
+struct MGPostProcessSettings {
+    float ScreenShakeX{0.f};
+    float ScreenShakeY{0.f};
+    /// RGB split in pixels (0 = off). Applied after the MG layer is flattened.
+    float ChromaticAberrationPx{0.f};
+    /// Multiplier on linearized RGB (1 = no change).
+    float GradeExposure{1.f};
+    /// 0 = grayscale, 1 = unmodified, >1 pushes saturation.
+    float GradeSaturation{1.f};
+    /// 1 = no change. Higher increases contrast around mid gray.
+    float GradeContrast{1.f};
+    /// Additive bias after contrast (sRGB-ish simple lift).
+    float GradeLift{0.f};
+};
+
 struct MGDisplayList {
     struct Entry {
         std::string SchemaType;
@@ -297,6 +316,8 @@ struct MGDisplayList {
     std::vector<Entry> Entries;
     BlendMode CompositeMode{BlendMode::Over};
     float GlobalAlpha{1.0f};
+    /// Filled from the first `MotionGraphicsRootElement` in the MG list, if any.
+    MGPostProcessSettings Post;
 };
 
 /** Sort key for root `MGDisplayList::Entries` when compositing (MovieMaker CPU raster + ImGui compositor). */

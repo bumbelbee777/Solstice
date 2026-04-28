@@ -167,6 +167,7 @@ void DrawScene3dSchematicPanel(SDL_Window* window, const Solstice::Parallax::Par
                 pe.Albedo = Solstice::Math::Vec3(0.62f, 0.66f, 0.78f);
             }
             pe.HalfExtent = Solstice::EditorEnginePreview::kSchematicPreviewHalfExtent;
+            pe.BakedAOPreview = 0.42f;
             entities.push_back(pe);
         }
 
@@ -300,6 +301,11 @@ void DrawUnifiedViewportPanel(SDL_Window* window, const Solstice::Parallax::Para
     }
 
     if (LibUI::Viewport::PollFrame(vp) && vp.draw_list) {
+        {
+            const Solstice::EditorEnginePreview::CinematicViewStatePod z{};
+            const Solstice::EditorEnginePreview::CinematicViewStatePod& cv = settings.cinematicView3D ? *settings.cinematicView3D : z;
+            Solstice::EditorEnginePreview::SetPendingCinematicViewState(cv);
+        }
         Solstice::Parallax::SceneEvaluationResult eval{};
         Solstice::Parallax::EvaluateScene(scene, timeTicks, eval);
         const Solstice::Parallax::MGDisplayList& mgList = eval.MotionGraphics;
@@ -356,6 +362,7 @@ void DrawUnifiedViewportPanel(SDL_Window* window, const Solstice::Parallax::Para
                     pe.PreviewRoughnessTexturePath[sizeof(pe.PreviewRoughnessTexturePath) - 1] = '\0';
                 }
             }
+            pe.BakedAOPreview = settings.lowPolyAOPreview;
             entities.push_back(pe);
         }
 
@@ -495,6 +502,36 @@ void DrawUnifiedViewportPanel(SDL_Window* window, const Solstice::Parallax::Para
             }
             const float dt = ImGui::GetIO().DeltaTime;
             Smm::Editing::TickParticlePreview(*particles, emitterWorld, dt);
+            if (particles->ribbonTrails) {
+                for (const auto& p : particles->particles) {
+                    if (p.ribbonCount < 2) {
+                        continue;
+                    }
+                    for (uint8_t ri = 0; ri < p.ribbonCount - 1; ++ri) {
+                        const auto& aW = p.ribbon[ri];
+                        const auto& bW = p.ribbon[ri + 1];
+                        ImVec2 sa{};
+                        ImVec2 sb{};
+                        if (!LibUI::Viewport::WorldToScreen(
+                                viewM, projM, aW.x, aW.y, aW.z, projMin, projMax, sa)
+                            || !LibUI::Viewport::WorldToScreen(
+                                viewM, projM, bW.x, bW.y, bW.z, projMin, projMax, sb)) {
+                            continue;
+                        }
+                        const float tseg = (static_cast<float>(ri) + 0.5f) / static_cast<float>(p.ribbonCount);
+                        const float tlife = std::clamp(p.age / (std::max)(p.lifetime, 1e-4f), 0.f, 1.f) * 0.65f
+                            + 0.35f * tseg;
+                        float c4[4]{};
+                        Smm::Editing::SampleParticleColorOverLife(*particles, tlife, c4);
+                        const int ir = static_cast<int>(std::clamp(c4[0] * 255.f, 0.f, 255.f));
+                        const int ig = static_cast<int>(std::clamp(c4[1] * 255.f, 0.f, 255.f));
+                        const int ib = static_cast<int>(std::clamp(c4[2] * 255.f, 0.f, 255.f));
+                        const int ia = static_cast<int>(std::clamp(c4[3] * 200.f, 0.f, 255.f));
+                        const ImU32 lcol = IM_COL32(ir, ig, ib, ia);
+                        vp.draw_list->AddLine(sa, sb, lcol, 1.8f);
+                    }
+                }
+            }
             const bool drawSprite = particleSpriteTexture && particles->useImportedSprite && particleSpriteTexture->Valid();
             const float tw = drawSprite ? static_cast<float>(particleSpriteTexture->width) : 1.f;
             const float th = drawSprite ? static_cast<float>(particleSpriteTexture->height) : 1.f;

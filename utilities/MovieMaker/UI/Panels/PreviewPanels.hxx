@@ -12,6 +12,10 @@
 
 struct SDL_Window;
 
+namespace Solstice::EditorEnginePreview {
+struct CinematicViewStatePod;
+}
+
 namespace Smm::Editing {
 struct ParticleEditorState;
 }
@@ -38,6 +42,10 @@ struct UnifiedViewportSettings {
     /// If non-null and `bytes` > 0, last `CaptureOrbitRgb` failure message (NUL-terminated).
     char* enginePreviewErrorSink{nullptr};
     size_t enginePreviewErrorSinkBytes{0};
+    /// Multiplier for schematic 3D “baked AO” darkening (0=off, ~0.3–0.5 typical). Drives `PreviewEntity::BakedAOPreview`.
+    float lowPolyAOPreview{0.42f};
+    /// If non-null, applied each frame to `EditorEnginePreview` 3D capture (`fs_post` chroma / smear / fog dither).
+    const Solstice::EditorEnginePreview::CinematicViewStatePod* cinematicView3D{nullptr};
 };
 
 void DrawScene3dSchematicPanel(SDL_Window* window, const Solstice::Parallax::ParallaxScene& scene, uint64_t timeTicks,

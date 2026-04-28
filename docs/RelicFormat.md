@@ -4,7 +4,7 @@ RELIC is Solstice's native asset packaging format for slow-drive friendliness, s
 
 ## File tiers
 
-- **game.data.relic** — Bootstrap manifest. The only hardcoded file; engine looks for it at a fixed path relative to the executable (e.g. `basePath/game.data.relic`). Contains an ordered list of RELIC files to load, per-RELIC priority, streaming hints (preload / stream / lazy), and tag set (base, DLC, mod, locale). Parsed once at startup and never read again.
+- **game.data.relic** — Bootstrap manifest. The only hardcoded file; the engine first tries the **directory of the running executable** (so shipped builds find it next to `WarsOfHeaven.exe` / the main binary) and then falls back to the **current working directory** (see `Solstice::Initialize` + `GetExecutableDirectory`). It contains an ordered list of RELIC files to load, per-RELIC priority, streaming hints (preload / stream / lazy), and tag set (base, DLC, mod, locale). Parsed once at startup and never read again. Content is **not** extracted to a separate `relic/` folder: entries stay inside `.relic` on disk, and `AssetService::LoadByHash` **decompresses** payload bytes in memory (LZ4 / zstd / none) as described under Compression below.
 - **Content / music / level-group RELICs** — Game-specific `.relic` files listed in the bootstrap (e.g. `content.relic`, `music.relic`, `sectionN_levelN.relic`). Same container layout; container type (content vs music) is in the header for optional I/O tuning.
 
 ## Bootstrap file layout (game.data.relic)

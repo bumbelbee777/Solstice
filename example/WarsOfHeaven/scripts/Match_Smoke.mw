@@ -1,0 +1,13 @@
+module Match_Smoke;
+
+@Entry {
+    Match_SetPlayerTeam(1, 1);
+    Match_SetPlayerTeam(2, 1);
+    Match_SetPlayerTeam(3, 2);
+    Match_SetScore(1, 100);
+    Match_AddScore(2, 50);
+    Match_AddScore(1, 10);
+    Match_CaptureSet("ffa_alpha", 1, 0.65);
+    Leaderboard_Refresh();
+    Print("Match_Smoke script finished.");
+}

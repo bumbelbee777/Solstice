@@ -15,6 +15,7 @@ add_library(Core STATIC
     Profiling/ScopeTimer.cxx
     Platform/Mmap.cxx
     Platform/Cache.cxx
+    System/ContentBasePath.cxx
     System/LZ4.cxx
     Relic/Bootstrap.cxx
     Relic/Reader.cxx

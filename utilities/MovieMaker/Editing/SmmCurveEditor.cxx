@@ -10,6 +10,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -135,6 +136,24 @@ static uint64_t SnapTimeToTick(
     return (tickIn + step / 2) / step * step;
 }
 
+static std::string LowerUtf8Ascii(std::string_view in) {
+    std::string o;
+    o.reserve(in.size());
+    for (unsigned char c : in) {
+        o.push_back(c < 0x80u ? static_cast<char>(std::tolower(static_cast<int>(c))) : static_cast<char>(c));
+    }
+    return o;
+}
+
+static bool KeyframePresetMatchesFilter(const Smm::Keyframe::KeyframeCurvePreset& p, std::string_view filterLower) {
+    if (filterLower.empty()) {
+        return true;
+    }
+    const std::string blob = LowerUtf8Ascii((p.DisplayName.empty() ? p.Id : p.DisplayName) + " " + p.Id + " " + p.Author + " "
+        + p.Tags + " " + p.Description);
+    return blob.find(std::string(filterLower)) != std::string::npos;
+}
+
 static float CubicBezier1DValue(float p0, float c0, float c1, float p1, float u) {
     u = (std::clamp)(u, 0.f, 1.f);
     const float o = 1.f - u;
@@ -218,20 +237,71 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
                 && binding.component < 0);
 
     if (ctx.keyframePresets && !ctx.keyframePresets->empty()) {
-        ImGui::TextUnformatted("Keyframe presets (INI in presets/Keyframe/)");
-        static int sPresetIdx = 0;
-        sPresetIdx = (std::clamp)(sPresetIdx, 0, static_cast<int>(ctx.keyframePresets->size()) - 1);
-        std::string comboItems;
-        for (const Smm::Keyframe::KeyframeCurvePreset& p : *ctx.keyframePresets) {
-            const std::string& lab = p.DisplayName.empty() ? p.Id : p.DisplayName;
-            comboItems.append(lab);
-            comboItems.push_back('\0');
-        }
-        comboItems.push_back('\0');
+        ImGui::TextUnformatted("Keyframe presets (INI under presets/Keyframe/, subfolders OK; #include supported)");
+        static char sPresetFilter[180] = "";
         ImGui::SetNextItemWidth(360.f);
-        ImGui::Combo("##smmkfp", &sPresetIdx, comboItems.c_str());
-        if (ImGui::Button("Apply INI keyframe preset to selected##smmkfp2") && ctx.scene) {
-            const Smm::Keyframe::KeyframeCurvePreset& pr = (*ctx.keyframePresets)[static_cast<size_t>(sPresetIdx)];
+        ImGui::InputTextWithHint("##smmkfpfilter", "Filter (name, id, tags, author…)", sPresetFilter, sizeof(sPresetFilter));
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Clear##smmkfp0")) {
+            sPresetFilter[0] = '\0';
+        }
+        if (ctx.reloadIniPresets) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Reload INI##smmkfpR")) {
+                ctx.reloadIniPresets(ctx.reloadIniPresetsUser);
+            }
+        }
+        static int sPresetIdx = 0;
+        const std::string filterL = LowerUtf8Ascii(sPresetFilter);
+        std::vector<int> vis;
+        vis.reserve(ctx.keyframePresets->size());
+        for (int i = 0; i < static_cast<int>(ctx.keyframePresets->size()); ++i) {
+            if (KeyframePresetMatchesFilter((*ctx.keyframePresets)[static_cast<size_t>(i)], filterL)) {
+                vis.push_back(i);
+            }
+        }
+        if (vis.empty()) {
+            ImGui::TextDisabled("No keyframe presets match the filter.");
+        } else {
+            sPresetIdx = (std::clamp)(sPresetIdx, 0, static_cast<int>(vis.size()) - 1);
+            std::string comboItems;
+            for (int vi : vis) {
+                const Smm::Keyframe::KeyframeCurvePreset& p = (*ctx.keyframePresets)[static_cast<size_t>(vi)];
+                const std::string& lab = p.DisplayName.empty() ? p.Id : p.DisplayName;
+                comboItems.append(lab);
+                comboItems.push_back('\0');
+            }
+            comboItems.push_back('\0');
+            ImGui::SetNextItemWidth(360.f);
+            int comboLocal = sPresetIdx;
+            ImGui::Combo("##smmkfp", &comboLocal, comboItems.c_str());
+            sPresetIdx = comboLocal;
+        }
+        if (!vis.empty()) {
+            const int vix = vis[static_cast<size_t>(sPresetIdx)];
+            const Smm::Keyframe::KeyframeCurvePreset& prShow = (*ctx.keyframePresets)[static_cast<size_t>(vix)];
+            if (!prShow.Description.empty()) {
+                ImGui::TextWrapped("%s", prShow.Description.c_str());
+            } else {
+                ImGui::TextDisabled("No Description= in INI; add for team handoff (optional).");
+            }
+            if (!prShow.Author.empty() || !prShow.Tags.empty()) {
+                std::string meta;
+                if (!prShow.Author.empty()) {
+                    meta = "Author: " + prShow.Author;
+                }
+                if (!prShow.Tags.empty()) {
+                    if (!meta.empty()) {
+                        meta += "  ·  ";
+                    }
+                    meta += "Tags: " + prShow.Tags;
+                }
+                ImGui::TextDisabled("%s", meta.c_str());
+            }
+        }
+        if (ImGui::Button("Apply INI keyframe preset to selected##smmkfp2") && ctx.scene && !vis.empty()) {
+            const int vix = vis[static_cast<size_t>(sPresetIdx)];
+            const Smm::Keyframe::KeyframeCurvePreset& pr = (*ctx.keyframePresets)[static_cast<size_t>(vix)];
             std::vector<int> wk;
             if (!curves.selectedKeyIndices.empty()) {
                 wk = curves.selectedKeyIndices;

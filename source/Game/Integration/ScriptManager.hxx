@@ -16,6 +16,11 @@
 
 namespace Solstice::Game {
 
+class MatchScoreState;
+class Leaderboard;
+class AchievementState;
+class ScoreMultiplierState;
+
 // Deferred execution task
 struct DeferredExecution {
     std::function<bool()> Condition;
@@ -39,6 +44,19 @@ public:
         Render::Scene* Scene,
         Physics::PhysicsSystem* PhysicsSystem,
         Render::Camera* Camera);
+
+    /// Optional: FFA / match `MatchScoreState` and `Leaderboard` for Moonwalk natives (`Match_*`, `Leaderboard_*`). Call
+    /// before `Initialize` if scripts should use scores on first run; may be set later for natives that read pointers each call.
+    void SetMatchContext(MatchScoreState* Scores, Leaderboard* Board);
+
+    /// Optional achievements / score multiplier for `Achievement_*`, `ScoreMult_*`, and `Match_AddScore` scaling. May be set before `Initialize`.
+    void SetProgressionContext(AchievementState* Achievements, ScoreMultiplierState* ScoreMult);
+
+    /// Per-frame delta (seconds) for `Time_FrameDelta` and UI scripts; set from the game loop (e.g. `Update` / before `RunModuleExport`).
+    void SetScriptTimeDelta(float DeltaSeconds);
+
+    /// Run a named export from a compiled module (e.g. `OnFrame` for UI). Restores the previously active program. Thread-safe with the script VM lock.
+    bool RunModuleExport(const std::string& ModuleName, const std::string& ExportName);
 
     // Register game-specific native function
     void RegisterNative(const std::string& Name, Scripting::BytecodeVM::NativeFunc Function);
@@ -69,6 +87,9 @@ public:
     const Scripting::BytecodeVM& GetVM() const { return m_ScriptVM; }
 
 private:
+    void RegisterMatchScriptBindings();
+    void RegisterProgressionAndUiScriptBindings();
+
     Scripting::BytecodeVM m_ScriptVM;
     Core::ExecutionGuard m_ExecutionGuard;
     mutable Core::Spinlock m_VMLock;
@@ -78,12 +99,19 @@ private:
     // Coroutines (suspended VM state, resumed each frame when due)
     std::vector<Scripting::CoroutineState> m_Coroutines;
     double m_GameTime{0.0};
+    double m_ScriptFrameDelta{0.0};
     uint64_t m_FrameCount{0};
 
     ECS::Registry* m_Registry{nullptr};
     Render::Scene* m_Scene{nullptr};
     Physics::PhysicsSystem* m_PhysicsSystem{nullptr};
     Render::Camera* m_Camera{nullptr};
+
+    MatchScoreState* m_MatchScores{nullptr};
+    Leaderboard* m_Leaderboard{nullptr};
+
+    AchievementState* m_Achievements{nullptr};
+    ScoreMultiplierState* m_ScoreMult{nullptr};
 };
 
 } // namespace Solstice::Game

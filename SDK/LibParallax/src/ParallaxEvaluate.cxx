@@ -6,6 +6,8 @@
 #include <MinGfx/EasingFunction.hxx>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <string>
 
 namespace Solstice::Parallax {
 
@@ -111,6 +113,105 @@ static AttributeValue InterpolatePair(AttributeType ty, const KeyframeRecord& k0
         const float t01 = SampleEased(u, e);
         return LerpValue(ty, k0.Value, k1.Value, t01);
     }
+}
+
+static MGDisplayList::Entry BuildMGEval(
+    const ParallaxScene& scene, const MGElementRecord& mg, const std::string_view& schemaName, uint64_t timeTicks) {
+    MGDisplayList::Entry e;
+    e.SchemaType = std::string(schemaName);
+    e.Blend = BlendMode::Over;
+    e.Alpha = 1.0f;
+    for (const auto& kv : mg.Attributes) {
+        e.Attributes[kv.first] = kv.second;
+    }
+    const uint32_t t0 = mg.FirstTrackIndex;
+    for (uint32_t ti = 0; ti < mg.TrackCount && t0 + ti < scene.GetMGTracks().size(); ++ti) {
+        const auto& tr = scene.GetMGTracks()[t0 + ti];
+        AttributeValue v = std::monostate{};
+        if (!tr.Keyframes.empty()) {
+            const auto& kfs = tr.Keyframes;
+            if (kfs.size() == 1) {
+                v = kfs[0].Value;
+            } else {
+                auto it = std::lower_bound(kfs.begin(), kfs.end(), timeTicks,
+                    [](const KeyframeRecord& a, uint64_t t) { return a.TimeTicks < t; });
+                if (it == kfs.end()) {
+                    const auto& k0 = kfs[kfs.size() - 2];
+                    const auto& k1 = kfs[kfs.size() - 1];
+                    v = InterpolatePair(tr.ValueType, k0, k1, timeTicks);
+                } else if (it == kfs.begin()) {
+                    v = kfs[0].Value;
+                } else {
+                    const auto& k1 = *it;
+                    const auto& k0 = *(it - 1);
+                    v = InterpolatePair(tr.ValueType, k0, k1, timeTicks);
+                }
+            }
+        }
+        e.Attributes[tr.PropertyName] = std::move(v);
+    }
+    return e;
+}
+
+static float AttrFloatInEntry(const MGDisplayList::Entry& e, const char* k, float d) {
+    const auto it = e.Attributes.find(k);
+    if (it == e.Attributes.end()) {
+        return d;
+    }
+    if (const auto* f = std::get_if<float>(&it->second)) {
+        return *f;
+    }
+    return d;
+}
+
+static MGDisplayList EvaluateMGImpl(const ParallaxScene& scene, uint64_t timeTicks) {
+    const auto& schemas = scene.GetSchemas();
+    const auto& mgs = scene.GetMGElements();
+    uint64_t evalTick = timeTicks;
+    for (const auto& mg : mgs) {
+        if (mg.SchemaIndex >= schemas.size()) {
+            continue;
+        }
+        if (schemas[mg.SchemaIndex].TypeName != "MotionGraphicsRootElement") {
+            continue;
+        }
+        const MGDisplayList::Entry e = BuildMGEval(
+            scene, mg, std::string_view(schemas[mg.SchemaIndex].TypeName), timeTicks);
+        const float s = (std::max)(0.f, AttrFloatInEntry(e, "MGTimeScale", 1.f));
+        const double t = static_cast<double>(timeTicks) * static_cast<double>(s);
+        evalTick = t <= 0.0 ? 0u : (t >= static_cast<double>(UINT64_MAX) ? UINT64_MAX : static_cast<uint64_t>(t));
+        break;
+    }
+    MGDisplayList list;
+    list.CompositeMode = scene.GetMGCompositeMode();
+    list.GlobalAlpha = scene.GetMGGlobalAlpha();
+    for (const auto& mg : mgs) {
+        if (mg.SchemaIndex >= schemas.size()) {
+            list.Entries.push_back(MGDisplayList::Entry{});
+            continue;
+        }
+        const std::string_view st = std::string_view(schemas[mg.SchemaIndex].TypeName);
+        list.Entries.push_back(BuildMGEval(scene, mg, st, evalTick));
+    }
+    for (const auto& e : list.Entries) {
+        if (e.SchemaType != "MotionGraphicsRootElement") {
+            continue;
+        }
+        const float ax = (std::max)(0.f, AttrFloatInEntry(e, "ScreenShakeAmpX", 0.f));
+        const float ay = (std::max)(0.f, AttrFloatInEntry(e, "ScreenShakeAmpY", 0.f));
+        const float fr = AttrFloatInEntry(e, "ScreenShakeFrequency", 1.f);
+        const float ph = AttrFloatInEntry(e, "ScreenShakePhase", 0.f);
+        const float t = static_cast<float>(timeTicks) * 0.01f;
+        list.Post.ScreenShakeX = ax * std::sin(fr * t + ph);
+        list.Post.ScreenShakeY = ay * std::cos(fr * t + ph * 0.5f);
+        list.Post.ChromaticAberrationPx = (std::max)(0.f, AttrFloatInEntry(e, "ChromaticAberration", 0.f));
+        list.Post.GradeExposure = (std::max)(0.f, AttrFloatInEntry(e, "GradeExposure", 1.f));
+        list.Post.GradeSaturation = (std::max)(0.f, AttrFloatInEntry(e, "GradeSaturation", 1.f));
+        list.Post.GradeContrast = (std::max)(0.01f, AttrFloatInEntry(e, "GradeContrast", 1.f));
+        list.Post.GradeLift = AttrFloatInEntry(e, "GradeLift", 0.f);
+        break;
+    }
+    return list;
 }
 
 } // namespace
@@ -451,48 +552,7 @@ void EvaluateScene(const ParallaxScene& scene, uint64_t timeTicks, SceneEvaluati
 }
 
 MGDisplayList EvaluateMG(const ParallaxScene& scene, uint64_t timeTicks) {
-    MGDisplayList list;
-    list.CompositeMode = scene.GetMGCompositeMode();
-    list.GlobalAlpha = scene.GetMGGlobalAlpha();
-    for (const auto& mg : scene.GetMGElements()) {
-        MGDisplayList::Entry e;
-        if (mg.SchemaIndex < scene.GetSchemas().size()) {
-            e.SchemaType = scene.GetSchemas()[mg.SchemaIndex].TypeName;
-        }
-        e.Blend = BlendMode::Over;
-        e.Alpha = 1.0f;
-        for (const auto& kv : mg.Attributes) {
-            e.Attributes[kv.first] = kv.second;
-        }
-        uint32_t t0 = mg.FirstTrackIndex;
-        for (uint32_t ti = 0; ti < mg.TrackCount && t0 + ti < scene.GetMGTracks().size(); ++ti) {
-            const auto& tr = scene.GetMGTracks()[t0 + ti];
-            AttributeValue v = std::monostate{};
-            if (!tr.Keyframes.empty()) {
-                const auto& kfs = tr.Keyframes;
-                if (kfs.size() == 1) {
-                    v = kfs[0].Value;
-                } else {
-                    auto it = std::lower_bound(kfs.begin(), kfs.end(), timeTicks,
-                        [](const KeyframeRecord& a, uint64_t t) { return a.TimeTicks < t; });
-                    if (it == kfs.end()) {
-                        const auto& k0 = kfs[kfs.size() - 2];
-                        const auto& k1 = kfs[kfs.size() - 1];
-                        v = InterpolatePair(tr.ValueType, k0, k1, timeTicks);
-                    } else if (it == kfs.begin()) {
-                        v = kfs[0].Value;
-                    } else {
-                        const auto& k1 = *it;
-                        const auto& k0 = *(it - 1);
-                        v = InterpolatePair(tr.ValueType, k0, k1, timeTicks);
-                    }
-                }
-            }
-            e.Attributes[tr.PropertyName] = std::move(v);
-        }
-        list.Entries.push_back(std::move(e));
-    }
-    return list;
+    return EvaluateMGImpl(scene, timeTicks);
 }
 
 } // namespace Solstice::Parallax

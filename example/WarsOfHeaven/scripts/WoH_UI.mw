@@ -1,0 +1,17 @@
+module WoH_UI;
+
+function OnFrame() {
+    UI_Begin("Wars of Heaven", 440.0, 300.0);
+    UI_Text("Procedural starfield + live scene + glass panel");
+    UI_Text("Moonwalk UI (OnFrame)");
+    if (UI_Button("+10 match score (test)")) {
+        Match_AddScore(1, 10);
+    }
+    if (UI_Button("Set session mult x1.5")) {
+        ScoreMult_SetSession(1.5);
+    }
+    UI_End();
+}
+
+@Entry {
+}

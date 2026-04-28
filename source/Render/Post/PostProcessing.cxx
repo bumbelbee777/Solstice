@@ -72,6 +72,13 @@ PostProcessing::PostProcessing() {
     u_ReflectionInvViewProj = bgfx::createUniform("u_reflectionInvViewProj", bgfx::UniformType::Mat4);
     u_CameraPos = bgfx::createUniform("u_cameraPos", bgfx::UniformType::Vec4);
     s_TexReflectionProbe = bgfx::createUniform("s_texReflectionProbe", bgfx::UniformType::Sampler);
+    u_PostChain = bgfx::createUniform("u_postChain", bgfx::UniformType::Vec4);
+    u_ShockwaveParams = bgfx::createUniform("u_shockwaveParams", bgfx::UniformType::Vec4);
+    u_ScreenFog = bgfx::createUniform("u_screenFog", bgfx::UniformType::Vec4);
+    u_FogColor = bgfx::createUniform("u_fogColor", bgfx::UniformType::Vec4);
+    u_ChromaticParams = bgfx::createUniform("u_chromaticParams", bgfx::UniformType::Vec4);
+    u_SmearFrame = bgfx::createUniform("u_smearFrame", bgfx::UniformType::Vec4);
+    u_FogDither = bgfx::createUniform("u_fogDither", bgfx::UniformType::Vec4);
 }
 
 PostProcessing::~PostProcessing() {
@@ -129,6 +136,27 @@ PostProcessing::~PostProcessing() {
     }
     if (bgfx::isValid(s_TexReflectionProbe)) {
         bgfx::destroy(s_TexReflectionProbe);
+    }
+    if (bgfx::isValid(u_PostChain)) {
+        bgfx::destroy(u_PostChain);
+    }
+    if (bgfx::isValid(u_ShockwaveParams)) {
+        bgfx::destroy(u_ShockwaveParams);
+    }
+    if (bgfx::isValid(u_ScreenFog)) {
+        bgfx::destroy(u_ScreenFog);
+    }
+    if (bgfx::isValid(u_FogColor)) {
+        bgfx::destroy(u_FogColor);
+    }
+    if (bgfx::isValid(u_ChromaticParams)) {
+        bgfx::destroy(u_ChromaticParams);
+    }
+    if (bgfx::isValid(u_SmearFrame)) {
+        bgfx::destroy(u_SmearFrame);
+    }
+    if (bgfx::isValid(u_FogDither)) {
+        bgfx::destroy(u_FogDither);
     }
 }
 
@@ -436,6 +464,54 @@ void PostProcessing::Apply(bgfx::ViewId viewId) {
             0.0f
         };
         bgfx::setUniform(u_FXAAParams, fxaaData);
+    }
+    if (bgfx::isValid(u_PostChain)) {
+        const float d[4] = {
+            m_PostChainTunables.PrenormBlurMix,
+            m_PostChainTunables.Reserved0,
+            m_PostChainTunables.Reserved1,
+            m_PostChainTunables.Reserved2,
+        };
+        bgfx::setUniform(u_PostChain, d);
+    }
+    if (bgfx::isValid(u_ShockwaveParams)) {
+        const float s[4] = {
+            m_ShockwaveSettings.CenterX,
+            m_ShockwaveSettings.CenterY,
+            m_ShockwaveSettings.RingRadius,
+            m_ShockwaveSettings.Strength,
+        };
+        bgfx::setUniform(u_ShockwaveParams, s);
+    }
+    if (bgfx::isValid(u_ScreenFog) && bgfx::isValid(u_FogColor)) {
+        const float fmix = m_ScreenFogSettings.Enabled ? m_ScreenFogSettings.Mix : 0.0f;
+        const float fogP[4] = {
+            m_ScreenFogSettings.DistanceDensity,
+            m_ScreenFogSettings.HeightFalloff,
+            m_ScreenFogSettings.HeightAnchorY,
+            fmix,
+        };
+        const float fc[4] = {
+            m_ScreenFogSettings.FogR,
+            m_ScreenFogSettings.FogG,
+            m_ScreenFogSettings.FogB,
+            0.0f,
+        };
+        bgfx::setUniform(u_ScreenFog, fogP);
+        bgfx::setUniform(u_FogColor, fc);
+    }
+    if (bgfx::isValid(u_ChromaticParams)) {
+        const float c[4] = {m_CinematicView.ChromaticAberrationStrength, m_CinematicView.ChromaticAberrationDepthScale,
+            m_CinematicView.ChromaticCenterU, m_CinematicView.ChromaticCenterV};
+        bgfx::setUniform(u_ChromaticParams, c);
+    }
+    if (bgfx::isValid(u_SmearFrame)) {
+        const float s[4] = {m_CinematicView.SmearFrameStrength, 0.0f, 0.0f, 0.0f};
+        bgfx::setUniform(u_SmearFrame, s);
+    }
+    if (bgfx::isValid(u_FogDither)) {
+        const float d[4] = {m_CinematicView.ScreenFogDither, 0.0f, 0.0f, 0.0f};
+        bgfx::setUniform(u_FogDither, d);
     }
 
     // Set HDR exposure uniform

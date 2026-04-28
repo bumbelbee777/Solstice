@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <unordered_map>
 
 namespace Smm::Keyframe {
 namespace {
@@ -47,6 +48,9 @@ static void ParseOneIniFile(const std::filesystem::path& path, std::vector<Keyfr
         if (p.DisplayName.empty()) {
             p.DisplayName = p.Id;
         }
+        p.Author = take("Author", "");
+        p.Description = take("Description", "");
+        p.Tags = take("Tags", "");
         {
             std::string s = take("EaseIn", "0");
             if (!ParseU8Clamped(s, 13, p.EaseIn)) {
@@ -86,6 +90,7 @@ static void ParseOneIniFile(const std::filesystem::path& path, std::vector<Keyfr
 
 void ScanCurvePresetsFromRoots(const std::vector<std::filesystem::path>& roots, std::vector<KeyframeCurvePreset>& out) {
     out.clear();
+    std::unordered_map<std::string, KeyframeCurvePreset> byId;
     for (const std::filesystem::path& root : roots) {
         if (root.empty()) {
             continue;
@@ -95,21 +100,29 @@ void ScanCurvePresetsFromRoots(const std::vector<std::filesystem::path>& roots, 
         if (!std::filesystem::is_directory(kf, ec)) {
             continue;
         }
-        for (const std::filesystem::directory_entry& e : std::filesystem::directory_iterator(kf, ec)) {
-            if (!e.is_regular_file()) {
-                continue;
+        try {
+            for (const std::filesystem::directory_entry& e : std::filesystem::recursive_directory_iterator(kf)) {
+                if (!e.is_regular_file()) {
+                    continue;
+                }
+                if (e.path().extension() != ".ini") {
+                    continue;
+                }
+                std::vector<KeyframeCurvePreset> chunk;
+                ParseOneIniFile(e.path(), chunk);
+                for (KeyframeCurvePreset& p : chunk) {
+                    std::string id = p.Id;
+                    byId[std::move(id)] = std::move(p);
+                }
             }
-            if (e.path().extension() != ".ini") {
-                continue;
-            }
-            ParseOneIniFile(e.path(), out);
+        } catch (...) {
         }
     }
+    out.reserve(byId.size());
+    for (auto& e : byId) {
+        out.push_back(std::move(e.second));
+    }
     std::sort(out.begin(), out.end(), [](const KeyframeCurvePreset& a, const KeyframeCurvePreset& b) { return a.Id < b.Id; });
-    auto last = std::unique(out.begin(), out.end(), [](const KeyframeCurvePreset& a, const KeyframeCurvePreset& b) {
-        return a.Id == b.Id;
-    });
-    out.erase(last, out.end());
 }
 
 } // namespace Smm::Keyframe

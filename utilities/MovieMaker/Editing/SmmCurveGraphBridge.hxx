@@ -53,6 +53,9 @@ struct AppSessionContext {
     KeyframeEditUiState* keyframeEdit{nullptr};
     /// INI keyframe presets from `presets/Keyframe` (search roots: exe dir, project folder); optional.
     const std::vector<Smm::Keyframe::KeyframeCurvePreset>* keyframePresets{nullptr};
+    /// Reload `presets/**/*.ini` from disk (Keyframe + Timeline); optional.
+    void (*reloadIniPresets)(void* user){nullptr};
+    void* reloadIniPresetsUser{nullptr};
 };
 
 /// Rebuild timeline tracks, curve channels, and bindings from the Parallax scene (float + vec3 lanes only).

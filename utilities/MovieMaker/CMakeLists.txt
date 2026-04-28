@@ -31,10 +31,12 @@ endif()
 add_executable(MovieMaker
     "Main.cxx"
     "SmmKeyframePresets.cxx"
+    "SmmTimelineRangePresets.cxx"
     "SmmMg2DPanel.cxx"
     "SmmParallaxAuthoringPanel.cxx"
     "SmmFileOps.cxx"
     "SmmSessionAuthoring.cxx"
+    "SmmMidiParse.cxx"
     "SmmLipsyncMorpheme.cxx"
     "SmmGltf.cxx"
     "Media/SmmImage.cxx"

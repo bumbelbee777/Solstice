@@ -15,7 +15,9 @@
 #include <cstdio>
 #include <cmath>
 #include <cstring>
+#include <exception>
 #include <filesystem>
+#include <functional>
 #include <span>
 #include <unordered_map>
 #include <vector>
@@ -107,6 +109,8 @@ static void DestroyFbo(GlFbo& fb) {
         fb.color = 0;
     }
 }
+
+static void ReleaseTextureCache(std::unordered_map<uint64_t, GLuint>& cache);
 
 static ImTextureID TextureForHash(uint64_t hash, Solstice::Parallax::DevSessionAssetResolver& resolver,
     std::unordered_map<uint64_t, GLuint>& cache) {
@@ -214,168 +218,208 @@ static FILE* OpenFfmpegPipe(const std::string& ffmpegExe, const VideoExportParam
     return pipe;
 }
 
-} // namespace
-
-bool ExportParallaxSceneToVideo(Solstice::Parallax::ParallaxScene& scene, Solstice::Parallax::DevSessionAssetResolver& resolver,
-    SDL_Window* window, const VideoExportParams& params, std::string& errOut, const std::function<void(float)>& progress) {
-    errOut.clear();
-    if (params.ffmpegExecutable.empty()) {
-        errOut = "ffmpeg executable path is empty.";
-        return false;
+static int CloseFfmpegPipe(FILE* f) {
+    if (!f) {
+        return 0;
     }
-    if (params.width < 16 || params.height < 16 || params.width > 8192 || params.height > 8192) {
-        errOut = "Export resolution out of range.";
-        return false;
-    }
-    if (!LoadFboProcs(errOut)) {
-        return false;
-    }
-
-    ImGuiContext* imguiCtx = LibUI::Core::GetContext();
-    if (!imguiCtx) {
-        errOut = "LibUI ImGui context not available.";
-        return false;
-    }
-
-    const uint32_t tps = std::max(1u, scene.GetTicksPerSecond());
-    uint64_t startTick = params.startTick;
-    uint64_t endTick = params.endTick;
-    if (endTick == 0) {
-        endTick = scene.GetTimelineDurationTicks();
-    }
-    if (endTick <= startTick) {
-        errOut = "Invalid tick range (end <= start).";
-        return false;
-    }
-
-    const uint32_t fps = std::max(1u, params.fps);
-    const double durationSec = static_cast<double>(endTick - startTick) / static_cast<double>(tps);
-    uint32_t totalFrames = static_cast<uint32_t>(std::ceil(durationSec * static_cast<double>(fps)));
-    if (totalFrames == 0) {
-        totalFrames = 1;
-    }
-
-    std::string ffmpegCmdSummary;
-    {
-        const uint32_t w = params.width;
-        const uint32_t h = params.height;
-        const uint32_t fps = std::max(1u, params.fps);
-        std::string out = params.outputPath;
-        for (char& c : out) {
-            if (c == '\\') {
-                c = '/';
-            }
-        }
-        const char* mux = (params.container == VideoContainer::Mov) ? "mov" : "mp4";
-        ffmpegCmdSummary = "\"" + params.ffmpegExecutable + "\" -y ... rawvideo rgba " + std::to_string(w) + "x" + std::to_string(h)
-            + " @ " + std::to_string(fps) + "fps -> " + mux + " \"" + out + "\"";
-    }
-
-    FILE* ff = OpenFfmpegPipe(params.ffmpegExecutable, params, errOut);
-    if (!ff) {
-        return false;
-    }
-
-    std::vector<uint8_t> rgba(static_cast<size_t>(params.width) * static_cast<size_t>(params.height) * 4);
-
-    GlFbo fbo{};
-    if (!CreateFbo(params.width, params.height, fbo, errOut)) {
 #ifdef _WIN32
-        _pclose(ff);
+    return _pclose(f);
 #else
-        pclose(ff);
+    return pclose(f);
 #endif
-        return false;
-    }
+}
 
-    GLint prevFbo = 0;
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
-    GLint vp[4];
-    glGetIntegerv(GL_VIEWPORT, vp);
-
-    Solstice::UI::MotionGraphics::Compositor compositor;
-    compositor.SetViewportSize(static_cast<float>(params.width), static_cast<float>(params.height));
-    std::unordered_map<uint64_t, GLuint> texCache;
-
-    ImGui::SetCurrentContext(imguiCtx);
-
-    for (uint32_t fi = 0; fi < totalFrames; ++fi) {
-        const double t = static_cast<double>(fi) / static_cast<double>(fps);
-        uint64_t tick = startTick + static_cast<uint64_t>(std::llround(t * static_cast<double>(tps)));
-        if (tick >= endTick) {
-            tick = endTick - 1;
-        }
-
-        compositor.ClearTextureResolver();
-        compositor.SetTextureResolver([&](uint64_t h) -> ImTextureID { return TextureForHash(h, resolver, texCache); });
-
-        Solstice::Parallax::MGDisplayList mg = Solstice::Parallax::EvaluateMG(scene, tick);
-        compositor.Submit(mg);
-
-        s_glBindFramebuffer(GL_FRAMEBUFFER, fbo.fbo);
-        glViewport(0, 0, static_cast<GLsizei>(params.width), static_cast<GLsizei>(params.height));
-        glDisable(GL_DEPTH_TEST);
-        glClearColor(0.f, 0.f, 0.f, 1.f);
-        glClear(GL_COLOR_BUFFER_BIT);
-
-        LibUI::Core::NewFrameOffscreen(static_cast<float>(params.width), static_cast<float>(params.height),
-            1.0f / static_cast<float>(fps));
-
-        ImGui::Begin("##SMMExport", nullptr,
-            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoNav);
-        ImGui::SetWindowPos(ImVec2(0.f, 0.f));
-        ImGui::SetWindowSize(ImVec2(static_cast<float>(params.width), static_cast<float>(params.height)));
-        compositor.Render(ImGui::GetWindowDrawList());
-        ImGui::End();
-
-        LibUI::Core::RenderOffscreen();
-
-        glPixelStorei(GL_PACK_ALIGNMENT, 1);
-        glReadPixels(0, 0, static_cast<GLsizei>(params.width), static_cast<GLsizei>(params.height), GL_RGBA, GL_UNSIGNED_BYTE,
-            rgba.data());
-
-        const size_t n = rgba.size();
-        if (fwrite(rgba.data(), 1, n, ff) != n) {
-            errOut = "Failed writing frame data to ffmpeg stdin.\n" + ffmpegCmdSummary;
-            ReleaseTextureCache(texCache);
-            DestroyFbo(fbo);
-            s_glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
-            glViewport(vp[0], vp[1], vp[2], vp[3]);
-#ifdef _WIN32
-            _pclose(ff);
-#else
-            pclose(ff);
-#endif
-            return false;
-        }
-
-        if (progress) {
-            progress(static_cast<float>(fi + 1) / static_cast<float>(totalFrames));
-        }
-    }
-
-#ifdef _WIN32
-    const int ec = _pclose(ff);
-#else
-    const int ec = pclose(ff);
-#endif
-    if (ec != 0) {
-        errOut = "ffmpeg exit code " + std::to_string(ec) + " (non-zero; verify the output file). Stderr was not captured from the pipe.\n"
-            + ffmpegCmdSummary;
-    }
-
-    ReleaseTextureCache(texCache);
-    DestroyFbo(fbo);
+static void RestoreGlAfterOffscreen(SDL_Window* window, GLint prevFbo, const GLint vp[4]) {
     s_glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
     glViewport(vp[0], vp[1], vp[2], vp[3]);
-
     if (window) {
         int ww = 0, wh = 0;
         SDL_GetWindowSize(window, &ww, &wh);
         glViewport(0, 0, ww, wh);
     }
+}
 
-    return true;
+} // namespace
+
+bool ExportParallaxSceneToVideo(Solstice::Parallax::ParallaxScene& scene, Solstice::Parallax::DevSessionAssetResolver& resolver,
+    SDL_Window* window, const VideoExportParams& params, std::string& errOut, const std::function<void(float)>& progress) {
+    errOut.clear();
+    FILE* pipeFile = nullptr;
+    GlFbo fbo{};
+    std::unordered_map<uint64_t, GLuint> texCache;
+    GLint prevFbo = 0;
+    GLint vp[4] = {0, 0, 0, 0};
+    bool glStateCaptured = false;
+    try {
+        if (params.ffmpegExecutable.empty()) {
+            errOut = "ffmpeg executable path is empty.";
+            return false;
+        }
+        if (params.width < 16 || params.height < 16 || params.width > 8192 || params.height > 8192) {
+            errOut = "Export resolution out of range (allowed 16..8192 per side).";
+            return false;
+        }
+        if (!LoadFboProcs(errOut)) {
+            return false;
+        }
+
+        ImGuiContext* imguiCtx = LibUI::Core::GetContext();
+        if (!imguiCtx) {
+            errOut = "LibUI ImGui context not available.";
+            return false;
+        }
+
+        const uint32_t tps = std::max(1u, scene.GetTicksPerSecond());
+        uint64_t startTick = params.startTick;
+        uint64_t endTick = params.endTick;
+        if (endTick == 0) {
+            endTick = scene.GetTimelineDurationTicks();
+        }
+        if (endTick <= startTick) {
+            errOut = "Invalid tick range (end <= start).";
+            return false;
+        }
+
+        const uint32_t fps = std::max(1u, params.fps);
+        const double durationSec = static_cast<double>(endTick - startTick) / static_cast<double>(tps);
+        uint32_t totalFrames = static_cast<uint32_t>(std::ceil(durationSec * static_cast<double>(fps)));
+        if (totalFrames == 0) {
+            totalFrames = 1;
+        }
+
+        std::string ffmpegCmdSummary;
+        {
+            const uint32_t w = params.width;
+            const uint32_t h = params.height;
+            const uint32_t fpsSummary = std::max(1u, params.fps);
+            std::string out = params.outputPath;
+            for (char& c : out) {
+                if (c == '\\') {
+                    c = '/';
+                }
+            }
+            const char* mux = (params.container == VideoContainer::Mov) ? "mov" : "mp4";
+            ffmpegCmdSummary = "\"" + params.ffmpegExecutable + "\" -y ... rawvideo rgba " + std::to_string(w) + "x" + std::to_string(h)
+                + " @ " + std::to_string(fpsSummary) + "fps -> " + mux + " \"" + out + "\"";
+        }
+
+        pipeFile = OpenFfmpegPipe(params.ffmpegExecutable, params, errOut);
+        if (!pipeFile) {
+            return false;
+        }
+
+        std::vector<uint8_t> rgba(static_cast<size_t>(params.width) * static_cast<size_t>(params.height) * 4);
+
+        if (!CreateFbo(params.width, params.height, fbo, errOut)) {
+            CloseFfmpegPipe(pipeFile);
+            pipeFile = nullptr;
+            return false;
+        }
+
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+        glGetIntegerv(GL_VIEWPORT, vp);
+        glStateCaptured = true;
+
+        Solstice::UI::MotionGraphics::Compositor compositor;
+        compositor.SetViewportSize(static_cast<float>(params.width), static_cast<float>(params.height));
+
+        ImGui::SetCurrentContext(imguiCtx);
+
+        for (uint32_t fi = 0; fi < totalFrames; ++fi) {
+            const double t = static_cast<double>(fi) / static_cast<double>(fps);
+            uint64_t tick = startTick + static_cast<uint64_t>(std::llround(t * static_cast<double>(tps)));
+            if (tick >= endTick) {
+                tick = endTick - 1;
+            }
+
+            compositor.ClearTextureResolver();
+            compositor.SetTextureResolver([&](uint64_t h) -> ImTextureID { return TextureForHash(h, resolver, texCache); });
+
+            Solstice::Parallax::MGDisplayList mg = Solstice::Parallax::EvaluateMG(scene, tick);
+            compositor.Submit(mg);
+
+            s_glBindFramebuffer(GL_FRAMEBUFFER, fbo.fbo);
+            glViewport(0, 0, static_cast<GLsizei>(params.width), static_cast<GLsizei>(params.height));
+            glDisable(GL_DEPTH_TEST);
+            glClearColor(0.f, 0.f, 0.f, 1.f);
+            glClear(GL_COLOR_BUFFER_BIT);
+
+            LibUI::Core::NewFrameOffscreen(static_cast<float>(params.width), static_cast<float>(params.height),
+                1.0f / static_cast<float>(fps));
+
+            ImGui::Begin("##SMMExport", nullptr,
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoNav);
+            ImGui::SetWindowPos(ImVec2(0.f, 0.f));
+            ImGui::SetWindowSize(ImVec2(static_cast<float>(params.width), static_cast<float>(params.height)));
+            compositor.Render(ImGui::GetWindowDrawList());
+            ImGui::End();
+
+            LibUI::Core::RenderOffscreen();
+
+            glPixelStorei(GL_PACK_ALIGNMENT, 1);
+            glReadPixels(0, 0, static_cast<GLsizei>(params.width), static_cast<GLsizei>(params.height), GL_RGBA, GL_UNSIGNED_BYTE,
+                rgba.data());
+
+            Solstice::Parallax::ApplyMGPostProcessRgba(mg.Post, params.width, params.height,
+                std::span<std::byte>(reinterpret_cast<std::byte*>(rgba.data()), rgba.size()));
+
+            const size_t n = rgba.size();
+            if (fwrite(rgba.data(), 1, n, pipeFile) != n) {
+                errOut = "Failed writing frame data to ffmpeg stdin.\n" + ffmpegCmdSummary;
+                ReleaseTextureCache(texCache);
+                DestroyFbo(fbo);
+                if (glStateCaptured) {
+                    RestoreGlAfterOffscreen(window, prevFbo, vp);
+                }
+                CloseFfmpegPipe(pipeFile);
+                pipeFile = nullptr;
+                return false;
+            }
+
+            if (progress) {
+                progress(static_cast<float>(fi + 1) / static_cast<float>(totalFrames));
+            }
+        }
+
+        const int ec = CloseFfmpegPipe(pipeFile);
+        pipeFile = nullptr;
+        if (ec != 0) {
+            errOut = "ffmpeg exit code " + std::to_string(ec) + " (non-zero; verify the output file). Stderr was not captured from the pipe.\n"
+                + ffmpegCmdSummary;
+        }
+
+        ReleaseTextureCache(texCache);
+        DestroyFbo(fbo);
+        if (glStateCaptured) {
+            RestoreGlAfterOffscreen(window, prevFbo, vp);
+        }
+
+        return ec == 0;
+    } catch (const std::exception& ex) {
+        if (pipeFile) {
+            CloseFfmpegPipe(pipeFile);
+            pipeFile = nullptr;
+        }
+        ReleaseTextureCache(texCache);
+        DestroyFbo(fbo);
+        if (glStateCaptured) {
+            RestoreGlAfterOffscreen(window, prevFbo, vp);
+        }
+        errOut = std::string("C++ exception during video export: ") + ex.what();
+        return false;
+    } catch (...) {
+        if (pipeFile) {
+            CloseFfmpegPipe(pipeFile);
+            pipeFile = nullptr;
+        }
+        ReleaseTextureCache(texCache);
+        DestroyFbo(fbo);
+        if (glStateCaptured) {
+            RestoreGlAfterOffscreen(window, prevFbo, vp);
+        }
+        errOut = "Non-standard C++ exception during video export (GL state was restored; save work if the preview looks wrong).";
+        return false;
+    }
 }
 
 } // namespace Solstice::MovieMaker

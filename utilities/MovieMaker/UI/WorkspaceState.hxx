@@ -57,6 +57,8 @@ struct WorkspaceState {
     bool showFluidVolumeOverlay{true};
     /// 2D overlays: title-safe, rule-of-thirds, center cross (letterboxed image region of the unified viewport).
     bool showViewportFramingGuides{false};
+    /// Schematic 3D preview: fake baked ambient occlusion strength on default materials (unified + split schematic if used).
+    float schematicBakedAO{0.42f};
     char enginePreviewLastError[512]{};
 
     Smm::Editing::KeyframeEditUiState keyframeEditState{};

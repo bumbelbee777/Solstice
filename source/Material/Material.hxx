@@ -7,12 +7,20 @@
 namespace Solstice::Core {
     class JSONValue;
 
-// Compact material representation - exactly 48 bytes (on 64-bit)
+// Optional physics + stylized shading knobs (used when Mat.Extras != nullptr)
 struct MaterialExtras {
     float Buoyancy = 0.0f;
     float Flammability = 0.0f;
     float Conductiveness = 0.0f;
     float Density = 1.0f;
+    /// Cel shading: 0 = standard PBR; 2–8 = number of light bands (see `u_stylize` / docs).
+    float CelBands = 0.0f;
+    /// Multiplies the screen-space rim term; 0 = use built-in default; 2–4 = "overdriven" hot rims.
+    float RimOverdrive = 0.0f;
+    /// Procedural world-space wobble along vertex normals (meters, sin-based). Works on CPU/rigged skinned meshes.
+    float VertexWobbleAmplitude = 0.0f;
+    /// Phase for wobble; animate over time in gameplay for water/cloth wobble.
+    float VertexWobblePhase = 0.0f;
 };
 
 struct Material {

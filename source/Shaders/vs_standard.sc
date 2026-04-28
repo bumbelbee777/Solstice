@@ -4,18 +4,20 @@ $output PixelPosition, PixelNormal, ShadowCoord, TexCoord, PixelTangent, PixelBi
 #include <bgfx_shader.sh>
 
 uniform mat4 u_shadowMtx;
-
-
+uniform vec4 u_stylize; // x: cel bands, y: rim scale, z: wobble amp (world), w: wobble phase
 
 void main()
 {
     // Canonical order: clip = u_viewProj * (u_model * pos)
-    // Shadow coordinates
-    // We expect u_shadowMtx to be passed by the application
-    // mat4 u_shadowMtx; // Defined in uniform buffer
-
-    // Calculate shadow position
-    vec4 WorldPos = mul(u_model[0], vec4(a_position, 1.0));
+    vec4 localPos = vec4(a_position, 1.0);
+    vec3 worldPos3 = mul(u_model[0], localPos).xyz;
+    if (abs(u_stylize.z) > 0.00001) {
+        vec3 wn = normalize(mul(u_model[0], vec4(a_normal, 0.0)).xyz);
+        float ph = u_stylize.w + dot(worldPos3, vec3(0.73, 0.19, 0.64));
+        float disp = u_stylize.z * (0.5 + 0.5 * sin(ph));
+        worldPos3 += wn * disp;
+    }
+    vec4 WorldPos = vec4(worldPos3, 1.0);
     gl_Position = mul(u_viewProj, WorldPos);
 
     // Remap depth from [-1,1] to [0,1] for D3D-style clip space (Solstice specific fixup)

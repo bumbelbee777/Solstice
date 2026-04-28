@@ -140,6 +140,59 @@ public:
     void SetGodRayEnabled(bool Enabled) { m_GodRaySettings.Enabled = Enabled; }
     void SetVolumetricTexture(bgfx::TextureHandle Texture) { m_VolumetricTexture = Texture; }
 
+    /// Optional per-frame post tunables (see `fs_post.sc` `u_postChain`). Not persisted in scene assets.
+    struct PostChainTunables {
+        /// HDR pre-TAA fullscreen blur mix (0 = off). Games use for pause overlays, depth haze, etc.
+        float PrenormBlurMix{0.0f};
+        float Reserved0{0.0f};
+        float Reserved1{0.0f};
+        float Reserved2{0.0f};
+    };
+
+    void SetPostChainTunables(const PostChainTunables& Tunables) { m_PostChainTunables = Tunables; }
+    const PostChainTunables& GetPostChainTunables() const { return m_PostChainTunables; }
+
+    /// Expanding ring UV refraction in `fs_post` (screen-space; pairs with `u_fog` for action FX).
+    struct ShockwaveSettings {
+        float CenterX{0.5f};
+        float CenterY{0.5f};
+        float RingRadius{0.35f}; // length in aspect-corrected UV space from center
+        float Strength{0.0f};   // 0 = disabled
+    };
+    void SetShockwaveSettings(const ShockwaveSettings& s) { m_ShockwaveSettings = s; }
+    const ShockwaveSettings& GetShockwaveSettings() const { return m_ShockwaveSettings; }
+
+    /// Cheap exponential distance + height fog in post (linear HDR, before tone map). Complements god-ray texture.
+    struct ScreenFogSettings {
+        bool Enabled{false};
+        float DistanceDensity{0.0f};
+        float HeightFalloff{0.0f};
+        float HeightAnchorY{0.0f};
+        float Mix{1.0f};
+        float FogR{0.55f};
+        float FogG{0.6f};
+        float FogB{0.7f};
+    };
+    void SetScreenFogSettings(const ScreenFogSettings& s) { m_ScreenFogSettings = s; }
+    const ScreenFogSettings& GetScreenFogSettings() const { return m_ScreenFogSettings; }
+
+    /// SMM / editor preview: chromatic (depth-scaled), frame smear, height fog dither. Games may use the same path.
+    struct CinematicViewState {
+        /// Radial RGB split strength (0 = off). Tuned for ~0.002–0.02 in preview.
+        float ChromaticAberrationStrength{0.0f};
+        /// 0 = uniform; 1 = more aberration on distant pixels (uses hardware depth).
+        float ChromaticAberrationDepthScale{0.7f};
+        float ChromaticCenterU{0.5f};
+        float ChromaticCenterV{0.5f};
+        /// Blends in extra TAA history (0–1) for motion-graphic / film smear.
+        float SmearFrameStrength{0.0f};
+        /// 0 = off; 0.02–0.12 breaks fog banding (screen-space fog in `fs_post`).
+        float ScreenFogDither{0.0f};
+    };
+
+    void SetCinematicViewState(const CinematicViewState& s) { m_CinematicView = s; }
+    const CinematicViewState& GetCinematicViewState() const { return m_CinematicView; }
+
     // Velocity buffer pass
     void BeginVelocityPass();
     void EndVelocityPass();
@@ -244,6 +297,19 @@ private:
     bgfx::TextureHandle m_VolumetricTexture = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_GodRayParams = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_TexVolumetric = BGFX_INVALID_HANDLE;
+
+    PostChainTunables m_PostChainTunables{};
+    bgfx::UniformHandle u_PostChain = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_ShockwaveParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_ScreenFog = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_FogColor = BGFX_INVALID_HANDLE;
+    ShockwaveSettings m_ShockwaveSettings{};
+    ScreenFogSettings m_ScreenFogSettings{};
+    CinematicViewState m_CinematicView{};
+
+    bgfx::UniformHandle u_ChromaticParams = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_SmearFrame = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_FogDither = BGFX_INVALID_HANDLE;
 
     // Fullscreen Quad
     bgfx::VertexLayout m_Layout;

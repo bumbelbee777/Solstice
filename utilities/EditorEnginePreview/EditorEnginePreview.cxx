@@ -7,6 +7,7 @@
 #include <Material/Material.hxx>
 #include <Material/SmatBinary.hxx>
 #include <Render/Assets/TextureRegistry.hxx>
+#include <Render/Post/PostProcessing.hxx>
 #include <Render/Scene/Camera.hxx>
 #include <Render/Scene/Scene.hxx>
 #include <Render/SoftwareRenderer.hxx>
@@ -30,6 +31,9 @@
 #include <vector>
 
 namespace Solstice::EditorEnginePreview {
+
+CinematicViewStatePod g_PendingCinematic{};
+
 namespace {
 
 using namespace Solstice::Render;
@@ -47,6 +51,24 @@ static constexpr size_t kMaxEntityMats = 256;
 uint32_t g_EntityMatIds[kMaxEntityMats]{};
 
 bool g_Inited = false;
+
+static void ApplyPendingCinematicToPost() {
+    if (!g_Renderer) {
+        return;
+    }
+    Solstice::Render::PostProcessing* pp = g_Renderer->GetPostProcessing();
+    if (!pp) {
+        return;
+    }
+    Solstice::Render::PostProcessing::CinematicViewState cv;
+    cv.ChromaticAberrationStrength = g_PendingCinematic.ChromaticAberrationStrength;
+    cv.ChromaticAberrationDepthScale = g_PendingCinematic.ChromaticAberrationDepthScale;
+    cv.ChromaticCenterU = g_PendingCinematic.ChromaticCenterU;
+    cv.ChromaticCenterV = g_PendingCinematic.ChromaticCenterV;
+    cv.SmearFrameStrength = g_PendingCinematic.SmearFrameStrength;
+    cv.ScreenFogDither = g_PendingCinematic.ScreenFogDither;
+    pp->SetCinematicViewState(cv);
+}
 
 /// Reserved `TextureRegistry` indices for editor preview (per-entity albedo / normal / roughness).
 static constexpr uint32_t kPreviewTexBase = 56000u;
@@ -223,6 +245,10 @@ static void BuildCameraFromOrbit(const LibUI::Viewport::OrbitPanZoomState& st, f
 
 } // namespace
 
+void SetPendingCinematicViewState(const CinematicViewStatePod& s) {
+    g_PendingCinematic = s;
+}
+
 bool EnsureInitialized() {
     if (g_Inited) {
         return true;
@@ -304,6 +330,7 @@ bool CaptureOrbitRgb(const LibUI::Viewport::OrbitPanZoomState& orbit, float targ
         }
     }
     g_Renderer->Resize(fbW, fbH);
+    ApplyPendingCinematicToPost();
 
     ClearEditorPreviewTextureSlots(*g_Renderer, kMaxEntityMats);
 
@@ -325,11 +352,23 @@ bool CaptureOrbitRgb(const LibUI::Viewport::OrbitPanZoomState& orbit, float targ
                     *m = loaded;
                 } else {
                     *m = Solstice::Core::Materials::CreateDefault();
-                    m->SetAlbedoColor(e.Albedo, 0.35f);
+                    Math::Vec3 albedoD = e.Albedo;
+                    if (e.BakedAOPreview > 1e-4f) {
+                        const float t = (std::min)(e.BakedAOPreview, 1.0f) * 0.55f;
+                        const float s = 1.f - 0.48f * t;
+                        albedoD = Math::Vec3((std::max)(0.f, albedoD.x * s), (std::max)(0.f, albedoD.y * s), (std::max)(0.f, albedoD.z * s));
+                    }
+                    m->SetAlbedoColor(albedoD, 0.35f);
                 }
             } else {
                 *m = Solstice::Core::Materials::CreateDefault();
-                m->SetAlbedoColor(e.Albedo, 0.35f);
+                Math::Vec3 albedoD = e.Albedo;
+                if (e.BakedAOPreview > 1e-4f) {
+                    const float t = (std::min)(e.BakedAOPreview, 1.0f) * 0.55f; // 0-55% darkening from “baked” term
+                    const float s = 1.f - 0.48f * t;
+                    albedoD = Math::Vec3((std::max)(0.f, albedoD.x * s), (std::max)(0.f, albedoD.y * s), (std::max)(0.f, albedoD.z * s));
+                }
+                m->SetAlbedoColor(albedoD, 0.35f);
             }
             SanitizeMaterialTextureRefs(*m, texReg);
             ApplyPreviewTextureMaps(*g_Renderer, *m, e, static_cast<unsigned>(i));

@@ -39,6 +39,10 @@ JSONValue Material::Serialize(const Material& Mat) {
         ExtrasObj["Flammability"] = Mat.Extras->Flammability;
         ExtrasObj["Conductiveness"] = Mat.Extras->Conductiveness;
         ExtrasObj["Density"] = Mat.Extras->Density;
+        ExtrasObj["CelBands"] = Mat.Extras->CelBands;
+        ExtrasObj["RimOverdrive"] = Mat.Extras->RimOverdrive;
+        ExtrasObj["VertexWobbleAmplitude"] = Mat.Extras->VertexWobbleAmplitude;
+        ExtrasObj["VertexWobblePhase"] = Mat.Extras->VertexWobblePhase;
         Obj["Extras"] = JSONValue(std::move(ExtrasObj));
     }
 
@@ -134,6 +138,18 @@ Material Material::Deserialize(const JSONValue& JSON) {
         }
         if (ExtrasObj.find("Density") != ExtrasObj.end()) {
             Mat.Extras->Density = static_cast<float>(ExtrasObj.at("Density").AsDouble());
+        }
+        if (ExtrasObj.find("CelBands") != ExtrasObj.end()) {
+            Mat.Extras->CelBands = static_cast<float>(ExtrasObj.at("CelBands").AsDouble());
+        }
+        if (ExtrasObj.find("RimOverdrive") != ExtrasObj.end()) {
+            Mat.Extras->RimOverdrive = static_cast<float>(ExtrasObj.at("RimOverdrive").AsDouble());
+        }
+        if (ExtrasObj.find("VertexWobbleAmplitude") != ExtrasObj.end()) {
+            Mat.Extras->VertexWobbleAmplitude = static_cast<float>(ExtrasObj.at("VertexWobbleAmplitude").AsDouble());
+        }
+        if (ExtrasObj.find("VertexWobblePhase") != ExtrasObj.end()) {
+            Mat.Extras->VertexWobblePhase = static_cast<float>(ExtrasObj.at("VertexWobblePhase").AsDouble());
         }
     }
 

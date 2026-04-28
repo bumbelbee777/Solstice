@@ -1,6 +1,7 @@
 #pragma once
 
 #include "LibUI/AssetBrowser/AssetBrowser.hxx"
+#include "EditorEnginePreview/EditorEnginePreview.hxx"
 #include <Parallax/DevSessionAssetResolver.hxx>
 #include <Parallax/ParallaxScene.hxx>
 
@@ -18,6 +19,19 @@ struct AssetDbEntry {
     bool IsProxy{false};
     /// When **IsProxy**, optional hash of the “final” asset this row stands in for (0 = unknown).
     uint64_t ResolvesToHash{0};
+    /// e.g. texture, audio, mesh, midi, other — for tooling and export hints only.
+    std::string Kind;
+    std::string Notes;
+};
+
+/// Parsed MIDI (SMF) for timeline sync / author reference; optional.
+struct MidiConductorEntry {
+    std::string SourcePathUtf8;
+    uint32_t TicksPerQuarter{480};
+    /// Microseconds per quarter (from file meta; default 120 BPM).
+    uint32_t MicrosecondsPerQuarter{500000u};
+    /// Merged “beat grid” in MIDI ticks (e.g. each quarter, deduped).
+    std::vector<uint32_t> BeatTicks;
 };
 
 struct PrefabEntry {
@@ -45,6 +59,9 @@ struct SessionState {
     std::vector<AssetDbEntry> AssetDb;
     std::vector<PrefabEntry> Prefabs;
     std::vector<LipsyncLineStub> LipsyncStubs;
+    MidiConductorEntry MidiConductor;
+    /// 3D schematic preview post (`SetPendingCinematicViewState` / `fs_post`).
+    Solstice::EditorEnginePreview::CinematicViewStatePod CinematicView{};
 };
 
 std::filesystem::path AuthoringSidecarPathForProject(const std::filesystem::path& smmJsonPath);

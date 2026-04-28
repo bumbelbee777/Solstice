@@ -16,6 +16,20 @@ ECS::EntityId ComponentFactory::CreatePlayer(ECS::Registry& Registry, const Math
     return entity;
 }
 
+ECS::EntityId ComponentFactory::CreatePlayerWithMatchId(ECS::Registry& Registry, std::uint32_t MatchPlayerId,
+                                                        const Math::Vec3& Position, const std::string& Name) {
+    ECS::EntityId entity = Registry.Create();
+
+    Registry.Add<ECS::Transform>(entity, ECS::Transform{Position, Math::Vec3(1.0f, 1.0f, 1.0f)});
+    Registry.Add<ECS::Name>(entity, ECS::Name{Name});
+    Registry.Add<ECS::Kind>(entity, ECS::Kind{ECS::EntityKind::Player});
+    Registry.Add<ECS::PlayerTag>(entity, ECS::PlayerTag{});
+    Registry.Add<ECS::MatchPlayerIdComponent>(entity, ECS::MatchPlayerIdComponent{MatchPlayerId});
+
+    SIMPLE_LOG("ComponentFactory: Created player entity with match id " + std::to_string(MatchPlayerId) + ": " + Name);
+    return entity;
+}
+
 ECS::EntityId ComponentFactory::CreateEnemy(ECS::Registry& Registry, const Math::Vec3& Position,
                                            const std::string& Name, ECS::EntityKind Kind) {
     ECS::EntityId entity = Registry.Create();

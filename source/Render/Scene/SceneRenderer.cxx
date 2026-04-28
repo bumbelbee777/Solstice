@@ -27,6 +27,7 @@ static bgfx::UniformHandle u_PointLightPos = BGFX_INVALID_HANDLE;
 static bgfx::UniformHandle u_PointLightColor = BGFX_INVALID_HANDLE;
 static bgfx::UniformHandle u_PointLightParams = BGFX_INVALID_HANDLE;
 static bgfx::UniformHandle u_NumPointLights = BGFX_INVALID_HANDLE;
+static bgfx::UniformHandle u_stylize = BGFX_INVALID_HANDLE;
 
 namespace Solstice::Render {
 namespace Math = Solstice::Math;
@@ -42,6 +43,19 @@ float Halton(uint32_t index, uint32_t base) {
         f /= static_cast<float>(base);
     }
     return result;
+}
+
+void SetStylizeUniformForMaterial(bgfx::UniformHandle uStylize, const Core::Material* mat) {
+    float s[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    if (mat && mat->Extras) {
+        s[0] = mat->Extras->CelBands;
+        s[1] = mat->Extras->RimOverdrive;
+        s[2] = mat->Extras->VertexWobbleAmplitude;
+        s[3] = mat->Extras->VertexWobblePhase;
+    }
+    if (bgfx::isValid(uStylize)) {
+        bgfx::setUniform(uStylize, s);
+    }
 }
 }
 
@@ -272,6 +286,9 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
         u_PointLightParams = bgfx::createUniform("u_PointLightParams", bgfx::UniformType::Vec4, 32);
         u_NumPointLights = bgfx::createUniform("u_NumPointLights", bgfx::UniformType::Vec4);
     }
+    if (!bgfx::isValid(u_stylize)) {
+        u_stylize = bgfx::createUniform("u_stylize", bgfx::UniformType::Vec4);
+    }
     static bgfx::UniformHandle u_LightDir = bgfx::createUniform("u_LightDir", bgfx::UniformType::Vec4);
     static bgfx::UniformHandle u_LightColor = bgfx::createUniform("u_LightColor", bgfx::UniformType::Vec4);
     static bgfx::UniformHandle u_CameraPos = bgfx::createUniform("u_CameraPos", bgfx::UniformType::Vec4);
@@ -497,6 +514,7 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
                 bgfx::setUniform(u_Emission, &emission);
                 Math::Vec4 textureBlendParams(blendMode, blendFactor, 0.0f, 0.0f);
                 bgfx::setUniform(u_TextureBlend, &textureBlendParams);
+                SetStylizeUniformForMaterial(u_stylize, currentMat);
                 } else {
                     // Invalid material ID - use default gray material instead of black
                     albedoColor = Math::Vec4(0.7f, 0.7f, 0.7f, 1.0f);
@@ -507,7 +525,10 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
                     bgfx::setUniform(u_Emission, &emission);
                     Math::Vec4 textureBlendParams(0.0f, 0.0f, 0.0f, 0.0f);
                     bgfx::setUniform(u_TextureBlend, &textureBlendParams);
+                    SetStylizeUniformForMaterial(u_stylize, nullptr);
                 }
+            } else {
+                SetStylizeUniformForMaterial(u_stylize, nullptr);
             }
 
             if (bgfx::isValid(albedoTexture)) {
@@ -640,6 +661,7 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
                         bgfx::setUniform(u_Emission, &emission);
                         Math::Vec4 textureBlendParams(blendMode, blendFactor, 0.0f, 0.0f);
                         bgfx::setUniform(u_TextureBlend, &textureBlendParams);
+                        SetStylizeUniformForMaterial(u_stylize, currentMatSub);
                     } else {
                         // Invalid material ID - use default gray material instead of black
                         albedoColor = Math::Vec4(0.7f, 0.7f, 0.7f, 1.0f);
@@ -650,7 +672,10 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
                         bgfx::setUniform(u_Emission, &emission);
                         Math::Vec4 textureBlendParams(0.0f, 0.0f, 0.0f, 0.0f);
                         bgfx::setUniform(u_TextureBlend, &textureBlendParams);
+                        SetStylizeUniformForMaterial(u_stylize, nullptr);
                     }
+                } else {
+                    SetStylizeUniformForMaterial(u_stylize, nullptr);
                 }
 
         if (bgfx::isValid(albedoTexture)) {
@@ -782,6 +807,7 @@ void SceneRenderer::RenderObjectOutline(SceneObjectID objID, Scene& scene, MeshL
     bgfx::setUniform(u_MaterialParams, &materialParams);
     Math::Vec4 textureBlendParams(0.0f, 0.0f, 0.0f, 0.0f);
     bgfx::setUniform(u_TextureBlend, &textureBlendParams);
+    SetStylizeUniformForMaterial(u_stylize, nullptr);
 
     // Use default white texture
     static bgfx::TextureHandle defaultWhiteTexture = BGFX_INVALID_HANDLE;

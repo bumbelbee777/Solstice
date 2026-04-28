@@ -39,6 +39,12 @@ add_library(Game STATIC
     World/SceneBuilder.cxx
     World/MaterialPresetManager.cxx
     World/LevelBase.cxx
+    Match/MatchScoreState.cxx
+    Match/Leaderboard.cxx
+    Match/TeamLeaderboard.cxx
+    Match/MatchGameplayAuthoringCache.cxx
+    Progression/AchievementState.cxx
+    Progression/ScoreMultiplierState.cxx
     Integration/ScriptManager.cxx
     Dialogue/DialogueTree.cxx
     Dialogue/NarrativeRuntime.cxx

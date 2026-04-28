@@ -4,6 +4,8 @@ This repo uses a small **.fst** (file structure table) format to list which file
 
 **Utilities covered:** [Sharpon](Utilities.md#sharpon-moonwalk--json) ([`Sharpon.fst`](../tools/packaging/Sharpon.fst)), **Jackhammer** ([`LevelEditor.fst`](../tools/packaging/LevelEditor.fst) — target `LevelEditor`), and **SMM** ([`MovieMaker.fst`](../tools/packaging/MovieMaker.fst) — target `MovieMaker`).
 
+**Example game / RELIC layout:** the **Wars of Heaven** smoke target ([`WarsOfHeaven.fst`](../tools/packaging/WarsOfHeaven.fst)) stages `WarsOfHeaven.exe` (or `WarsOfHeaven` on Unix), `SDL3` + `SolsticeEngine` shared libraries, `shaders/`, `fonts/`, and `scripts/` (Moonwalk, including the `WoH_UI` module). An optional `game.data.relic` is placed in the **same root as the executable** (empty `dst` in the FST) so the runtime bootstrap in [RelicFormat](RelicFormat.md) is found; the row is **`optional: yes`** so packaging succeeds before you generate a bootstrap. Package with the same `package_executables.py` invocation as the utilities, e.g. `python tools/package_executables.py --fst tools/packaging/WarsOfHeaven.fst --root <build>/bin/<Config> --format zip --out <path>`.
+
 **Redistribution note:** on Windows, CMake post-build already places **`SDL3`**, **`SolsticeEngine`**, compiled **`shaders/`**, and UI **`fonts/`** next to each utility in `${CMAKE_BINARY_DIR}/bin` (SMM may also copy **`ffmpeg.exe`** if `SOLSTICE_FFMPEG_EXECUTABLE` is set at configure). **LibUI** is linked **statically** into the tools — there is no `LibUI.dll` to ship.
 
 ## FST v1 format

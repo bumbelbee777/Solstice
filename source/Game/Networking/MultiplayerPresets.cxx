@@ -53,6 +53,27 @@ MultiplayerSessionConfig MultiplayerPresets::GetCooperative() {
     return c;
 }
 
+MultiplayerSessionConfig MultiplayerPresets::GetWarsOfHeaven() {
+    MultiplayerSessionConfig c;
+    c.Chat.MaxMessageLength = 512;
+    c.Chat.MaxScrollbackLines = 64;
+    c.Party.MaxPartySize = 4;
+    c.Party.PartyChatIsolated = false;
+    c.Team.MaxTeams = 2;
+    c.Team.MaxPlayersPerTeam = 8;
+    c.Team.AllowTeamSwitchInLobby = true;
+    c.Lobby.MinPlayersToStart = 1;
+    c.Lobby.MaxPlayers = 16;
+    c.Lobby.ReadyTimeoutSec = 180.0f;
+    c.Lobby.LobbyCountdownSec = 4.0f;
+    c.Timeouts.HeartbeatIntervalSec = 1.2f;
+    c.Timeouts.ConnectionTimeoutSec = 25.0f;
+    c.Ping.PingIntervalSec = 1.2f;
+    c.Ping.PingStaleThresholdMs = 300.0f;
+    c.Ping.SmoothAlpha = 0.2f;
+    return c;
+}
+
 namespace MultiplayerProtocol {
 
 bool AppendMessageHeader(Networking::Packet& packet, MultiplayerMessageType type) {

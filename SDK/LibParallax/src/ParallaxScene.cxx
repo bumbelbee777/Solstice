@@ -64,7 +64,20 @@ static std::vector<SchemaDef> BuildBuiltinSchemaTable() {
     add("AudioSourceElement", {{"AudioAsset", AttributeType::AssetHash},
                                {"Volume", AttributeType::Float},
                                {"Pitch", AttributeType::Float}});
-    add("MotionGraphicsRootElement", {{"CompositeAlpha", AttributeType::Float}});
+    add("MotionGraphicsRootElement", {{"CompositeAlpha", AttributeType::Float},
+        /// `EvaluateMG` only: master clock scale (all MG tracks sampled at `timeTicks * MGTimeScale`). Not a true spline time-remap; keyframe to ramp apparent speed.
+        {"MGTimeScale", AttributeType::Float},
+        {"ScreenShakeAmpX", AttributeType::Float},
+        {"ScreenShakeAmpY", AttributeType::Float},
+        /// Multiplies `timeTicks` inside wobble: `sin(freq * 0.01 * timeTicks + phase)`.
+        {"ScreenShakeFrequency", AttributeType::Float},
+        {"ScreenShakePhase", AttributeType::Float},
+        /// Post stack (px split; then grade, see docs).
+        {"ChromaticAberration", AttributeType::Float},
+        {"GradeExposure", AttributeType::Float},
+        {"GradeSaturation", AttributeType::Float},
+        {"GradeContrast", AttributeType::Float},
+        {"GradeLift", AttributeType::Float}});
     add("MGTextElement", {{"Text", AttributeType::String},
                           {"Position", AttributeType::Vec2},
                           {"Color", AttributeType::ColorRGBA},
@@ -72,7 +85,39 @@ static std::vector<SchemaDef> BuildBuiltinSchemaTable() {
     add("MGSpriteElement", {{"Texture", AttributeType::AssetHash},
                             {"Position", AttributeType::Vec2},
                             {"Size", AttributeType::Vec2},
-                            {"Depth", AttributeType::Float}});
+                            {"Depth", AttributeType::Float},
+                            /// Screen-space color tint (vec4) — multiplied with the sampled texel; alpha in [0,1] scales sprite opacity in raster paths.
+                            {"Color", AttributeType::ColorRGBA},
+                            /// Screen-space Z rotation in radians; used for 2D “billboard”-style presentation and motion smear.
+                            {"RotationZ", AttributeType::Float},
+                            /// 0=axis-aligned, 1=“camera-facing” 2D billboarding (treats sprite as a flat card with RotationZ wobble).
+                            {"BillboardMode", AttributeType::Int32},
+                            /// Motion-smear: number of under-draw passes (0 = off).
+                            {"SmearCount", AttributeType::Int32},
+                            /// Pixel step between smear ghosts (per axis, screen space).
+                            {"SmearDx", AttributeType::Float},
+                            {"SmearDy", AttributeType::Float},
+                            {"SmearFalloff", AttributeType::Float},
+                            /// Procedural “vertex shader” style UV scroll + wave (time-varying, driven from keyed attributes in SMM).
+                            {"UvScrollU", AttributeType::Float},
+                            {"UvScrollV", AttributeType::Float},
+                            {"UvWaveU", AttributeType::Float},
+                            {"UvWaveV", AttributeType::Float},
+                            {"UvPhase", AttributeType::Float},
+                            /// Baked-ambient for flat sprites: multiplies rgb; AOEdge tints quads by UV distance to edges.
+                            {"AOMultiply", AttributeType::Float},
+                            {"AOEdge", AttributeType::Float},
+                            /// Chroma key in texture space: distance to `ChromaKeyColor` (linear RGB) vs tolerance/feather; 0 tolerance = off.
+                            {"ChromaKeyColor", AttributeType::Vec3},
+                            {"ChromaKeyTolerance", AttributeType::Float},
+                            {"ChromaKeyFeather", AttributeType::Float},
+                            /// “Rotoscope” ink on alpha edges: strength 0 = off, ~0.3–1 typical.
+                            {"RotoscopeStrength", AttributeType::Float},
+                            {"RotoscopeEdgePx", AttributeType::Float},
+                            /// Blurry zoom: radial smear in UV from center; 0 = off, 1–4 typical.
+                            {"ZoomBlur", AttributeType::Float},
+                            {"ZoomBlurCenterU", AttributeType::Float},
+                            {"ZoomBlurCenterV", AttributeType::Float}});
     add("SmmParticleEmitterElement",
         {{"Enabled", AttributeType::Bool},
             {"AttachToSceneElement", AttributeType::Bool},

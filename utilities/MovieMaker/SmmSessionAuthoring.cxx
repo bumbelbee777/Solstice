@@ -1,6 +1,7 @@
 #include "SmmSessionAuthoring.hxx"
 #include "SmmFileOps.hxx"
 #include "SmmLipsyncMorpheme.hxx"
+#include "SmmMidiParse.hxx"
 
 #include <Arzachel/TextLipSync.hxx>
 #include <Parallax/ParallaxScene.hxx>
@@ -100,21 +101,27 @@ static Solstice::Parallax::AttributeValue StringToValueForKey(std::string_view k
     try {
         if (key == "FovDegrees" || key == "Near" || key == "Far" || key == "Radius" || key == "Intensity" || key == "Pitch" ||
             key == "Volume" || key == "CompositeAlpha" || key == "ArzachelRigidBodyDamage" || key == "LodDistanceHigh" ||
-            key == "LodDistanceLow" || key == "Depth" || key == "SkyboxYawDegrees" || key == "SkyboxBrightness") {
+            key == "LodDistanceLow" || key == "Depth" || key == "SkyboxYawDegrees" || key == "SkyboxBrightness" || key == "RotationZ" ||
+            key == "SmearDx" || key == "SmearDy" || key == "SmearFalloff" || key == "UvScrollU" || key == "UvScrollV" || key == "UvWaveU" ||
+            key == "UvWaveV" || key == "UvPhase" || key == "AOMultiply" || key == "AOEdge" || key == "MGTimeScale" ||
+            key == "ScreenShakeAmpX" || key == "ScreenShakeAmpY" || key == "ScreenShakeFrequency" || key == "ScreenShakePhase" ||
+            key == "ChromaticAberration" || key == "GradeExposure" || key == "GradeSaturation" || key == "GradeContrast" ||
+            key == "GradeLift" || key == "ChromaKeyTolerance" || key == "ChromaKeyFeather" || key == "RotoscopeStrength" ||
+            key == "RotoscopeEdgePx" || key == "ZoomBlur" || key == "ZoomBlurCenterU" || key == "ZoomBlurCenterV") {
             return Solstice::Parallax::AttributeValue{std::stof(value)};
         }
-        if (key == "TickRate" || key == "ShadowResolution" || key == "AttachElementIndex") {
+        if (key == "TickRate" || key == "ShadowResolution" || key == "AttachElementIndex" || key == "BillboardMode" || key == "SmearCount") {
             return Solstice::Parallax::AttributeValue{static_cast<int32_t>(std::stoi(value))};
         }
-        if (key == "Position" || key == "Target" || key == "VelMin" || key == "VelMax" || key == "Gravity") {
+        if (key == "Position" || key == "Target" || key == "VelMin" || key == "VelMax" || key == "Gravity" || key == "ChromaKeyColor") {
             float x = 0, y = 0, z = 0;
             if (std::sscanf(value.c_str(), "%f,%f,%f", &x, &y, &z) == 3) {
                 return Solstice::Parallax::AttributeValue{Solstice::Math::Vec3(x, y, z)};
             }
-            if (std::sscanf(value.c_str(), "%f,%f", &x, &y) == 2) {
+            if (key != "ChromaKeyColor" && std::sscanf(value.c_str(), "%f,%f", &x, &y) == 2) {
                 return Solstice::Parallax::AttributeValue{Solstice::Math::Vec2(x, y)};
             }
-            err = "Position/Target: use x,y (MG) or x,y,z.";
+            err = key == "ChromaKeyColor" ? "ChromaKeyColor: use r,g,b (0-1 linear)." : "Position/Target: use x,y (MG) or x,y,z.";
             return Solstice::Parallax::AttributeValue{std::monostate{}};
         }
         if (key == "Color") {
@@ -430,13 +437,17 @@ bool LoadSessionAuthoring(const std::filesystem::path& path, SessionState& out, 
             if (SplitTab(line, c, 6) < 0) {
                 continue;
             }
-            // asset hex path tags isproxy full
+            // asset hex path tags isproxy full [ kind notes ]
             AssetDbEntry a;
             (void)ParseUInt64Hex(c[1], a.Hash);
             a.PathHint = c[2];
             a.Tags = c[3];
             a.IsProxy = (c[4] == "1" || c[4] == "true");
             (void)ParseUInt64Hex(c[5], a.ResolvesToHash);
+            if (c.size() >= 8) {
+                a.Kind = c[6];
+                a.Notes = c[7];
+            }
             out.AssetDb.push_back(std::move(a));
         } else if (line.rfind("prefab\t", 0) == 0) {
             if (SplitTab(line, c, 5) < 0) {
@@ -473,12 +484,69 @@ bool LoadSessionAuthoring(const std::filesystem::path& path, SessionState& out, 
                 l.MaxKeyframes = static_cast<uint32_t>(std::stoul(c[7]));
             }
             out.LipsyncStubs.push_back(std::move(l));
+        } else if (line.rfind("midi_conductor\t", 0) == 0) {
+            if (SplitTab(line, c, 5) < 0) {
+                continue;
+            }
+            MidiConductorEntry mc;
+            mc.SourcePathUtf8 = c[1];
+            try {
+                mc.TicksPerQuarter = static_cast<uint32_t>(std::stoul(c[2]));
+            } catch (...) {
+            }
+            try {
+                mc.MicrosecondsPerQuarter = static_cast<uint32_t>(std::stoul(c[3]));
+            } catch (...) {
+            }
+            if (c.size() > 4 && !c[4].empty()) {
+                std::string s = c[4];
+                size_t a = 0;
+                for (;;) {
+                    const size_t b = s.find(',', a);
+                    const std::string t = b == std::string::npos ? s.substr(a) : s.substr(a, b - a);
+                    if (!t.empty()) {
+                        try {
+                            mc.BeatTicks.push_back(static_cast<uint32_t>(std::stoul(t)));
+                        } catch (...) {
+                        }
+                    }
+                    if (b == std::string::npos) {
+                        break;
+                    }
+                    a = b + 1;
+                }
+            }
+            out.MidiConductor = std::move(mc);
+        } else if (line.rfind("cinematic\t", 0) == 0) {
+            if (SplitTab(line, c, 7) < 0) {
+                continue;
+            }
+            try {
+                out.CinematicView.ChromaticAberrationStrength = std::stof(c[1]);
+                out.CinematicView.ChromaticAberrationDepthScale = std::stof(c[2]);
+                out.CinematicView.ChromaticCenterU = std::stof(c[3]);
+                out.CinematicView.ChromaticCenterV = std::stof(c[4]);
+                out.CinematicView.SmearFrameStrength = std::stof(c[5]);
+                out.CinematicView.ScreenFogDither = std::stof(c[6]);
+            } catch (...) {
+            }
         }
     }
     return true;
 }
 
 namespace {
+
+static std::string JoinU32Comma(const std::vector<uint32_t>& v) {
+    std::string s;
+    for (size_t i = 0; i < v.size() && i < 8192; ++i) {
+        if (i) {
+            s += ',';
+        }
+        s += std::to_string(v[i]);
+    }
+    return s;
+}
 
 static std::string SanTab(std::string s) {
     for (char& c : s) {
@@ -507,7 +575,8 @@ bool SaveSessionAuthoring(const std::filesystem::path& path, const SessionState&
         out << "# SMM authoring sidecar (TSV; TP1). Does not change .smm.json \"version\":1 — separate file.\n";
         for (const auto& a : st.AssetDb) {
             out << "asset\t0x" << std::hex << a.Hash << std::dec << '\t' << SanTab(a.PathHint) << '\t' << SanTab(a.Tags) << '\t'
-                << (a.IsProxy ? 1 : 0) << "\t0x" << std::hex << a.ResolvesToHash << std::dec << '\n';
+                << (a.IsProxy ? 1 : 0) << "\t0x" << std::hex << a.ResolvesToHash << std::dec << '\t' << SanTab(a.Kind) << '\t'
+                << SanTab(a.Notes) << '\n';
         }
         for (const auto& p : st.Prefabs) {
             out << "prefab\t" << SanTab(p.Id) << '\t' << SanTab(p.DisplayName) << '\t' << SanTab(p.SchemaName) << '\t'
@@ -516,6 +585,18 @@ bool SaveSessionAuthoring(const std::filesystem::path& path, const SessionState&
         for (const auto& l : st.LipsyncStubs) {
             out << "lipsync\t" << SanTab(l.Label) << '\t' << l.StartTick << '\t' << l.EndTick << '\t' << SanTab(l.Text) << '\t'
                 << l.Strength << '\t' << static_cast<int>(l.PhoneticMode) << '\t' << l.MaxKeyframes << '\n';
+        }
+        {
+            const MidiConductorEntry& m = st.MidiConductor;
+            if (!m.SourcePathUtf8.empty() || m.TicksPerQuarter != 0 || m.MicrosecondsPerQuarter != 0 || !m.BeatTicks.empty()) {
+                out << "midi_conductor\t" << SanTab(m.SourcePathUtf8) << '\t' << m.TicksPerQuarter << '\t' << m.MicrosecondsPerQuarter
+                    << '\t' << SanTab(JoinU32Comma(m.BeatTicks)) << '\n';
+            }
+        }
+        {
+            const auto& c = st.CinematicView;
+            out << "cinematic\t" << c.ChromaticAberrationStrength << '\t' << c.ChromaticAberrationDepthScale << '\t' << c.ChromaticCenterU
+                << '\t' << c.ChromaticCenterV << '\t' << c.SmearFrameStrength << '\t' << c.ScreenFogDither << '\n';
         }
         out.flush();
         if (!out) {
@@ -560,6 +641,16 @@ void DrawAuthoringSessionTab(const char* tabId, SessionState& session, Solstice:
             statusLine = "Authoring load failed: " + le;
         }
     }
+    if (ImGui::CollapsingHeader("3D schematic post (unified capture)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        auto& c = session.CinematicView;
+        ImGui::SliderFloat("Chromatic strength##cv", &c.ChromaticAberrationStrength, 0.0f, 0.02f, "%.4f");
+        ImGui::SliderFloat("Chromatic depth scale##cv", &c.ChromaticAberrationDepthScale, 0.0f, 2.0f);
+        ImGui::SliderFloat("Chroma center U##cv", &c.ChromaticCenterU, 0.0f, 1.0f);
+        ImGui::SliderFloat("Chroma center V##cv", &c.ChromaticCenterV, 0.0f, 1.0f);
+        ImGui::SliderFloat("Smear frame##cv", &c.SmearFrameStrength, 0.0f, 0.5f, "%.3f");
+        ImGui::SliderFloat("Screen fog dither##cv", &c.ScreenFogDither, 0.0f, 0.4f, "%.3f");
+        ImGui::TextDisabled("Drives `fs_post` for orbit/schematic RGB (3D chroma, TAA smear, fog noise). Use Save in this tab to persist the `cinematic` TSV line.");
+    }
     if (ImGui::CollapsingHeader("Simplified asset database", ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::TextDisabled("Tags are comma labels; 'proxy' = low-LOD / stand-in. Resolves = full-quality hash if known.");
         if (ImGui::Button("Add selected session asset row##asdb") && assetListSelected >= 0 &&
@@ -591,6 +682,16 @@ void DrawAuthoringSessionTab(const char* tabId, SessionState& session, Solstice:
             }
             if (ImGui::InputText("tags", tbuf, sizeof(tbuf))) {
                 a.Tags = tbuf;
+            }
+            char kbuf[96]{};
+            char nbuf[512]{};
+            std::snprintf(kbuf, sizeof(kbuf), "%s", a.Kind.c_str());
+            std::snprintf(nbuf, sizeof(nbuf), "%s", a.Notes.c_str());
+            if (ImGui::InputText("kind (texture|audio|mesh|midi|other)", kbuf, sizeof(kbuf))) {
+                a.Kind = kbuf;
+            }
+            if (ImGui::InputTextMultiline("notes", nbuf, sizeof(nbuf), ImVec2(-1, 48))) {
+                a.Notes = nbuf;
             }
             ImGui::InputText("hash##ro", bufH, sizeof(bufH), ImGuiInputTextFlags_ReadOnly);
             if (ImGui::InputText("resolves to (hex)", bufF, sizeof(bufF))) {
@@ -764,6 +865,34 @@ void DrawAuthoringSessionTab(const char* tabId, SessionState& session, Solstice:
         if (ImGui::Button("Store line stub in list##lp")) {
             session.LipsyncStubs.push_back(stub);
             statusLine = "Lipsync stub added to TSV (save to persist).";
+        }
+    }
+    if (ImGui::CollapsingHeader("MIDI conductor (import beat grid)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        static char sMidiPath[768]{};
+        if (sMidiPath[0] == '\0' && !session.MidiConductor.SourcePathUtf8.empty()) {
+            std::snprintf(sMidiPath, sizeof(sMidiPath), "%s", session.MidiConductor.SourcePathUtf8.c_str());
+        }
+        ImGui::InputText("MIDI file path (.mid)##mcp", sMidiPath, sizeof(sMidiPath));
+        if (ImGui::Button("Parse and store##mcp")) {
+            Smm::Midi::ParseResult pr;
+            std::string me;
+            if (Smm::Midi::ParseStandardMidiFile(std::filesystem::path(sMidiPath), pr, me)) {
+                session.MidiConductor.SourcePathUtf8 = sMidiPath;
+                session.MidiConductor.TicksPerQuarter = pr.TicksPerQuarter;
+                session.MidiConductor.MicrosecondsPerQuarter = pr.MicrosecondsPerQuarter;
+                session.MidiConductor.BeatTicks = std::move(pr.BeatTicks);
+                const double bpm = 60000000.0 / static_cast<double>((std::max)(pr.MicrosecondsPerQuarter, 1u));
+                char b[200]{};
+                std::snprintf(b, sizeof(b), "MIDI: %zu quarter ticks (TPQ %u, ~%.1f BPM). Save authoring TSV to persist.",
+                    session.MidiConductor.BeatTicks.size(), pr.TicksPerQuarter, bpm);
+                statusLine = b;
+            } else {
+                statusLine = "MIDI: " + me;
+            }
+        }
+        if (!session.MidiConductor.BeatTicks.empty()) {
+            ImGui::TextDisabled("Stored: %zu quarter ticks, TPQ %u, us/q %u", session.MidiConductor.BeatTicks.size(),
+                session.MidiConductor.TicksPerQuarter, session.MidiConductor.MicrosecondsPerQuarter);
         }
     }
     ImGui::PopID();

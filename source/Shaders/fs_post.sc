@@ -26,6 +26,13 @@ uniform vec4 u_cameraPos;
 uniform vec4 u_taaParams; // x: blend, y: clampStrength, z: sharpenAmount, w: historyValid
 uniform vec4 u_taaJitter; // xy: current jitter ndc, zw: previous jitter ndc
 uniform vec4 u_fxaaParams; // x: enabled (>0.5), y: strength 0..1, zw: unused
+uniform vec4 u_postChain; // x: PrenormBlurMix 0-1 (optional HDR 9-tap pre-TAA); yzw: reserved
+uniform vec4 u_shockwaveParams; // xy: center UV, z: ring radius (NDC-ish), w: strength (0=off)
+uniform vec4 u_screenFog;      // x: distance density, y: height falloff, z: world height anchor, w: global mix 0-1
+uniform vec4 u_fogColor;       // rgb: fog, w unused
+uniform vec4 u_chromaticParams; // x: strength, y: depth weight 0-1, zw: center UV
+uniform vec4 u_smearFrame;   // x: extra history mix 0-1, yzw: unused
+uniform vec4 u_fogDither;    // x: fog dither (0=off)
 
 // Narkowicz ACES (cheaper)
 vec3 aces(vec3 x) {
@@ -155,13 +162,43 @@ vec3 applyFxaaPass(vec3 rgbCenter, vec2 uv, vec2 rcpFrame, float exposureMul, fl
 void main()
 {
     // Optimized post-processing for CPU/iGPU with HDR support
+    // Radial screen-space refraction (shock). Color samples use cuv; depth/TAA use TexCoord to reduce double errors.
+    vec2 cuv = TexCoord;
+    if (u_shockwaveParams.w > 0.001) {
+        float aspect = u_viewportSize.x / max(u_viewportSize.y, 1.0);
+        vec2 c = u_shockwaveParams.xy;
+        vec2 p = (TexCoord - c) * vec2(aspect, 1.0);
+        float d = length(p);
+        float rRing = u_shockwaveParams.z;
+        float ring = exp(-abs(d - rRing) * 24.0) * u_shockwaveParams.w;
+        vec2 dir = p / max(d, 1e-4);
+        cuv = TexCoord + dir * ring * 0.07;
+    }
+
     // Sample base color once (HDR RGBA16F)
-    vec3 color = texture2D(s_texColor, TexCoord).rgb;
+    vec3 color = texture2D(s_texColor, cuv).rgb;
 
     // 1. HDR Exposure adjustment
     float exposure = u_hdrExposure.x;
     float expMul = (exposure > 0.001) ? exposure : 1.25;
     color *= expMul;
+
+    // 1b. Optional fullscreen blur (HDR, before TAA) — 9-tap; PrenormBlurMix from u_postChain.x (0 = off)
+    if (u_postChain.x > 0.001) {
+        vec2 px = vec2(1.0, 1.0) / max(u_viewportSize.xy, vec2(1.0, 1.0));
+        float rad = (1.5 + 4.0 * u_postChain.x) * px.x;
+        vec3 acc = color;
+        acc += texture2D(s_texColor, cuv + vec2(rad, 0.0)).rgb;
+        acc += texture2D(s_texColor, cuv - vec2(rad, 0.0)).rgb;
+        acc += texture2D(s_texColor, cuv + vec2(0.0, rad)).rgb;
+        acc += texture2D(s_texColor, cuv - vec2(0.0, rad)).rgb;
+        acc += texture2D(s_texColor, cuv + vec2(rad, rad)).rgb;
+        acc += texture2D(s_texColor, cuv - vec2(rad, rad)).rgb;
+        acc += texture2D(s_texColor, cuv + vec2(rad, -rad)).rgb;
+        acc += texture2D(s_texColor, cuv - vec2(rad, -rad)).rgb;
+        vec3 blurred = acc * 0.1111111;
+        color = mix(color, blurred, clamp(u_postChain.x, 0.0, 1.0));
+    }
 
     // 2. Temporal AA (balanced quality/cost)
     float taaBlend = clamp(u_taaParams.x, 0.0, 0.95);
@@ -190,10 +227,10 @@ void main()
 
         // Neighborhood clamp to reduce ghosting.
         vec2 texel = vec2(1.0, 1.0) / u_viewportSize.xy;
-        vec3 n1 = texture2D(s_texColor, TexCoord + vec2(texel.x, 0.0)).rgb;
-        vec3 n2 = texture2D(s_texColor, TexCoord - vec2(texel.x, 0.0)).rgb;
-        vec3 n3 = texture2D(s_texColor, TexCoord + vec2(0.0, texel.y)).rgb;
-        vec3 n4 = texture2D(s_texColor, TexCoord - vec2(0.0, texel.y)).rgb;
+        vec3 n1 = texture2D(s_texColor, cuv + vec2(texel.x, 0.0)).rgb;
+        vec3 n2 = texture2D(s_texColor, cuv - vec2(texel.x, 0.0)).rgb;
+        vec3 n3 = texture2D(s_texColor, cuv + vec2(0.0, texel.y)).rgb;
+        vec3 n4 = texture2D(s_texColor, cuv - vec2(0.0, texel.y)).rgb;
         vec3 minNeighbor = min(min(n1, n2), min(n3, n4));
         vec3 maxNeighbor = max(max(n1, n2), max(n3, n4));
         vec3 clampMin = min(minNeighbor, color) - vec3_splat(taaClampStrength * 0.05);
@@ -212,12 +249,20 @@ void main()
 
         // Diagonal taps only for adaptive unsharp (saves 4 texture fetches when sharpen is off).
         if (taaSharpen > 0.001) {
-            vec3 nd1 = texture2D(s_texColor, TexCoord + vec2(texel.x, texel.y)).rgb;
-            vec3 nd2 = texture2D(s_texColor, TexCoord + vec2(-texel.x, texel.y)).rgb;
-            vec3 nd3 = texture2D(s_texColor, TexCoord + vec2(texel.x, -texel.y)).rgb;
-            vec3 nd4 = texture2D(s_texColor, TexCoord + vec2(-texel.x, -texel.y)).rgb;
+            vec3 nd1 = texture2D(s_texColor, cuv + vec2(texel.x, texel.y)).rgb;
+            vec3 nd2 = texture2D(s_texColor, cuv + vec2(-texel.x, texel.y)).rgb;
+            vec3 nd3 = texture2D(s_texColor, cuv + vec2(texel.x, -texel.y)).rgb;
+            vec3 nd4 = texture2D(s_texColor, cuv + vec2(-texel.x, -texel.y)).rgb;
             color = applyAdaptiveTaaUnsharp(color, n1, n2, n3, n4, nd1, nd2, nd3, nd4, taaSharpen);
         }
+    }
+
+    // 2b. Smear / frame persistence: extra lerp toward TAA history (look dev / motion-graphics; after TAA, before motion blur)
+    if (u_smearFrame.x > 0.0005 && taaHasHistory) {
+        vec2 jds2 = (u_taaJitter.xy - u_taaJitter.zw) * 0.5;
+        vec2 huvS = clamp(TexCoord - screenVelUv - jds2, 0.0, 1.0);
+        vec3 histS = texture2D(s_texHistory, huvS).rgb;
+        color = mix(color, histS, clamp(u_smearFrame.x, 0.0, 0.95));
     }
 
     // 3. Motion Blur (if enabled) - Optimized with reduced samples
@@ -248,7 +293,7 @@ void main()
                 for (int i = 1; i <= MAX_MOTION_BLUR_SAMPLES && i <= numSamples; i++) {
                     float t = float(i) / float(numSamples);
                     vec2 offset = velDir * velMag * t;
-                    vec2 sampleUV = TexCoord + offset;
+                    vec2 sampleUV = cuv + offset;
                     sampleUV = clamp(sampleUV, 0.0, 1.0);
 
                     float weight = 1.0 - t;
@@ -264,7 +309,7 @@ void main()
     if (u_fxaaParams.x > 0.5) {
         vec2 rcpFrame = vec2(1.0, 1.0) / max(u_viewportSize.xy, vec2(1.0, 1.0));
         float fxaaStrength = clamp(u_fxaaParams.y, 0.0, 1.0);
-        color = applyFxaaPass(color, TexCoord, rcpFrame, expMul, fxaaStrength);
+        color = applyFxaaPass(color, cuv, rcpFrame, expMul, fxaaStrength);
     }
 
     // 3. Optimized sharpening (removed - too expensive, minimal visual impact)
@@ -288,8 +333,8 @@ void main()
         // 3-tap bloom blur (reduced from 5-tap for performance)
         float Offset = BloomRadius / 1280.0;
         vec3 Bloom = extractBrightness(color, BloomThreshold);
-        Bloom += extractBrightness(texture2D(s_texColor, TexCoord + vec2(Offset, 0.0)).rgb, BloomThreshold);
-        Bloom += extractBrightness(texture2D(s_texColor, TexCoord - vec2(Offset, 0.0)).rgb, BloomThreshold);
+        Bloom += extractBrightness(texture2D(s_texColor, cuv + vec2(Offset, 0.0)).rgb, BloomThreshold);
+        Bloom += extractBrightness(texture2D(s_texColor, cuv - vec2(Offset, 0.0)).rgb, BloomThreshold);
         Bloom *= 0.333; // Average (1/3)
 
         // Additive blend
@@ -356,7 +401,7 @@ void main()
             vec3 probeColor = textureCube(s_texReflectionProbe, reflectDir).rgb;
             vec3 reflectionColor = mix(probeColor, ssrColor, hit);
 
-            float packedAlpha = texture2D(s_texColor, TexCoord).a;
+            float packedAlpha = texture2D(s_texColor, cuv).a;
             float roughness = clamp(packedAlpha, 0.05, 1.0);
             float isTransparent = step(packedAlpha, 0.9);
             roughness = mix(roughness, 1.0, isTransparent);
@@ -365,6 +410,42 @@ void main()
             float edgeFade = 1.0 - smoothstep(0.002, 0.01, depthEdge);
             float reflectFactor = reflectionIntensity * (1.0 - roughness) * fresnel * edgeFade;
             color += reflectionColor * clamp(reflectFactor, 0.0, 1.0);
+        }
+    }
+
+    // 5d. Depth-scaled chromatic aberration (linear HDR, before tonemap; uses s_texColor + exposure)
+    if (u_chromaticParams.x > 0.00001) {
+        float tdepth = 1.0 - depthAtPixel;
+        float sm = u_chromaticParams.x * (0.1 + 0.9 * mix(1.0, tdepth, clamp(u_chromaticParams.y, 0.0, 1.0)));
+        vec2 cctr = u_chromaticParams.zw;
+        vec2 pdir = (TexCoord - cctr) * vec2(u_viewportSize.x / max(u_viewportSize.y, 1.0), 1.0);
+        vec2 rdir = (length(pdir) > 1e-4) ? normalize(pdir) : vec2(1.0, 0.0);
+        float pxW = 1.0 / max(u_viewportSize.x, 1.0);
+        vec2 cOff = rdir * sm * 18.0 * pxW;
+        color = vec3(
+            texture2D(s_texColor, cuv + cOff).r * expMul,
+            color.g,
+            texture2D(s_texColor, cuv - cOff).b * expMul
+        );
+    }
+
+    // 5e. Volumetric-style screen fog (exponential in distance + height; linear HDR before tone map)
+    if (u_screenFog.w > 0.001) {
+        float sDepth = texture2D(s_texDepth, TexCoord).r;
+        if (sDepth < 0.999) {
+            vec3 wpos = reconstructWorldPos(TexCoord, sDepth);
+            float distF = 1.0 - exp(-max(u_screenFog.x, 0.0) * length(u_cameraPos.xyz - wpos) * 0.0025);
+            float hF = 0.0;
+            if (u_screenFog.y > 0.0001) {
+                hF = 1.0 - exp(-max(0.0, u_screenFog.z - wpos.y) * u_screenFog.y);
+            }
+            float fogAmt = clamp(max(distF, hF) * u_screenFog.w, 0.0, 1.0);
+            if (u_fogDither.x > 0.0001) {
+                float nz = random(floor(TexCoord * u_viewportSize.xy) + u_fogDither.x);
+                float j = (nz - 0.5) * 2.0 * u_fogDither.x;
+                fogAmt = clamp(fogAmt + j, 0.0, 1.0);
+            }
+            color = mix(u_fogColor.rgb, color, 1.0 - fogAmt);
         }
     }
 

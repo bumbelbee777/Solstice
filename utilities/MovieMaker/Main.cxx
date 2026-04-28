@@ -8,6 +8,7 @@
 #include "SmmGltf.hxx"
 #include "SmmFileOps.hxx"
 #include "SmmKeyframePresets.hxx"
+#include "SmmTimelineRangePresets.hxx"
 #include "SmmMg2DPanel.hxx"
 #include "SmmParallaxAuthoringPanel.hxx"
 #include "SmmSessionAuthoring.hxx"
@@ -54,7 +55,10 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
+#include <ctime>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -66,6 +70,7 @@
 #include <string_view>
 #include <vector>
 #include <cstdint>
+#include <functional>
 #include <cstring>
 
 #ifdef _WIN32
@@ -105,8 +110,10 @@ void DrainImports(Solstice::Parallax::DevSessionAssetResolver& resolver, std::ve
 Solstice::UtilityPluginHost::UtilityPluginHost g_MovieMakerPlugins;
 std::vector<std::pair<std::string, std::string>> g_MovieMakerPluginLoadErrors;
 
-static void ReloadSmmKeyframePresets(
-    const std::filesystem::path& smmJsonPath, std::vector<Smm::Keyframe::KeyframeCurvePreset>& out) {
+static std::vector<Smm::Keyframe::KeyframeCurvePreset> g_smmKeyframePresets;
+static std::vector<Smm::Timeline::RangePreset> g_smmRangePresets;
+
+static std::vector<std::filesystem::path> SmmBuildPresetSearchRoots(const std::filesystem::path& smmJsonPath) {
     std::vector<std::filesystem::path> roots;
     const char* bp = SDL_GetBasePath();
     if (bp) {
@@ -116,10 +123,20 @@ static void ReloadSmmKeyframePresets(
     if (!smmJsonPath.empty()) {
         roots.push_back(smmJsonPath.parent_path() / "presets");
     }
-    Smm::Keyframe::ScanCurvePresetsFromRoots(roots, out);
+    return roots;
 }
 
-static std::vector<Smm::Keyframe::KeyframeCurvePreset> g_smmKeyframePresets;
+static void ReloadSmmWorkspaceIniPresets(const std::filesystem::path& smmJsonPath) {
+    const std::vector<std::filesystem::path> r = SmmBuildPresetSearchRoots(smmJsonPath);
+    Smm::Keyframe::ScanCurvePresetsFromRoots(r, g_smmKeyframePresets);
+    Smm::Timeline::ScanRangePresetsFromRoots(r, g_smmRangePresets);
+}
+
+static void SmmOnReloadIniPresets(void* user) {
+    if (user) {
+        ReloadSmmWorkspaceIniPresets(*static_cast<std::filesystem::path*>(user));
+    }
+}
 
 void LoadMovieMakerPlugins() {
     g_MovieMakerPlugins.UnloadAll();
@@ -560,6 +577,49 @@ static void DrainPendingMovieMakerProject(char* exportPathBuf, size_t exportPath
     }
 }
 
+static std::string SmmBuildVideoExportFailureReport(const Solstice::MovieMaker::VideoExportParams& p, const std::string& errMsg,
+    const char* exceptionWhat) {
+    const std::time_t now = std::time(nullptr);
+    char tbuf[72] = {};
+    std::strftime(tbuf, sizeof(tbuf), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+    std::ostringstream o;
+    o << "SMM video export — failure report\n";
+    o << "Time (local): " << tbuf << "\n";
+    o << "Resolution: " << p.width << " x " << p.height << " @ " << p.fps << " fps\n";
+    o << "Ticks: start=" << p.startTick << " end=" << p.endTick << " (0 end = scene duration)\n";
+    o << "Output: " << p.outputPath << "\n";
+    o << "ffmpeg: " << p.ffmpegExecutable << "\n";
+    o << "Container: " << (p.container == Solstice::MovieMaker::VideoContainer::Mp4 ? "mp4" : "mov") << "\n";
+    o << "---\n"
+      << errMsg << "\n";
+    if (exceptionWhat && exceptionWhat[0] != '\0') {
+        o << "std::exception::what(): " << exceptionWhat << "\n";
+    }
+    return o.str();
+}
+
+static bool SmmRunVideoExportTry(Solstice::Parallax::ParallaxScene& scene, Solstice::Parallax::DevSessionAssetResolver& resolver,
+    SDL_Window* window, const Solstice::MovieMaker::VideoExportParams& p, std::string& errOut, std::string& detailOut,
+    const std::function<void(float)>& progress) {
+    errOut.clear();
+    detailOut.clear();
+    try {
+        const bool ok = Solstice::MovieMaker::ExportParallaxSceneToVideo(scene, resolver, window, p, errOut, progress);
+        if (!ok) {
+            detailOut = SmmBuildVideoExportFailureReport(p, errOut, nullptr);
+        }
+        return ok;
+    } catch (const std::exception& e) {
+        errOut = std::string("Unhandled C++ exception in video export: ") + e.what();
+        detailOut = SmmBuildVideoExportFailureReport(p, errOut, e.what());
+        return false;
+    } catch (...) {
+        errOut = "Unhandled non-standard C++ exception in video export.";
+        detailOut = SmmBuildVideoExportFailureReport(p, errOut, "(non-standard exception)");
+        return false;
+    }
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -613,6 +673,7 @@ int main(int argc, char* argv[]) {
     uint64_t videoEndTick = 0;
     bool compressPrlx = false;
     std::string videoExportLog;
+    std::string videoExportLastDetail;
     std::string ffmpegLog; // read-only display via LibUI multiline helper
     std::string smmStatus;
     LibUI::Graphics::PreviewTextureRgba smmScene3dPreviewTex{};
@@ -660,7 +721,7 @@ int main(int argc, char* argv[]) {
         std::string authErr;
         (void)Smm::Authoring::LoadSessionAuthoring(Smm::Authoring::AuthoringSidecarPathForProject(activeProjectPath), smmAuthoringSession, &authErr);
     }
-    ReloadSmmKeyframePresets(activeProjectPath, g_smmKeyframePresets);
+    ReloadSmmWorkspaceIniPresets(activeProjectPath);
 
     auto persistMovieMakerProjectFields = [&](std::string* error = nullptr) -> bool {
         MovieMakerProjectState pst;
@@ -892,7 +953,7 @@ int main(int argc, char* argv[]) {
             s_smmAuthProject = activeProjectPath;
             (void)Smm::Authoring::LoadSessionAuthoring(
                 Smm::Authoring::AuthoringSidecarPathForProject(activeProjectPath), smmAuthoringSession, nullptr);
-            ReloadSmmKeyframePresets(activeProjectPath, g_smmKeyframePresets);
+            ReloadSmmWorkspaceIniPresets(activeProjectPath);
         }
         if (pendingVideoImportPath) {
             const std::string p = std::move(*pendingVideoImportPath);
@@ -1612,6 +1673,7 @@ int main(int argc, char* argv[]) {
             ImGui::Checkbox("Preview raster maps on cubes", &smmWorkspace.previewBindMaterialMaps);
             ImGui::Checkbox("Fluid AABB overlay", &smmWorkspace.showFluidVolumeOverlay);
             ImGui::Checkbox("Framing guides (unified view)", &smmWorkspace.showViewportFramingGuides);
+            ImGui::SliderFloat("Schematic baked AO (low-poly)", &smmWorkspace.schematicBakedAO, 0.0f, 1.0f, "%.2f");
             ImGui::TextDisabled("Uses the same actor / selection filter as .smat above.");
             auto drawMapRow = [&](const char* inputId, const char* hint, char* pathBuf, size_t pathCap, const char* browseId,
                                   const char* dialogTitle) {
@@ -1682,8 +1744,10 @@ int main(int argc, char* argv[]) {
                 uv.onViewportPickElement = [&elementSelected](int elementIndex) { elementSelected = elementIndex; };
                 uv.showFluidVolumeOverlay = smmWorkspace.showFluidVolumeOverlay;
                 uv.showFramingGuides = smmWorkspace.showViewportFramingGuides;
+                uv.lowPolyAOPreview = smmWorkspace.schematicBakedAO;
                 uv.enginePreviewErrorSink = smmWorkspace.enginePreviewLastError;
                 uv.enginePreviewErrorSinkBytes = sizeof(smmWorkspace.enginePreviewLastError);
+                uv.cinematicView3D = &smmAuthoringSession.CinematicView;
                 Solstice::MovieMaker::UI::Panels::DrawUnifiedViewportPanel(window, *scene, resolver, timeTicks,
                     smmScene3dPreviewTex, viewportHeight - 8.0f, &smmWorkspace.particleEditorState, &smmParticleSpriteTex,
                     particleEmitter, smmWorkspace.mgOverlayAlpha, uv);
@@ -1701,6 +1765,8 @@ int main(int argc, char* argv[]) {
             smmSession.statusLine = &smmStatus;
             smmSession.keyframeEdit = &smmWorkspace.keyframeEditState;
             smmSession.keyframePresets = &g_smmKeyframePresets;
+            smmSession.reloadIniPresets = &SmmOnReloadIniPresets;
+            smmSession.reloadIniPresetsUser = &activeProjectPath;
             smmWorkspace.timelineState.playheadTick = timeTicks;
             Smm::Editing::BridgeSyncFromScene(*scene, smmWorkspace.timelineState, smmWorkspace.curveEditorState, smmBindings);
             if (LibUI::Timeline::DrawAnimationTimeline(
@@ -1726,6 +1792,49 @@ int main(int argc, char* argv[]) {
             ImGui::SameLine();
             if (ImGui::SmallButton("Nest: end = scene duration##nstd")) {
                 smmWorkspace.timelineState.nestedRangeEndTick = scene->GetTimelineDurationTicks();
+            }
+            if (!g_smmRangePresets.empty()) {
+                ImGui::TextUnformatted("Shot / act ranges (INI: presets/Timeline/ — optional; #include supported; project overrides shims)");
+                static int sSmmRng = 0;
+                sSmmRng = (std::clamp)(sSmmRng, 0, static_cast<int>(g_smmRangePresets.size()) - 1);
+                std::string rngItems;
+                for (const Smm::Timeline::RangePreset& p : g_smmRangePresets) {
+                    rngItems += (p.DisplayName.empty() ? p.Id : p.DisplayName);
+                    rngItems.push_back('\0');
+                }
+                rngItems.push_back('\0');
+                ImGui::SetNextItemWidth(300.f);
+                ImGui::Combo("##smmRngC", &sSmmRng, rngItems.c_str());
+                const Smm::Timeline::RangePreset& rng = g_smmRangePresets[static_cast<size_t>(sSmmRng)];
+                if (!rng.Description.empty() || !rng.Author.empty() || !rng.Tags.empty()) {
+                    if (!rng.Description.empty()) {
+                        ImGui::TextDisabled("%s", rng.Description.c_str());
+                    }
+                    if (!rng.Author.empty() || !rng.Tags.empty()) {
+                        std::string meta;
+                        if (!rng.Author.empty()) {
+                            meta = "Author: " + rng.Author;
+                        }
+                        if (!rng.Tags.empty()) {
+                            if (!meta.empty()) {
+                                meta += "  ·  ";
+                            }
+                            meta += "Tags: " + rng.Tags;
+                        }
+                        ImGui::TextDisabled("%s", meta.c_str());
+                    }
+                }
+                if (ImGui::SmallButton("Apply to nested sub-range##smmRng1")) {
+                    smmWorkspace.timelineState.nestedViewEnabled = true;
+                    smmWorkspace.timelineState.nestedRangeStartTick = rng.StartTick;
+                    smmWorkspace.timelineState.nestedRangeEndTick = rng.EndTick;
+                    LibUI::Timeline::TimelineClampNestedRange(smmWorkspace.timelineState);
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Jump playhead to range start##smmRng2")) {
+                    timeTicks = rng.StartTick;
+                    timeTicks = Solstice::MovieMaker::Workflow::ClampPlayhead(timeTicks, scene->GetTimelineDurationTicks());
+                }
             }
             smmPanelReg.DrawPanels();
             if (ImGui::Button("-1 tick")) {
@@ -1823,6 +1932,66 @@ int main(int argc, char* argv[]) {
                 ImGui::Separator();
                 ImGui::TextUnformatted("Export video (Parallax MG)");
                 ImGui::InputText("Video output file", videoExportPathBuf, sizeof(videoExportPathBuf));
+                ImGui::TextUnformatted("Presets (resolution / aspect)");
+                {
+                    const auto setWh = [&](uint32_t w, uint32_t h) {
+                        videoW = w;
+                        videoH = h;
+                    };
+                    if (ImGui::SmallButton("720p 16:9##vp")) {
+                        setWh(1280, 720);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("1080p 16:9##vp")) {
+                        setWh(1920, 1080);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("1440p 16:9##vp")) {
+                        setWh(2560, 1440);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("4K 16:9##vp")) {
+                        setWh(3840, 2160);
+                    }
+                }
+                {
+                    if (ImGui::SmallButton("9:16 1080 (vertical)##vp")) {
+                        videoW = 1080u;
+                        videoH = 1920u;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("9:16 720##vp")) {
+                        videoW = 720u;
+                        videoH = 1280u;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("9:16 4K##vp")) {
+                        videoW = 2160u;
+                        videoH = 3840u;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("1:1 1080##vp")) {
+                        videoW = 1080u;
+                        videoH = 1080u;
+                    }
+                }
+                if (ImGui::SmallButton("4:3 XGA 1024x768##vp")) {
+                    videoW = 1024u;
+                    videoH = 768u;
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Cinema 2.39:1 1920x800##vp")) {
+                    videoW = 1920u;
+                    videoH = 800u;
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Nominal 2D comp (Properties)##vp")) {
+                    videoW = static_cast<uint32_t>(std::max(16, static_cast<int>(std::lround(smmNominalCompW))));
+                    videoH = static_cast<uint32_t>(std::max(16, static_cast<int>(std::lround(smmNominalCompH))));
+                }
+                if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                    ImGui::SetTooltip("Uses the same nominal comp size as the MG 2D tools (authoring only; not scene bounds).");
+                }
         int vwI = static_cast<int>(videoW);
         int vhI = static_cast<int>(videoH);
         int vfpsI = static_cast<int>(videoFps);
@@ -1853,18 +2022,18 @@ int main(int argc, char* argv[]) {
             vep.endTick = videoEndTick;
             vep.container = videoMp4 ? Solstice::MovieMaker::VideoContainer::Mp4 : Solstice::MovieMaker::VideoContainer::Mov;
             std::string err;
+            std::string detail;
             videoExportLog.clear();
+            videoExportLastDetail.clear();
             std::string lastCmdDiag = "ffmpeg: \"" + std::string(ffmpegExeBuf) + "\" (rawvideo pipe → " + std::string(videoExportPathBuf) + ")";
-            const bool ok = Solstice::MovieMaker::ExportParallaxSceneToVideo(*scene, resolver, window, vep, err,
+            const bool ok = SmmRunVideoExportTry(*scene, resolver, window, vep, err, detail,
                 [&](float pr) { videoExportLog = "Encoding… " + std::to_string(static_cast<int>(pr * 100.f)) + "%\n" + lastCmdDiag + "\n"; });
             if (!ok) {
-                videoExportLog = lastCmdDiag + "\n\n" + err;
+                videoExportLastDetail = detail.empty() ? SmmBuildVideoExportFailureReport(vep, err, nullptr) : detail;
+                videoExportLog = lastCmdDiag + "\n\n" + err + "\n\n---\n" + videoExportLastDetail;
             } else {
-                videoExportLog = "Export finished: " + std::string(videoExportPathBuf);
-                if (!err.empty()) {
-                    videoExportLog += "\n\nNote:\n" + err;
-                }
-                videoExportLog += "\n";
+                videoExportLastDetail.clear();
+                videoExportLog = "Export finished: " + std::string(videoExportPathBuf) + "\n";
                 MovieMakerProjectState pst;
                 pst.exportPath = exportPathBuf;
                 pst.importPath = importPathBuf;
@@ -1909,14 +2078,17 @@ int main(int argc, char* argv[]) {
                 ImGui::PopID();
             }
             if (ImGui::Button("Run render queue (sequential)##rq")) {
+                videoExportLastDetail.clear();
                 for (const Solstice::MovieMaker::VideoExportParams& job : smmVideoRenderQueue) {
                     std::string err2;
-                    const bool runOk = Solstice::MovieMaker::ExportParallaxSceneToVideo(*scene, resolver, window, job, err2,
+                    std::string det2;
+                    const bool runOk = SmmRunVideoExportTry(*scene, resolver, window, job, err2, det2,
                         [&](float pr) {
                             videoExportLog = "Queue: " + job.outputPath + " — " + std::to_string(static_cast<int>(pr * 100.f)) + "%\n";
                         });
                     if (!runOk) {
-                        videoExportLog = "Render queue failed: " + job.outputPath + "\n" + err2;
+                        videoExportLastDetail = det2.empty() ? SmmBuildVideoExportFailureReport(job, err2, nullptr) : det2;
+                        videoExportLog = "Render queue failed: " + job.outputPath + "\n" + err2 + "\n\n---\n" + videoExportLastDetail;
                         break;
                     }
                 }
@@ -1925,6 +2097,17 @@ int main(int argc, char* argv[]) {
                     videoExportLog = "Render queue completed.\n" + videoExportLog;
                 }
             }
+        }
+        if (ImGui::Button("Copy video export log##vecpy")) {
+            ImGui::SetClipboardText(videoExportLog.c_str());
+        }
+        ImGui::SameLine();
+        if (!videoExportLastDetail.empty()) {
+            if (ImGui::Button("Copy failure report (full detail)##vecpy2")) {
+                ImGui::SetClipboardText(videoExportLastDetail.c_str());
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("(last failure)");
         }
         LibUI::Widgets::InputTextMultiline("##videoexportlog", videoExportLog, ImVec2(-1, 120), ImGuiInputTextFlags_ReadOnly);
 

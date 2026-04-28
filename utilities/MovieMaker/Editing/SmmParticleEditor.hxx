@@ -21,6 +21,10 @@ struct ParticleInstance {
     float age{0.f};
     float lifetime{1.f};
     float size{0.1f};
+    /// When ribbon trails are enabled, recent world positions (oldest at 0) for the unified viewport.
+    static constexpr int kMaxRibbon = 12;
+    Solstice::Math::Vec3 ribbon[kMaxRibbon]{};
+    uint8_t ribbonCount{0};
 };
 
 struct ParticleEditorState {
@@ -52,6 +56,9 @@ struct ParticleEditorState {
     /// When set, unified viewport draws this raster per particle (tinted by color start/end) instead of a disk.
     bool useImportedSprite{false};
     char particleSpritePath[768]{};
+    /// CPU ribbon: line strips in the unified viewport (not Parallax-sim).
+    bool ribbonTrails{false};
+    int ribbonSegments{8};
     std::vector<ParticleInstance> particles;
     float accum{0.f};
 };

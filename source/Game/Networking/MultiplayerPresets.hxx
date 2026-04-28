@@ -99,6 +99,8 @@ public:
     static MultiplayerSessionConfig GetLanParty();
     static MultiplayerSessionConfig GetCompetitive();
     static MultiplayerSessionConfig GetCooperative();
+    /// Tuned for real-time space combat: two teams, responsive ping/heartbeat, moderate chat.
+    static MultiplayerSessionConfig GetWarsOfHeaven();
 };
 
 namespace MultiplayerProtocol {

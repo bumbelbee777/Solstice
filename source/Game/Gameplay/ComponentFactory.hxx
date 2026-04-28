@@ -6,9 +6,11 @@
 #include "../../Entity/Name.hxx"
 #include "../../Entity/Kind.hxx"
 #include "../../Entity/PlayerTag.hxx"
+#include "../../Entity/MatchGameplay.hxx"
 #include "../../Physics/Dynamics/RigidBody.hxx"
 #include "../../Math/Vector.hxx"
 #include "../../Math/Quaternion.hxx"
+#include <cstdint>
 #include <string>
 
 namespace Solstice::Game {
@@ -18,6 +20,11 @@ public:
     // Player entity creation
     static ECS::EntityId CreatePlayer(ECS::Registry& Registry, const Math::Vec3& Position = Math::Vec3(0, 0, 0),
                                       const std::string& Name = "Player");
+
+    /// Same as `CreatePlayer` plus `MatchPlayerIdComponent` for FFA / match scoring.
+    static ECS::EntityId CreatePlayerWithMatchId(ECS::Registry& Registry, std::uint32_t MatchPlayerId,
+                                                 const Math::Vec3& Position = Math::Vec3(0, 0, 0),
+                                                 const std::string& Name = "Player");
 
     // Enemy entity creation
     static ECS::EntityId CreateEnemy(ECS::Registry& Registry, const Math::Vec3& Position = Math::Vec3(0, 0, 0),
