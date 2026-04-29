@@ -81,11 +81,18 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     endif()
 endif()
 
-# MSVC static analysis (if available)
-if(MSVC)
-    target_compile_options(ThreadSafetyTest PRIVATE
-        /analyze
-    )
+# MSVC static analysis can be memory-heavy on shared CI runners.
+# Keep it available for local diagnosis, but default it off in CI.
+set(SOLSTICE_ENABLE_MSVC_ANALYZE_DEFAULT ON)
+if(DEFINED ENV{CI})
+    set(SOLSTICE_ENABLE_MSVC_ANALYZE_DEFAULT OFF)
+endif()
+option(SOLSTICE_ENABLE_MSVC_ANALYZE
+    "Enable MSVC /analyze for ThreadSafetyTest"
+    ${SOLSTICE_ENABLE_MSVC_ANALYZE_DEFAULT}
+)
+if(MSVC AND SOLSTICE_ENABLE_MSVC_ANALYZE)
+    target_compile_options(ThreadSafetyTest PRIVATE /analyze)
 endif()
 
 # Math Safety Test
