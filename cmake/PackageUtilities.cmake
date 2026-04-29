@@ -26,6 +26,8 @@ function(solstice_utility_postbuild_package _target _fst_relpath)
             "${_script}"
             --fst
             "${_fst}"
+            --root
+            "$<TARGET_FILE_DIR:${_target}>"
             --build-dir
             "${CMAKE_BINARY_DIR}"
             --format

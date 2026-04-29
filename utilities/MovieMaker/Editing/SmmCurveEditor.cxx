@@ -66,7 +66,7 @@ static void TimeValueFromScreen(ImVec2 p, const ImVec2& plotMin, const ImVec2& p
 
 static float KeyTime01ToPlotX(
     const LibUI::CurveEditor::CurveKey& k, uint64_t fullDur, const LibUI::Timeline::TimelineState& tl) {
-    const uint64_t dtot = (std::max)(fullDur, 1ull);
+    const uint64_t dtot = (std::max)(fullDur, uint64_t{1});
     const uint64_t tick = static_cast<uint64_t>(std::llround(static_cast<double>(k.time) * static_cast<double>(dtot)));
     if (!tl.nestedViewEnabled) {
         return k.time;
@@ -75,7 +75,7 @@ static float KeyTime01ToPlotX(
         return k.time;
     }
     const uint64_t lo = tl.nestedRangeStartTick;
-    const uint64_t span = (std::max)(tl.nestedRangeEndTick - lo, 1ull);
+    const uint64_t span = (std::max)(tl.nestedRangeEndTick - lo, uint64_t{1});
     if (tick <= lo) {
         return 0.f;
     }
@@ -87,13 +87,13 @@ static float KeyTime01ToPlotX(
 
 static uint64_t PlotXToSceneTick(
     float plotT01, uint64_t fullDur, const LibUI::Timeline::TimelineState& tl) {
-    const uint64_t dtot = (std::max)(fullDur, 1ull);
+    const uint64_t dtot = (std::max)(fullDur, uint64_t{1});
     plotT01 = std::clamp(plotT01, 0.f, 1.f);
     if (!tl.nestedViewEnabled || tl.nestedRangeEndTick <= tl.nestedRangeStartTick) {
         return static_cast<uint64_t>(std::llround(static_cast<double>(plotT01) * static_cast<double>(dtot)));
     }
     const uint64_t lo = tl.nestedRangeStartTick;
-    const uint64_t span = (std::max)(tl.nestedRangeEndTick - lo, 1ull);
+    const uint64_t span = (std::max)(tl.nestedRangeEndTick - lo, uint64_t{1});
     uint64_t tick = lo + static_cast<uint64_t>(std::llround(static_cast<double>(plotT01) * static_cast<double>(span)));
     if (tick > dtot) {
         tick = dtot;
@@ -106,13 +106,13 @@ static float PlayheadToPlotT01(
     if (!timeTicks) {
         return 0.f;
     }
-    const uint64_t dtot = (std::max)(fullDur, 1ull);
+    const uint64_t dtot = (std::max)(fullDur, uint64_t{1});
     const uint64_t pt = (std::min)(*timeTicks, dtot);
     if (!tl.nestedViewEnabled || tl.nestedRangeEndTick <= tl.nestedRangeStartTick) {
         return static_cast<float>(static_cast<double>(pt) / static_cast<double>(dtot));
     }
     const uint64_t lo = tl.nestedRangeStartTick;
-    const uint64_t span = (std::max)(tl.nestedRangeEndTick - lo, 1ull);
+    const uint64_t span = (std::max)(tl.nestedRangeEndTick - lo, uint64_t{1});
     if (pt <= lo) {
         return 0.f;
     }
@@ -557,7 +557,7 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
     vmin = vcenter - vhalf;
     vmax = vcenter + vhalf;
 
-    const uint64_t dur = (std::max)(timeline.durationTicks, 1ull);
+    const uint64_t dur = (std::max)(timeline.durationTicks, uint64_t{1});
     for (int g = 0; g <= 4; ++g) {
         const float gx = plotMin.x + plotSize.x * (static_cast<float>(g) / 4.f);
         dl->AddLine(ImVec2(gx, plotMin.y), ImVec2(gx, plotMax.y), IM_COL32(50, 52, 64, 120), 1.f);
@@ -854,7 +854,7 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
                         nt = 0;
                     }
                     uint64_t ntu = static_cast<uint64_t>(nt);
-                    ntu = (std::min)(ntu, (std::max)(dur, 1ull));
+                    ntu = (std::min)(ntu, (std::max)(dur, uint64_t{1}));
                     (void)BridgeAddKeyframeAtTickEasing(
                         *ctx.scene, binding, ntu, v, static_cast<Solstice::Parallax::EasingType>(re), errB);
                 }
@@ -932,7 +932,7 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
                         nt = 0;
                     }
                     uint64_t ntu = static_cast<uint64_t>(nt);
-                    ntu = (std::min)(ntu, (std::max)(dur, 1ull));
+                    ntu = (std::min)(ntu, (std::max)(dur, uint64_t{1}));
                     (void)BridgeAddKeyframeAtTickEasing(
                         *ctx.scene, binding, ntu, v, static_cast<Solstice::Parallax::EasingType>(re), errB2);
                 }
