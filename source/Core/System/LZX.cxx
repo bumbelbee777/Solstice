@@ -5,7 +5,7 @@
 namespace Solstice::Core {
 
 namespace {
-inline bool ReadLength(const std::byte*& src, const std::byte* end, uint32_t& out) {
+inline bool ReadLengthExtra(const std::byte*& src, const std::byte* end, uint32_t& out) {
     out = 0;
     uint8_t b;
     do {
@@ -35,7 +35,11 @@ size_t LZXDecompressInto(std::span<const std::byte> compressed, std::span<std::b
     while (src < srcEnd && dst < dstEnd) {
         uint8_t token = static_cast<uint8_t>(*src++);
         uint32_t literalLen = token >> 4;
-        if (literalLen == 15 && !ReadLength(src, srcEnd, literalLen)) return 0;
+        if (literalLen == 15) {
+            uint32_t extra = 0;
+            if (!ReadLengthExtra(src, srcEnd, extra)) return 0;
+            literalLen += extra;
+        }
         if (src + literalLen > srcEnd || dst + literalLen > dstEnd) return 0;
         std::memcpy(dst, src, literalLen);
         src += literalLen;
@@ -50,8 +54,9 @@ size_t LZXDecompressInto(std::span<const std::byte> compressed, std::span<std::b
 
         uint32_t matchLen = (token & 0x0Fu) + 4;
         if (matchLen == 19) {
-            if (!ReadLength(src, srcEnd, matchLen)) return 0;
-            matchLen += 4;
+            uint32_t extra = 0;
+            if (!ReadLengthExtra(src, srcEnd, extra)) return 0;
+            matchLen += extra;
         }
         if (offset > static_cast<size_t>(dst - output.data())) return 0;
         std::byte* matchSrc = dst - offset;
