@@ -8,6 +8,8 @@
 #include <Render/Post/PostProcessing.hxx>
 #include <Render/Scene/Skybox.hxx>
 #include <Render/Assets/TextureRegistry.hxx>
+#include <Render/Scene/BatchRenderer.hxx>
+#include <Render/Scene/SpatialIndex.hxx>
 #include <Physics/Lighting/LightSource.hxx>
 #include <bgfx/bgfx.h>
 #include <vector>
@@ -50,6 +52,8 @@ public:
 
     // Set light sources for rendering
     void SetLightSources(const std::vector<Physics::LightSource>& lights);
+    void SetBatchRenderer(BatchRenderer* batcher) { m_BatchRenderer = batcher; }
+    void SetSpatialIndex(SpatialIndex* spatialIndex) { m_SpatialIndex = spatialIndex; }
 
     // Configuration
     void SetOptimizeStaticBuffers(bool enable) { m_OptimizeStaticBuffers = enable; }
@@ -86,6 +90,8 @@ private:
     bool m_SceneRasterMsaa = true;
     bool m_ProjectionJitterEnabled = true;
     std::vector<Physics::LightSource> m_Lights;
+    BatchRenderer* m_BatchRenderer = nullptr;
+    SpatialIndex* m_SpatialIndex = nullptr;
 
     // Selection and hover state
     std::set<SceneObjectID> m_SelectedObjects;

@@ -246,6 +246,20 @@ SoftwareRenderer::SoftwareRenderer(int Width, int Height, int TileSize, SDL_Wind
     } else {
         SIMPLE_LOG("SoftwareRenderer: CPU raytracing disabled (offscreen/preview build)");
     }
+
+    // Hybrid renderer components
+    m_HybridScheduler = std::make_unique<HybridScheduler>();
+    m_HybridScheduler->Initialize();
+    m_BatchRenderer = std::make_unique<BatchRenderer>();
+    m_SpatialIndex = std::make_unique<SpatialIndex>();
+    m_MeshCache = std::make_unique<LZXCache<Mesh>>();
+    if (m_SceneRenderer) {
+        m_SceneRenderer->SetBatchRenderer(m_BatchRenderer.get());
+        m_SceneRenderer->SetSpatialIndex(m_SpatialIndex.get());
+    }
+    if (m_Raytracing) {
+        m_Raytracing->SetHybridScheduler(m_HybridScheduler.get());
+    }
 }
 
 SoftwareRenderer::~SoftwareRenderer() {
@@ -645,6 +659,12 @@ void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam) {
     // Reset per-frame allocator (optimized: reuse buffer, just reset offset)
     m_FrameAllocator.Reset();
 
+    if (m_HybridModeEnabled && m_SpatialIndex) {
+        m_SpatialIndex->SetScene(&SceneGraph);
+        m_SpatialIndex->QueryVisible(Cam, m_PreallocatedVisibleObjects);
+        m_Stats.VisibleObjects = static_cast<uint32_t>(m_PreallocatedVisibleObjects.size());
+    }
+
     // Clear any pending jobs from previous frame
     WaitForJobs();
 
@@ -693,6 +713,14 @@ void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam) {
 
     m_Stats.TrianglesSubmitted = TotalTriangles;
     m_Stats.TrianglesRendered = TotalTriangles;
+
+    if (m_HybridModeEnabled && m_MLEnabled && m_HybridScheduler) {
+        DrawFeature feature{};
+        feature.ScreenArea = static_cast<float>(TotalTriangles);
+        feature.WasVisibleLastFrame = m_Stats.VisibleObjects > 0 ? 1.0f : 0.0f;
+        feature.MeshletSize = static_cast<float>(m_CpuTileSize);
+        m_HybridScheduler->PredictGpuProbability(feature);
+    }
 
     if (m_VolumetricLighting) {
         Math::Matrix4 View = Cam.GetViewMatrix();

@@ -1,5 +1,5 @@
 #include "Decompress.hxx"
-#include "Core/System/LZ4.hxx"
+#include "Core/System/LZX.hxx"
 #include "Core/Debug/Debug.hxx"
 #include <zstd.h>
 #include <cstring>
@@ -17,8 +17,8 @@ std::vector<std::byte> DecompressAsset(
         std::memcpy(out.data(), compressed.data(), compressed.size());
         return out;
     }
-    case CompressionType::LZ4: {
-        return Core::LZ4Decompress(compressed, uncompressedSize);
+    case CompressionType::LZX: {
+        return Core::LZXDecompress(compressed, uncompressedSize);
     }
     case CompressionType::Zstd: {
         std::vector<std::byte> out(uncompressedSize);

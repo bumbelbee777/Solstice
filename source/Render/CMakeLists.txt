@@ -7,6 +7,7 @@ add_library(Render STATIC
     Framebuffers/Framebuffer.cxx
     Framebuffers/FramebufferRenderTarget.cxx
     SoftwareRenderer.cxx
+    DefaultRenderer.cxx
     Post/PostProcessing.cxx
     Lighting/Raytracing.cxx
     Lighting/VolumetricLighting.cxx
@@ -18,10 +19,15 @@ add_library(Render STATIC
     Assets/TextureRegistry.cxx
     Context/RenderPipeline.cxx
     Scene/SceneRenderer.cxx
+    Scene/SpatialIndex.cxx
+    Scene/BatchRenderer.cxx
     Lighting/ShadowRenderer.cxx
     Framebuffers/FramebufferManager.cxx
     Post/HDRProcessor.cxx
     Assets/ShaderUniforms.cxx
+    Assets/MeshletBuilder.cxx
+    Assets/LZXCache.cxx
+    Context/HybridScheduler.cxx
 )
 target_include_directories(Render PUBLIC ${SOURCE_DIR})
 target_link_libraries(Render PUBLIC Core Math Arzachel Physics bimg bx)

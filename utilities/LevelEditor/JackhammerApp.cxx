@@ -890,7 +890,7 @@ static bool JackhammerExportPathTableToRelic(const SmfMap& map, const std::files
         in.Hash = row.second;
         in.TypeTag = AssetTypeTag::Unknown;
         in.ClusterId = 0;
-        in.Compression = CompressionType::LZ4;
+        in.Compression = CompressionType::LZX;
         in.Uncompressed = std::move(bytes);
         in.LogicalPath = row.first;
         inputs.push_back(std::move(in));
@@ -2375,8 +2375,9 @@ int RunApp(int argc, char** argv) {
             ImGui::Separator();
         }
 
-        constexpr float kJhBottomBarH = 200.f;
-        ImGui::BeginChild("jh_main_workspace", ImVec2(0.f, -kJhBottomBarH), false);
+        constexpr float kJhBottomBarH = 86.f;
+        ImGui::BeginChild(
+            "jh_main_workspace", ImVec2(0.f, -kJhBottomBarH), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         const float jhLeftW = 272.f;
         const float jhRightW = 308.f;
         const float jhGap = ImGui::GetStyle().ItemSpacing.x;
@@ -2581,7 +2582,11 @@ int RunApp(int argc, char** argv) {
         ImGui::SameLine();
 
         ImGui::BeginChild("jh_center_col", ImVec2(jhCenterW, 0), false);
-        ImGui::BeginChild("jh_vp_toolbar", ImVec2(0, 196), true);
+        float jhToolbarH = 76.f;
+        if (s_jhPreviewUseSmat) {
+            jhToolbarH += s_jhPreviewBindMaterialMaps ? 112.f : 36.f;
+        }
+        ImGui::BeginChild("jh_vp_toolbar", ImVec2(0, jhToolbarH), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         if (ImGui::Button("Persp##jhvp")) {
             s_engineViewportNav.projection = LibUI::Viewport::OrbitProjectionMode::Perspective;
         }
@@ -2642,9 +2647,14 @@ int RunApp(int argc, char** argv) {
         ImGui::SameLine();
         ImGui::DragInt("Grid lines##jhgridhalf", &s_jhGridHalfCount, 0.5f, 4, 128);
         ImGui::Separator();
-        ImGui::TextUnformatted("Material preview (EditorEnginePreview)");
+        ImGui::Checkbox("Preview .smat##jh", &s_jhPreviewUseSmat);
+        ImGui::SameLine();
+        ImGui::Checkbox("Selected entity only##jhsmatsel", &s_jhPreviewSmatSelectedOnly);
+        ImGui::SameLine();
+        ImGui::Checkbox("Optional maps##jhmaps", &s_jhPreviewBindMaterialMaps);
         if (s_jhEnginePreviewDisabledByFault) {
-            ImGui::TextColored(ImVec4(1.f, 0.55f, 0.3f, 1.f), "Engine preview disabled for this session after a native fault.");
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(1.f, 0.55f, 0.3f, 1.f), "preview faulted");
             ImGui::SameLine();
             if (ImGui::SmallButton("Re-enable##jhprevreenable")) {
                 s_jhEnginePreviewDisabledByFault = false;
@@ -2654,73 +2664,69 @@ int RunApp(int argc, char** argv) {
                 jackhammerEnginePreviewTex.Destroy();
             }
         }
-        ImGui::Checkbox("Preview .smat##jh", &s_jhPreviewUseSmat);
-        ImGui::SameLine();
-        ImGui::Checkbox("Selected entity only##jhsmatsel", &s_jhPreviewSmatSelectedOnly);
-        ImGui::SameLine();
-        ImGui::Checkbox("Optional maps##jhmaps", &s_jhPreviewBindMaterialMaps);
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 88.f);
-        ImGui::InputTextWithHint("##jhsmatpath", ".smat path (map-relative or absolute)", s_jhPreviewSmatBuf,
-            sizeof(s_jhPreviewSmatBuf));
-        ImGui::SameLine();
-        if (ImGui::Button("Browse##jhsmat")) {
-            LibUI::FileDialogs::ShowOpenFile(
-                window, "Solstice material (.smat)",
-                [&](std::optional<std::string> path) {
-                    if (!path || path->empty()) {
-                        return;
-                    }
-                    const std::string rel = ToMapRelativePathIfPossible(*path, currentPath);
-                    std::snprintf(s_jhPreviewSmatBuf, sizeof(s_jhPreviewSmatBuf), "%s", rel.c_str());
-                },
-                kSmatFilters);
-        }
-        if (s_jhPreviewBindMaterialMaps) {
-            ImGui::TextDisabled("Maps override slots for this preview pass (albedo / normal / roughness); paths like diffuse.");
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 72.f);
-            ImGui::InputTextWithHint("##jhmapalb", "Albedo map (optional)", s_jhPreviewMapAlbedo, sizeof(s_jhPreviewMapAlbedo));
+        if (s_jhPreviewUseSmat) {
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 88.f);
+            ImGui::InputTextWithHint("##jhsmatpath", ".smat path (map-relative or absolute)", s_jhPreviewSmatBuf,
+                sizeof(s_jhPreviewSmatBuf));
             ImGui::SameLine();
-            if (ImGui::SmallButton("…##jhmalb")) {
+            if (ImGui::Button("Browse##jhsmat")) {
                 LibUI::FileDialogs::ShowOpenFile(
-                    window, "Preview albedo map",
+                    window, "Solstice material (.smat)",
                     [&](std::optional<std::string> path) {
                         if (!path || path->empty()) {
                             return;
                         }
                         const std::string rel = ToMapRelativePathIfPossible(*path, currentPath);
-                        std::snprintf(s_jhPreviewMapAlbedo, sizeof(s_jhPreviewMapAlbedo), "%s", rel.c_str());
+                        std::snprintf(s_jhPreviewSmatBuf, sizeof(s_jhPreviewSmatBuf), "%s", rel.c_str());
                     },
-                    kJhImageFileFilters);
+                    kSmatFilters);
             }
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 72.f);
-            ImGui::InputTextWithHint("##jhmapnrm", "Normal map (optional)", s_jhPreviewMapNormal, sizeof(s_jhPreviewMapNormal));
-            ImGui::SameLine();
-            if (ImGui::SmallButton("…##jhmnrm")) {
-                LibUI::FileDialogs::ShowOpenFile(
-                    window, "Preview normal map",
-                    [&](std::optional<std::string> path) {
-                        if (!path || path->empty()) {
-                            return;
-                        }
-                        const std::string rel = ToMapRelativePathIfPossible(*path, currentPath);
-                        std::snprintf(s_jhPreviewMapNormal, sizeof(s_jhPreviewMapNormal), "%s", rel.c_str());
-                    },
-                    kJhImageFileFilters);
-            }
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 72.f);
-            ImGui::InputTextWithHint("##jhmaprgh", "Roughness map (optional)", s_jhPreviewMapRough, sizeof(s_jhPreviewMapRough));
-            ImGui::SameLine();
-            if (ImGui::SmallButton("…##jhmrgh")) {
-                LibUI::FileDialogs::ShowOpenFile(
-                    window, "Preview roughness map",
-                    [&](std::optional<std::string> path) {
-                        if (!path || path->empty()) {
-                            return;
-                        }
-                        const std::string rel = ToMapRelativePathIfPossible(*path, currentPath);
-                        std::snprintf(s_jhPreviewMapRough, sizeof(s_jhPreviewMapRough), "%s", rel.c_str());
-                    },
-                    kJhImageFileFilters);
+            if (s_jhPreviewBindMaterialMaps) {
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 72.f);
+                ImGui::InputTextWithHint("##jhmapalb", "Albedo map (optional)", s_jhPreviewMapAlbedo, sizeof(s_jhPreviewMapAlbedo));
+                ImGui::SameLine();
+                if (ImGui::SmallButton("…##jhmalb")) {
+                    LibUI::FileDialogs::ShowOpenFile(
+                        window, "Preview albedo map",
+                        [&](std::optional<std::string> path) {
+                            if (!path || path->empty()) {
+                                return;
+                            }
+                            const std::string rel = ToMapRelativePathIfPossible(*path, currentPath);
+                            std::snprintf(s_jhPreviewMapAlbedo, sizeof(s_jhPreviewMapAlbedo), "%s", rel.c_str());
+                        },
+                        kJhImageFileFilters);
+                }
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 72.f);
+                ImGui::InputTextWithHint("##jhmapnrm", "Normal map (optional)", s_jhPreviewMapNormal, sizeof(s_jhPreviewMapNormal));
+                ImGui::SameLine();
+                if (ImGui::SmallButton("…##jhmnrm")) {
+                    LibUI::FileDialogs::ShowOpenFile(
+                        window, "Preview normal map",
+                        [&](std::optional<std::string> path) {
+                            if (!path || path->empty()) {
+                                return;
+                            }
+                            const std::string rel = ToMapRelativePathIfPossible(*path, currentPath);
+                            std::snprintf(s_jhPreviewMapNormal, sizeof(s_jhPreviewMapNormal), "%s", rel.c_str());
+                        },
+                        kJhImageFileFilters);
+                }
+                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 72.f);
+                ImGui::InputTextWithHint("##jhmaprgh", "Roughness map (optional)", s_jhPreviewMapRough, sizeof(s_jhPreviewMapRough));
+                ImGui::SameLine();
+                if (ImGui::SmallButton("…##jhmrgh")) {
+                    LibUI::FileDialogs::ShowOpenFile(
+                        window, "Preview roughness map",
+                        [&](std::optional<std::string> path) {
+                            if (!path || path->empty()) {
+                                return;
+                            }
+                            const std::string rel = ToMapRelativePathIfPossible(*path, currentPath);
+                            std::snprintf(s_jhPreviewMapRough, sizeof(s_jhPreviewMapRough), "%s", rel.c_str());
+                        },
+                        kJhImageFileFilters);
+                }
             }
         }
         ImGui::EndChild();
@@ -5836,14 +5842,10 @@ int RunApp(int argc, char** argv) {
         ImGui::EndChild();
         ImGui::EndChild();
 
-        ImGui::BeginChild("jh_bottom_bar", ImVec2(0.f, kJhBottomBarH), true, ImGuiWindowFlags_None);
-        ImGui::TextUnformatted("Jackhammer — .smf v1");
+        ImGui::BeginChild(
+            "jh_bottom_bar", ImVec2(0.f, kJhBottomBarH), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         if (ImGui::Button("New##jhbot")) {
             requestNew();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Template##jhbot")) {
-            ApplyNewMapTemplate(map, currentPath, lastHeader, selectedEntity, dirty, status);
         }
         ImGui::SameLine();
         if (ImGui::Button("Open…##jhbot")) {
@@ -5865,16 +5867,6 @@ int RunApp(int argc, char** argv) {
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("Save As…##jhbot")) {
-            LibUI::FileDialogs::ShowSaveFile(
-                window, "Save map as", [](std::optional<std::string> path) {
-                    if (path) {
-                        QueueSavePath(std::move(*path));
-                    }
-                },
-                kSmfFilters);
-        }
-        ImGui::SameLine();
         ImGui::Checkbox("ZSTD##jhbot", &compressSmf);
         ImGui::SameLine();
         ImGui::Checkbox("Watch##jhbot", &watchMapFile);
@@ -5883,73 +5875,95 @@ int RunApp(int argc, char** argv) {
             runValidate();
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("F7");
-        ImGui::SameLine();
         if (ImGui::Button("Apply DLL##jhbot")) {
             runApplyGameplay();
         }
         ImGui::SameLine();
-        ImGui::TextDisabled("F8");
+        if (ImGui::Button("Details##jhbot")) {
+            ImGui::OpenPopup("JH_BottomDetails");
+        }
+
+        if (ImGui::BeginPopup("JH_BottomDetails")) {
+            if (ImGui::Button("New from template##jhbot")) {
+                ApplyNewMapTemplate(map, currentPath, lastHeader, selectedEntity, dirty, status);
+            }
+            if (ImGui::Button("Save As…##jhbot")) {
+                LibUI::FileDialogs::ShowSaveFile(
+                    window, "Save map as", [](std::optional<std::string> path) {
+                        if (path) {
+                            QueueSavePath(std::move(*path));
+                        }
+                    },
+                    kSmfFilters);
+            }
+            ImGui::Separator();
+            if (ImGui::CollapsingHeader("Validation##jhbot")) {
+                ImGui::TextWrapped("LibSmf: %s", lastValidateCodec.c_str());
+                ImGui::TextWrapped("Engine DLL: %s", lastValidateEngine.c_str());
+                ImGui::TextWrapped("Engine apply: %s", lastApplyGameplayEngine.c_str());
+                {
+                    std::string clip;
+                    clip += "LibSmf: ";
+                    clip += lastValidateCodec;
+                    clip += "\nEngine DLL: ";
+                    clip += lastValidateEngine;
+                    clip += "\nEngine apply: ";
+                    clip += lastApplyGameplayEngine;
+                    clip += "\n";
+                    if (!lastValidateStructure.empty()) {
+                        clip += "Map structure:\n";
+                        for (const auto& line : lastValidateStructure) {
+                            clip += line;
+                            clip += '\n';
+                        }
+                    }
+                    if (LibUI::Tools::CopyTextButton("jh_val_clip_bot", clip.c_str(), "Copy report")) {
+                        status = "Validation report copied.";
+                    }
+                }
+                if (!lastValidateStructure.empty()) {
+                    for (const auto& line : lastValidateStructure) {
+                        ImGui::BulletText("%s", line.c_str());
+                    }
+                }
+            }
+            if (ImGui::CollapsingHeader("Map overview##jhbot")) {
+                const bool hasWorldHooks = !map.WorldAuthoringHooks.ScriptPath.empty()
+                    || !map.WorldAuthoringHooks.CutscenePath.empty() || !map.WorldAuthoringHooks.WorldSpaceUiPath.empty();
+                ImGui::Text(
+                    "Entities: %zu | Paths: %zu | BSP: %s | Octree: %s | Lights: %zu | Acoustic: %zu | Fluids: %zu | Skybox: %s | "
+                    "Hooks: %s",
+                    map.Entities.size(), map.PathTable.size(), map.Bsp.has_value() ? "yes" : "no",
+                    map.Octree.has_value() ? "yes" : "no", map.AuthoringLights.size(), map.AcousticZones.size(),
+                    map.FluidVolumes.size(), map.Skybox.has_value() ? (map.Skybox->Enabled ? "on" : "off") : "—",
+                    hasWorldHooks ? "paths" : "—");
+            }
+            if (ImGui::CollapsingHeader("Recovery (autosave)##jhbot")) {
+                ImGui::TextDisabled("While the map is dirty, periodic .smf snapshots are written to the recovery store (next to the executable).");
+                int jhRi = static_cast<int>(jhRecoveryIntervalSecU32);
+                if (ImGui::SliderInt("Interval (sec)", &jhRi, 10, 600)) {
+                    jhRecoveryIntervalSecU32 = static_cast<uint32_t>(jhRi);
+                }
+                ImGui::TextDisabled("File -> Write recovery snapshot now for a manual on-demand write.");
+            }
+            LibUI::Tools::DrawRecentPathsCollapsible(
+                "Recent##jhbot", ImGuiTreeNodeFlags_None, nullptr, JackhammerOpenRecentPath);
+            ImGui::Text("Sections (bytes): str=%u geom=%u bsp=%u ent=%u sec=%u phys=%u script=%u trig=%u path=%u",
+                lastHeader.StringTableSize, lastHeader.GeometrySize, lastHeader.BspSize, lastHeader.EntitySize,
+                lastHeader.SectorSize, lastHeader.PhysicsSize, lastHeader.ScriptSize, lastHeader.TriggerSize,
+                lastHeader.PathTableSize);
+            ImGui::EndPopup();
+        }
+
         if (currentPath) {
             ImGui::Text("File: %s", currentPath->c_str());
         } else {
             ImGui::TextUnformatted("File: (unsaved)");
         }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", currentPath ? currentPath->c_str() : "(unsaved)");
+        }
         ImGui::TextUnformatted(status.c_str());
-        if (ImGui::CollapsingHeader("Validation##jhbot")) {
-            ImGui::TextWrapped("LibSmf: %s", lastValidateCodec.c_str());
-            ImGui::TextWrapped("Engine DLL: %s", lastValidateEngine.c_str());
-            ImGui::TextWrapped("Engine apply: %s", lastApplyGameplayEngine.c_str());
-            {
-                std::string clip;
-                clip += "LibSmf: ";
-                clip += lastValidateCodec;
-                clip += "\nEngine DLL: ";
-                clip += lastValidateEngine;
-                clip += "\nEngine apply: ";
-                clip += lastApplyGameplayEngine;
-                clip += "\n";
-                if (!lastValidateStructure.empty()) {
-                    clip += "Map structure:\n";
-                    for (const auto& line : lastValidateStructure) {
-                        clip += line;
-                        clip += '\n';
-                    }
-                }
-                if (LibUI::Tools::CopyTextButton("jh_val_clip_bot", clip.c_str(), "Copy report")) {
-                    status = "Validation report copied.";
-                }
-            }
-            if (!lastValidateStructure.empty()) {
-                for (const auto& line : lastValidateStructure) {
-                    ImGui::BulletText("%s", line.c_str());
-                }
-            }
-        }
-        if (ImGui::CollapsingHeader("Map overview##jhbot")) {
-            const bool hasWorldHooks = !map.WorldAuthoringHooks.ScriptPath.empty()
-                || !map.WorldAuthoringHooks.CutscenePath.empty() || !map.WorldAuthoringHooks.WorldSpaceUiPath.empty();
-            ImGui::Text(
-                "Entities: %zu | Paths: %zu | BSP: %s | Octree: %s | Lights: %zu | Acoustic: %zu | Fluids: %zu | Skybox: %s | "
-                "Hooks: %s",
-                map.Entities.size(), map.PathTable.size(), map.Bsp.has_value() ? "yes" : "no",
-                map.Octree.has_value() ? "yes" : "no", map.AuthoringLights.size(), map.AcousticZones.size(),
-                map.FluidVolumes.size(), map.Skybox.has_value() ? (map.Skybox->Enabled ? "on" : "off") : "—",
-                hasWorldHooks ? "paths" : "—");
-        }
-        if (ImGui::CollapsingHeader("Recovery (autosave)##jhbot")) {
-            ImGui::TextDisabled("While the map is dirty, periodic .smf snapshots are written to the recovery store (next to the executable).");
-            int jhRi = static_cast<int>(jhRecoveryIntervalSecU32);
-            if (ImGui::SliderInt("Interval (sec)", &jhRi, 10, 600)) {
-                jhRecoveryIntervalSecU32 = static_cast<uint32_t>(jhRi);
-            }
-            ImGui::TextDisabled("File → Write recovery snapshot now for a manual on-demand write.");
-        }
-        LibUI::Tools::DrawRecentPathsCollapsible("Recent##jhbot", ImGuiTreeNodeFlags_None, nullptr, JackhammerOpenRecentPath);
-        ImGui::Text("Sections (bytes): str=%u geom=%u bsp=%u ent=%u sec=%u phys=%u script=%u trig=%u path=%u",
-            lastHeader.StringTableSize, lastHeader.GeometrySize, lastHeader.BspSize, lastHeader.EntitySize,
-            lastHeader.SectorSize, lastHeader.PhysicsSize, lastHeader.ScriptSize, lastHeader.TriggerSize,
-            lastHeader.PathTableSize);
         ImGui::EndChild();
 
         LibUI::Shell::EndMainHostWindow();

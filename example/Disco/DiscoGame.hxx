@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Game/App/GameBase.hxx>
-#include <Render/SoftwareRenderer.hxx>
+#include <Render/DefaultRenderer.hxx>
 #include <Render/Lighting/VolumetricLighting.hxx>
 #include <Render/Scene/Scene.hxx>
 #include <Render/Scene/Camera.hxx>

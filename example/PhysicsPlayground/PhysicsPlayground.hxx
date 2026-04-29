@@ -1,7 +1,7 @@
 #pragma once
 
 #include <UI/Core/Window.hxx>
-#include <Render/SoftwareRenderer.hxx>
+#include <Render/DefaultRenderer.hxx>
 #include <Render/Scene/Scene.hxx>
 #include <Render/Scene/Camera.hxx>
 #include <Render/Assets/Mesh.hxx>

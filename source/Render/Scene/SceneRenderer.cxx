@@ -106,6 +106,11 @@ void SceneRenderer::Initialize(bgfx::ProgramHandle sceneProgram, bgfx::VertexLay
 }
 
 void SceneRenderer::CullObjects(Scene& scene, const Camera& camera, std::vector<SceneObjectID>& visibleObjects) {
+    if (m_SpatialIndex) {
+        m_SpatialIndex->SetScene(&scene);
+        m_SpatialIndex->QueryVisible(camera, visibleObjects);
+        return;
+    }
     // Phase 7: Pass aspect ratio for proper frustum culling
     float aspectRatio = static_cast<float>(m_Width) / static_cast<float>(m_Height);
     scene.FrustumCull(camera, visibleObjects, aspectRatio);
@@ -422,6 +427,17 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
     trianglesSubmitted = 0;
     {
         PROFILE_SCOPE("SceneRenderer::RenderObjects");
+        if (m_BatchRenderer) {
+            std::vector<Meshlet> meshlets;
+            meshlets.reserve(visibleObjects.size());
+            for (SceneObjectID objID : visibleObjects) {
+                Meshlet meshlet{};
+                meshlet.MaterialId = scene.GetMaterial(objID);
+                meshlet.Center = scene.GetPosition(objID);
+                meshlets.push_back(meshlet);
+            }
+            m_BatchRenderer->BuildBatches(meshlets);
+        }
         for (SceneObjectID ObjID : visibleObjects) {
         uint32_t MeshID = scene.GetMeshID(ObjID);
         Mesh* MeshPtr = meshLib->GetMesh(MeshID);

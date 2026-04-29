@@ -1,5 +1,5 @@
 #include "SelectionSystem.hxx"
-#include <Render/SoftwareRenderer.hxx>
+#include <Render/DefaultRenderer.hxx>
 #include <Render/Scene/Scene.hxx>
 #include <Render/Scene/Camera.hxx>
 #include <Math/Matrix.hxx>

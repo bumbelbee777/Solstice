@@ -1,4 +1,5 @@
 #include "Raytracing.hxx"
+#include <Render/Context/HybridScheduler.hxx>
 #include <Render/Scene/Scene.hxx>
 #include <Material/Material.hxx>
 #include <Core/Debug/Debug.hxx>
@@ -1235,6 +1236,13 @@ void Raytracing::UpdateAsync(const std::vector<Physics::LightSource>& lights, co
     TraceShadowRays(lights, scene);
     TraceAORays(scene, m_AORadius, m_AOSamples);
     m_RaytracingInProgress.store(false, std::memory_order_release);
+
+    if (m_HybridScheduler) {
+        DrawFeature f{};
+        f.ScreenArea = static_cast<float>(m_ShadowWidth * m_ShadowHeight);
+        f.MaterialComplexity = static_cast<float>(lights.size());
+        (void)m_HybridScheduler->PredictGpuProbability(f);
+    }
 }
 
 void Raytracing::UpdateUniforms() {

@@ -12,7 +12,7 @@
 #include <Arzachel/Seed.hxx>
 #include <Arzachel/ProceduralTexture.hxx>
 #include <UI/Core/Window.hxx>
-#include <Render/SoftwareRenderer.hxx>
+#include <Render/DefaultRenderer.hxx>
 #include <Render/Scene/Scene.hxx>
 #include <Render/Assets/Mesh.hxx>
 #include <Material/Material.hxx>

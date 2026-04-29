@@ -36,10 +36,10 @@ dir	fonts	fonts	windows	root	no
 file	Sharpon		linux	root	no
 glob	libSDL3.so*		linux	lib	no
 glob	libsolsticeengine.so*		linux	lib	no
-dir	shaders	shaders	linux	root	no
+dir	shaders	shaders	linux	root	yes
 dir	fonts	fonts	linux	root	no
 file	Sharpon		darwin	root	no
 glob	libSDL3*.dylib		darwin	lib	no
 glob	libsolsticeengine*.dylib		darwin	lib	no
-dir	shaders	shaders	darwin	root	no
+dir	shaders	shaders	darwin	root	yes
 dir	fonts	fonts	darwin	root	no

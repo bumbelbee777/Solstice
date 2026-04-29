@@ -162,7 +162,7 @@ static bool SmmExportRelicSession(const Solstice::Parallax::DevSessionAssetResol
         in.Hash = kv.first;
         in.TypeTag = AssetTypeTag::Unknown;
         in.ClusterId = 0;
-        in.Compression = CompressionType::LZ4;
+        in.Compression = CompressionType::LZX;
         in.Uncompressed = kv.second.Bytes;
         for (const auto& pb : resolver.GetPathBindings()) {
             if (pb.second == kv.first) {

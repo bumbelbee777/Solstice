@@ -1,5 +1,5 @@
 #include "Compress.hxx"
-#include "Core/System/LZ4.hxx"
+#include "Core/System/LZX.hxx"
 #include <zstd.h>
 #include <cstring>
 
@@ -14,8 +14,8 @@ std::vector<std::byte> CompressAsset(std::span<const std::byte> uncompressed, Co
         }
         return out;
     }
-    case CompressionType::LZ4:
-        return Core::LZ4Compress(uncompressed);
+    case CompressionType::LZX:
+        return Core::LZXCompress(uncompressed);
     case CompressionType::Zstd: {
         if (uncompressed.empty()) {
             return {};

@@ -269,6 +269,24 @@ target_link_libraries(RelicFormatTest PRIVATE SolsticeEngine SolsticeTestSupport
 set_target_properties(RelicFormatTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_TEST_BIN_DIR}")
 solstice_copy_runtime_dlls(RelicFormatTest)
 
+add_executable(MeshletCullingTest MeshletCullingTest.cxx)
+target_include_directories(MeshletCullingTest PRIVATE "${CMAKE_SOURCE_DIR}/source")
+target_link_libraries(MeshletCullingTest PRIVATE SolsticeEngine SolsticeTestSupport)
+set_target_properties(MeshletCullingTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_TEST_BIN_DIR}")
+solstice_copy_runtime_dlls(MeshletCullingTest)
+
+add_executable(PVSQueryTest PVSQueryTest.cxx)
+target_include_directories(PVSQueryTest PRIVATE "${CMAKE_SOURCE_DIR}/source")
+target_link_libraries(PVSQueryTest PRIVATE SolsticeEngine SolsticeTestSupport)
+set_target_properties(PVSQueryTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_TEST_BIN_DIR}")
+solstice_copy_runtime_dlls(PVSQueryTest)
+
+add_executable(LZXRoundTripTest LZXRoundTripTest.cxx)
+target_include_directories(LZXRoundTripTest PRIVATE "${CMAKE_SOURCE_DIR}/source")
+target_link_libraries(LZXRoundTripTest PRIVATE SolsticeEngine SolsticeTestSupport)
+set_target_properties(LZXRoundTripTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_TEST_BIN_DIR}")
+solstice_copy_runtime_dlls(LZXRoundTripTest)
+
 if(TARGET Multimedia)
     find_program(SOLSTICE_FFMPEG_CLI NAMES ffmpeg ffmpeg.exe)
     set(SOLSTICE_LAVFI_TEST_MP4 "${SOLSTICE_STAGING_DIR}/test_support/solstice_lavfi_pattern.mp4")
@@ -324,6 +342,9 @@ solstice_add_ctest(FacialAnimationTest "quick")
 solstice_add_ctest(SmfFormatTest "quick")
 solstice_add_ctest(SmatFormatTest "quick")
 solstice_add_ctest(RelicFormatTest "quick")
+solstice_add_ctest(MeshletCullingTest "quick")
+solstice_add_ctest(PVSQueryTest "quick")
+solstice_add_ctest(LZXRoundTripTest "quick")
 if(TARGET MultimediaFfmpegTest)
     add_test(
         NAME MultimediaFfmpegTest
@@ -356,6 +377,9 @@ set(_solstice_quick_test_targets
     SmfFormatTest
     SmatFormatTest
     RelicFormatTest
+    MeshletCullingTest
+    PVSQueryTest
+    LZXRoundTripTest
 )
 foreach(_qt IN LISTS _solstice_quick_test_targets)
     if(TARGET ${_qt})

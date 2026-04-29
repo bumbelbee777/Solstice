@@ -14,7 +14,7 @@
 #include <array>
 
 // Forward declarations
-namespace Solstice::Render { class Scene; }
+namespace Solstice::Render { class Scene; class HybridScheduler; }
 
 namespace Solstice::Render {
 
@@ -118,6 +118,7 @@ public:
     // Async update
     void UpdateAsync();
     void UpdateAsync(const std::vector<Physics::LightSource>& lights, const Scene& scene);
+    void SetHybridScheduler(HybridScheduler* scheduler) { m_HybridScheduler = scheduler; }
 
     /// Waits for any in-flight `SubmitAsync` raytracing work (same as shutdown drain, without destroying GPU state).
     /// Required before the render thread uses raytrace textures / continues the frame.
@@ -190,6 +191,7 @@ private:
     // Async job futures
     std::vector<std::future<void>> m_AsyncJobs;
     std::atomic<bool> m_RaytracingInProgress;
+    HybridScheduler* m_HybridScheduler{nullptr};
 
     // Settings
     float m_AORadius;

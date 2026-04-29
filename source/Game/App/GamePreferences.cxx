@@ -2,7 +2,7 @@
 #include "../../Core/Debug/Debug.hxx"
 #include "../../Core/Audio/Audio.hxx"
 #include "../../UI/Core/UISystem.hxx"
-#include <Render/SoftwareRenderer.hxx>
+#include <Render/DefaultRenderer.hxx>
 #include <imgui.h>
 #include <fstream>
 #include <sstream>

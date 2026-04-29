@@ -55,8 +55,8 @@ void PrintUsage() {
         << "  verify <file.relic>\n"
         << "  diff <a.relic> <b.relic>\n"
         << "  export <file.relic> <outDir> [--no-path-names]\n"
-        << "  pack <out.relic> <inputDir> [--hash path|content] [--compress none|lz4|zstd]\n"
-        << "  add <archive.relic> <file> <logicalPath> [--compress none|lz4|zstd] [--out <path>]\n"
+        << "  pack <out.relic> <inputDir> [--hash path|content] [--compress none|lzx|zstd]\n"
+        << "  add <archive.relic> <file> <logicalPath> [--compress none|lzx|zstd] [--out <path>]\n"
         << "  remove <archive.relic> <hash> [more hashes...] [--out <path>]\n"
         << "  extract <archive.relic> <hash> <outFile>\n"
         << "  merge <out.relic> <a.relic> <b.relic> [more...]\n"
@@ -94,8 +94,8 @@ CompressionType ParseCompression(std::string_view s) {
     if (s == "none") {
         return CompressionType::None;
     }
-    if (s == "lz4") {
-        return CompressionType::LZ4;
+    if (s == "lzx" || s == "lz4") {
+        return CompressionType::LZX;
     }
     return CompressionType::Zstd;
 }
@@ -253,7 +253,7 @@ int CmdPack(const std::vector<std::string>& args) {
         }
     }
     if (pos.size() < 2) {
-        std::cerr << "usage: pack <out.relic> <inputDir> [--hash path|content] [--compress none|lz4|zstd]\n";
+        std::cerr << "usage: pack <out.relic> <inputDir> [--hash path|content] [--compress none|lzx|zstd]\n";
         return 2;
     }
     std::string err;
@@ -293,7 +293,7 @@ int CmdAdd(const std::vector<std::string>& args) {
         }
     }
     if (pos.size() < 3) {
-        std::cerr << "usage: add <archive.relic> <file> <logicalPath> [--compress none|lz4|zstd] [--out <path>]\n";
+        std::cerr << "usage: add <archive.relic> <file> <logicalPath> [--compress none|lzx|zstd] [--out <path>]\n";
         return 2;
     }
     std::vector<std::pair<std::filesystem::path, std::string>> batch;

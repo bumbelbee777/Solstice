@@ -66,8 +66,8 @@ const char* CompressionName(const Solstice::Core::Relic::CompressionType c) {
     switch (c) {
     case CT::None:
         return "none";
-    case CT::LZ4:
-        return "lz4";
+    case CT::LZX:
+        return "lzx";
     default:
         return "zstd";
     }

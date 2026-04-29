@@ -20,6 +20,10 @@
 #include <Render/Lighting/VolumetricLighting.hxx>
 #include <Render/Lighting/ShadowRenderer.hxx>
 #include <Render/Scene/SceneRenderer.hxx>
+#include <Render/Context/HybridScheduler.hxx>
+#include <Render/Scene/BatchRenderer.hxx>
+#include <Render/Scene/SpatialIndex.hxx>
+#include <Render/Assets/LZXCache.hxx>
 #include <Physics/Lighting/LightSource.hxx>
 #include <bgfx/bgfx.h>
 #include <set>
@@ -109,6 +113,9 @@ public:
 
     // Configuration
     void SetTileSize(int Size); // Kept for API compatibility, no-op
+    void SetHybridMode(bool Enabled) { m_HybridModeEnabled = Enabled; }
+    void SetMLEnabled(bool Enabled) { m_MLEnabled = Enabled; }
+    void SetCPUTileSize(uint32_t TileSize) { m_CpuTileSize = TileSize; }
     void EnableDepthTest(bool Enable) { m_DepthTestEnabled = Enable; }
     void SetWireframe(bool Enable);
     void SetShowDebugOverlay(bool Enable);
@@ -225,6 +232,9 @@ private:
 
     // Async rendering
     bool m_EnableAsync{true};
+    bool m_HybridModeEnabled{true};
+    bool m_MLEnabled{true};
+    uint32_t m_CpuTileSize{TILE_SIZE};
     std::vector<std::future<void>> m_RenderJobs;
 
     // SIMD optimization
@@ -258,6 +268,10 @@ private:
     // Rendering helper classes
     std::unique_ptr<ShadowRenderer> m_ShadowRenderer;
     std::unique_ptr<SceneRenderer> m_SceneRenderer;
+    std::unique_ptr<HybridScheduler> m_HybridScheduler;
+    std::unique_ptr<BatchRenderer> m_BatchRenderer;
+    std::unique_ptr<SpatialIndex> m_SpatialIndex;
+    std::unique_ptr<LZXCache<Mesh>> m_MeshCache;
 
     // Optional physics integration
     Solstice::ECS::Registry* m_PhysicsRegistry{nullptr};

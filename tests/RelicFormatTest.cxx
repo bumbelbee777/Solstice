@@ -60,8 +60,8 @@ static bool RoundTripRelic() {
     b.Hash = 0xB002ull;
     b.TypeTag = AssetTypeTag::Audio;
     b.ClusterId = 1;
-    b.Compression = CompressionType::LZ4;
-    b.Uncompressed = Bytes("lz4 payload");
+    b.Compression = CompressionType::LZX;
+    b.Uncompressed = Bytes("lzx payload");
     b.LogicalPath = "audio/b.raw";
     inputs.push_back(std::move(b));
 

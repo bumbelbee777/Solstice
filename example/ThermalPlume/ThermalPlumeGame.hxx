@@ -2,7 +2,7 @@
 
 #include <Game/App/GameBase.hxx>
 #include <UI/Core/Window.hxx>
-#include <Render/SoftwareRenderer.hxx>
+#include <Render/DefaultRenderer.hxx>
 #include <Render/FluidVolumeVisualizer.hxx>
 #include <Render/Scene/Scene.hxx>
 #include <Render/Scene/Camera.hxx>

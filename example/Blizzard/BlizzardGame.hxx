@@ -14,7 +14,7 @@
 #include <Arzachel/MeshData.hxx>
 #include <Arzachel/Generator.hxx>
 #include <UI/Core/Window.hxx>
-#include <Render/SoftwareRenderer.hxx>
+#include <Render/DefaultRenderer.hxx>
 #include <Render/Scene/Scene.hxx>
 #include <Render/Assets/Mesh.hxx>
 #include <Render/Particle/ParticleSystem.hxx>

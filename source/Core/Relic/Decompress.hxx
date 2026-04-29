@@ -8,7 +8,7 @@
 
 namespace Solstice::Core::Relic {
 
-// Decompress RELIC asset bytes according to compression type (None, LZ4, Zstd).
+// Decompress RELIC asset bytes according to compression type (None, LZX, Zstd).
 // Returns decompressed bytes or empty on error.
 SOLSTICE_API std::vector<std::byte> DecompressAsset(
     std::span<const std::byte> compressed,

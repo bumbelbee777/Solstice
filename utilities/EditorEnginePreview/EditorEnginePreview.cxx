@@ -10,7 +10,7 @@
 #include <Render/Post/PostProcessing.hxx>
 #include <Render/Scene/Camera.hxx>
 #include <Render/Scene/Scene.hxx>
-#include <Render/SoftwareRenderer.hxx>
+#include <Render/DefaultRenderer.hxx>
 #include <UI/Media/ImageLoader.hxx>
 
 #include "LibUI/Tools/DiagLog.hxx"

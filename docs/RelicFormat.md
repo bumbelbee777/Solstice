@@ -4,7 +4,7 @@ RELIC is Solstice's native asset packaging format for slow-drive friendliness, s
 
 ## File tiers
 
-- **game.data.relic** — Bootstrap manifest. The only hardcoded file; the engine first tries the **directory of the running executable** (so shipped builds find it next to `WarsOfHeaven.exe` / the main binary) and then falls back to the **current working directory** (see `Solstice::Initialize` + `GetExecutableDirectory`). It contains an ordered list of RELIC files to load, per-RELIC priority, streaming hints (preload / stream / lazy), and tag set (base, DLC, mod, locale). Parsed once at startup and never read again. Content is **not** extracted to a separate `relic/` folder: entries stay inside `.relic` on disk, and `AssetService::LoadByHash` **decompresses** payload bytes in memory (LZ4 / zstd / none) as described under Compression below.
+- **game.data.relic** — Bootstrap manifest. The only hardcoded file; the engine first tries the **directory of the running executable** (so shipped builds find it next to `WarsOfHeaven.exe` / the main binary) and then falls back to the **current working directory** (see `Solstice::Initialize` + `GetExecutableDirectory`). It contains an ordered list of RELIC files to load, per-RELIC priority, streaming hints (preload / stream / lazy), and tag set (base, DLC, mod, locale). Parsed once at startup and never read again. Content is **not** extracted to a separate `relic/` folder: entries stay inside `.relic` on disk, and `AssetService::LoadByHash` **decompresses** payload bytes in memory (LZX / zstd / none) as described under Compression below.
 - **Content / music / level-group RELICs** — Game-specific `.relic` files listed in the bootstrap (e.g. `content.relic`, `music.relic`, `sectionN_levelN.relic`). Same container layout; container type (content vs music) is in the header for optional I/O tuning.
 
 ## Bootstrap file layout (game.data.relic)
@@ -34,11 +34,11 @@ RELIC is Solstice's native asset packaging format for slow-drive friendliness, s
   - Cluster ID (32) — for prefetch grouping
 - **Dependency table**: Contiguous blob. Per-asset list at `DependencyListOffset`: uint32_t count, then count × uint64_t asset hashes.
 - **Path table** (optional): At `PathTableOffset` with byte size `PathTableSize`. Layout: `uint32_t entryCount`, then per entry `uint16_t pathLen`, UTF-8 path (`pathLen` bytes), `uint64_t assetHash`. Placed after the dependency table and before the data blob in newly written files.
-- **Data blob**: Starts at data blob offset. Assets stored in cluster order. Compression per entry (flags): none, LZ4, zstd.
+- **Data blob**: Starts at data blob offset. Assets stored in cluster order. Compression per entry (flags): none, LZX, zstd.
 
 ## Compression
 
-- **LZ4** — Streaming assets; in-house implementation in `Core/System/LZ4.cxx`. Block format (no frame).
+- **LZX** — Streaming assets; in-house implementation in `Core/System/LZX.cxx`.
 - **Zstd** — One-shot assets (UI, global audio, cutscenes); external lib (compress and decompress in tooling; runtime may decompress only).
 
 ## Delta / variant assets

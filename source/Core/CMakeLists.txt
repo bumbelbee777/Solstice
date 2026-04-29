@@ -16,7 +16,7 @@ add_library(Core STATIC
     Platform/Mmap.cxx
     Platform/Cache.cxx
     System/ContentBasePath.cxx
-    System/LZ4.cxx
+    System/LZX.cxx
     Relic/Bootstrap.cxx
     Relic/Reader.cxx
     Relic/PathTable.cxx

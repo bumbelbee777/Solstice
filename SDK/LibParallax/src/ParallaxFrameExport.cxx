@@ -1,7 +1,7 @@
 #include <Parallax/MGRaster.hxx>
 #include <Parallax/ParallaxScene.hxx>
 #include <Parallax/ParallaxTypes.hxx>
-#include <Render/SoftwareRenderer.hxx>
+#include <Render/DefaultRenderer.hxx>
 
 #include <algorithm>
 #include <cmath>

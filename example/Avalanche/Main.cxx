@@ -1,6 +1,6 @@
 #include <UI/Core/Window.hxx>
 #include <UI/Core/UISystem.hxx>
-#include <Render/SoftwareRenderer.hxx>
+#include <Render/DefaultRenderer.hxx>
 #include <Render/Scene/Scene.hxx>
 #include <Render/Scene/Camera.hxx>
 #include <Render/Assets/Mesh.hxx>

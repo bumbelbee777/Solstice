@@ -8,13 +8,13 @@ The Solstice rendering system is a CPU-centric software renderer with BGFX integ
 
 ## Asset packaging (RELIC)
 
-Asset containers use the **RELIC** (Resource and Level Index Container) format for streaming and mod/DLC layering. See [RelicFormat.md](RelicFormat.md) for bootstrap layout, container header/manifest/dependency table, compression (LZ4/zstd), and delta assets.
+Asset containers use the **RELIC** (Resource and Level Index Container) format for streaming and mod/DLC layering. See [RelicFormat.md](RelicFormat.md) for bootstrap layout, container header/manifest/dependency table, compression (LZX/zstd), and delta assets.
 
 ## Architecture
 
 The rendering system consists of several key components:
 
-- **SoftwareRenderer**: Main renderer interface and orchestration
+- **DefaultRenderer** (`SoftwareRenderer` compatibility alias): Main renderer interface and orchestration
 - **SceneRenderer**: Handles scene object rendering and culling
 - **ShadowRenderer**: Generates shadow maps for dynamic shadows
 - **RenderPipeline**: Coordinates rendering passes
@@ -167,15 +167,15 @@ renderer.SetViewport(1, width/2, 0, width/2, height);
 
 ## API Reference
 
-### SoftwareRenderer
+### DefaultRenderer
 
 Main renderer interface for scene rendering.
 
 #### Initialization
 
 ```cpp
-SoftwareRenderer(int width, int height, int tileSize = 16, SDL_Window* window = nullptr);
-~SoftwareRenderer();
+DefaultRenderer(int width, int height, int tileSize = 16, SDL_Window* window = nullptr);
+~DefaultRenderer();
 ```
 
 #### Scene Rendering
@@ -560,7 +560,7 @@ bool IsVR() const;
 using namespace Solstice::Render;
 
 // Initialize renderer
-SoftwareRenderer renderer(1280, 720);
+DefaultRenderer renderer(1280, 720);
 renderer.SetVSync(true);
 
 // Create scene
@@ -672,6 +672,33 @@ registry.ForEach<ECS::Transform>([&](EntityId entity, ECS::Transform& transform)
     scene.SetRotation(sceneId, transform.Rotation);
 });
 ```
+
+### Hybrid integration contract (ECS, Parallax, Jackhammer)
+
+Use this runtime contract for the hybrid scheduler, meshlet batching, and visibility data feeds:
+
+1. **ECS transform feed (dirty-mask + persistent mapping)**
+   - Drive transforms via `Scene::SetTransform` / `Scene::SetPosition` and call `Scene::UpdateTransforms()` once per frame before submission.
+   - `DefaultRenderer` hot paths are expected to operate with dirty updates only and fixed-capacity command/ring structures (no per-frame heap allocation).
+   - Recommended order: physics tick -> ECS write-back -> `Scene::UpdateTransforms()` -> `RenderScene()`.
+
+2. **Parallax material + LOD metadata feed**
+   - Populate `Scene` material IDs (`Scene::SetMaterial`) and mesh bounds (`Mesh::BoundsMin/BoundsMax`) at import time.
+   - Feed scheduler features from material complexity, depth/distance variance, and motion magnitude from prior-frame transforms.
+
+3. **Jackhammer jobs + telemetry feed**
+   - Keep BGFX submission on the render thread.
+   - Background jobs can preprocess meshlet clusters, visibility candidates, and ML feature extraction.
+   - Feed per-frame telemetry to scheduling with CPU busy ratio, one-frame-delayed GPU busy proxy, and realized CPU/GPU execution time by batch.
+
+4. **Synchronization contract**
+   - Do not block on GPU readback in the critical frame path.
+   - Treat visibility/occlusion feedback as one-frame delayed.
+   - Keep explicit fence boundaries around CPU command build completion, GPU submission completion, and post-process completion.
+
+5. **Migration notes**
+   - `DefaultRenderer` is the preferred API surface; `SoftwareRenderer` remains as a compatibility alias.
+   - Asset compression paths should use Core `LZX` (`Core/System/LZX.hxx`).
 
 ### With UI System
 

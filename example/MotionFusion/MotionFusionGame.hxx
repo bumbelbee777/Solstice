@@ -6,7 +6,7 @@
 #include <UI/Motion/Primitives.hxx>
 #include <UI/Motion/Sprite.hxx>
 #include <UI/Motion/SpritePhysics2D.hxx>
-#include <Render/SoftwareRenderer.hxx>
+#include <Render/DefaultRenderer.hxx>
 #include <Render/Scene/Scene.hxx>
 #include <Render/Scene/Camera.hxx>
 #include <Render/Assets/Mesh.hxx>

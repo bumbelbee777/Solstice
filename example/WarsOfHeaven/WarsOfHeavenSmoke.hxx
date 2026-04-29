@@ -17,7 +17,7 @@
 #include <UI/Core/Window.hxx>
 #include <UI/Core/UISystem.hxx>
 #include "WohNetworkSession.hxx"
-#include <Render/SoftwareRenderer.hxx>
+#include <Render/DefaultRenderer.hxx>
 #include <Render/Scene/Scene.hxx>
 #include <Render/Scene/Camera.hxx>
 #include <Physics/Lighting/LightSource.hxx>

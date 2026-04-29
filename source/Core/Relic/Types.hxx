@@ -51,7 +51,7 @@ enum class AssetTypeTag : uint16_t {
 // Compression type (per-entry flags)
 enum class CompressionType : uint8_t {
     None = 0,
-    LZ4 = 1,
+    LZX = 1,
     Zstd = 2
 };
 
