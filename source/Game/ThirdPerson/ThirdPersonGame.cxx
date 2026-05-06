@@ -1,6 +1,9 @@
 #include "ThirdPersonGame.hxx"
 #include "../../Core/Debug/Debug.hxx"
 #include "../../Entity/Transform.hxx"
+#include "../Systems/AudioSystem.hxx"
+#include "../Systems/PortalSystem.hxx"
+#include "../Systems/FacialSystem.hxx"
 
 namespace Solstice::Game {
 
@@ -30,6 +33,12 @@ void ThirdPersonGame::InitializeCharacter() {
 
 void ThirdPersonGame::ConfigureECSPhases() {
     m_ECSScheduler.Clear();
+    static AudioSystem s_AudioSystem;
+    m_ECSScheduler.Register(ECS::SystemPhase::Simulation, "AudioSystem", s_AudioSystem);
+    static FacialSystem s_FacialSystem;
+    m_ECSScheduler.Register(ECS::SystemPhase::Simulation, "FacialSystem", s_FacialSystem);
+    static PortalSystem s_PortalSystem;
+    m_ECSScheduler.Register(ECS::SystemPhase::Simulation, "PortalSystem", s_PortalSystem);
     m_ECSScheduler.Register(ECS::SystemPhase::Simulation, "ThirdPersonCameraFollow", [this](ECS::Registry&, float dt) {
         UpdateCameraFollow(dt);
     });

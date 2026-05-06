@@ -21,6 +21,19 @@ namespace Solstice::Render {
 // Forward declarations
 class PostProcessing;
 
+/// Global forward-pass lighting artistry / perf knobs (fed to `fs_standard.sc` via `u_SceneLighting`).
+struct SOLSTICE_API SceneLightingTune {
+    /// Scales hemisphere + environment-derived ambient irradiance (`u_SceneLighting.x`).
+    float AmbientIntensity = 1.0f;
+    /// Lerp `[0–1]` from analytic hemisphere toward a single radiant-environment sample along ``N``.
+    /// Forced off when no valid skybox cubemap is bound (`u_SceneLighting.y`).
+    float EnvIrradianceBlend = 0.28f;
+    /// Soft wrap for the directional (sun) Lambert term; `0` = classic Lambert (`u_SceneLighting.z`).
+    float KeyDiffuseWrap = 0.08f;
+    /// Extra hemisphere tint in shadowed areas to reduce harsh black crumbs (`u_SceneLighting.w`).
+    float ShadowAmbientFill = 0.55f;
+};
+
 // Handles scene object rendering (culling, submission)
 class SOLSTICE_API SceneRenderer {
 public:
@@ -52,6 +65,10 @@ public:
 
     // Set light sources for rendering
     void SetLightSources(const std::vector<Physics::LightSource>& lights);
+
+    /// See `SceneLightingTune` and `docs/Renderer.md` (Lighting model).
+    void SetSceneLightingTune(const SceneLightingTune& tune) { m_SceneLightingTune = tune; }
+    const SceneLightingTune& GetSceneLightingTune() const { return m_SceneLightingTune; }
     void SetBatchRenderer(BatchRenderer* batcher) { m_BatchRenderer = batcher; }
     void SetSpatialIndex(SpatialIndex* spatialIndex) { m_SpatialIndex = spatialIndex; }
 
@@ -90,6 +107,7 @@ private:
     bool m_SceneRasterMsaa = true;
     bool m_ProjectionJitterEnabled = true;
     std::vector<Physics::LightSource> m_Lights;
+    SceneLightingTune m_SceneLightingTune{};
     BatchRenderer* m_BatchRenderer = nullptr;
     SpatialIndex* m_SpatialIndex = nullptr;
 

@@ -111,6 +111,22 @@ Core::Audio::AudioSource SFXManager::PlaySound3D(const std::string& Path, const 
     return source;
 }
 
+Core::Audio::AudioSource SFXManager::PlaySound3DProfiled(const std::string& Path, const Math::Vec3& Position,
+                                                         SFXCategory Category, SpatialProfile Profile,
+                                                         float Volume, float MaxDistance, bool Loop) {
+    Core::Audio::AudioSource source = PlaySound3D(Path, Position, Category, Volume, MaxDistance, Loop);
+    if (!m_AudioManager || m_ActiveSounds.empty()) {
+        return source;
+    }
+    SoundEffect& effect = m_ActiveSounds.back();
+    if (effect.EmitterHandle != 0) {
+        ConfigureEmitterSpatial(effect.EmitterHandle, Profile);
+        m_AudioManager->GetEmitterSnapshot(effect.EmitterHandle, effect.Source);
+        source = effect.Source;
+    }
+    return source;
+}
+
 void SFXManager::PlayMusic(const std::string& Path, int Loops) {
     if (m_AudioManager) {
         m_AudioManager->PlayMusic(Path.c_str(), Loops);
@@ -182,11 +198,11 @@ void SFXManager::PlaySoundFromPool(const std::string& Path, SFXCategory Category
 }
 
 void SFXManager::OnPlayerFootstep(const Math::Vec3& Position) {
-    PlaySound3D(m_FootstepSoundPath, Position, SFXCategory::Footsteps, 0.5f, 20.0f, false);
+    PlaySound3DProfiled(m_FootstepSoundPath, Position, SFXCategory::Footsteps, SpatialProfile::Footstep, 0.5f, 20.0f, false);
 }
 
 void SFXManager::OnWeaponFire(const Math::Vec3& Position) {
-    PlaySound3D(m_WeaponFireSoundPath, Position, SFXCategory::Combat, 1.0f, 100.0f, false);
+    PlaySound3DProfiled(m_WeaponFireSoundPath, Position, SFXCategory::Combat, SpatialProfile::Weapon, 1.0f, 100.0f, false);
 }
 
 void SFXManager::OnWeaponReload() {
@@ -194,7 +210,7 @@ void SFXManager::OnWeaponReload() {
 }
 
 void SFXManager::OnEnemyDeath(const Math::Vec3& Position) {
-    PlaySound3D(m_EnemyDeathSoundPath, Position, SFXCategory::Combat, 0.7f, 50.0f, false);
+    PlaySound3DProfiled(m_EnemyDeathSoundPath, Position, SFXCategory::Combat, SpatialProfile::Voice, 0.7f, 50.0f, false);
 }
 
 void SFXManager::OnPlayerDamage() {
@@ -223,6 +239,87 @@ void SFXManager::UpdateAudioSource(Core::Audio::AudioSource& Source, const Math:
             }
         }
     }
+}
+
+bool SFXManager::ConfigureEmitterSpatial(Core::Audio::AudioEmitterHandle Handle, SpatialProfile Profile, const Math::Vec3& Direction) {
+    if (!m_AudioManager || Handle == 0) {
+        return false;
+    }
+
+    bool ok = true;
+    switch (Profile) {
+        case SpatialProfile::AmbientBed:
+            ok = m_AudioManager->SetEmitterRolloff(Handle, 2.0f, 160.0f, 0.4f, Core::Audio::DistanceModel::Linear) && ok;
+            ok = m_AudioManager->SetEmitterFocus(Handle, 0.05f, 0.03f, 0.95f) && ok;
+            ok = m_AudioManager->SetEmitterImmersion(Handle, 0.75f, 0.65f, 0.45f) && ok;
+            ok = m_AudioManager->SetEmitterDiffraction(Handle, 0.65f, 0.20f) && ok;
+            ok = m_AudioManager->SetEmitterMotionAdaptation(Handle, 0.90f) && ok;
+            ok = m_AudioManager->SetEmitterAirAbsorption(Handle, 0.12f) && ok;
+            ok = m_AudioManager->SetEmitterDoppler(Handle, 0.15f, 343.3f) && ok;
+            ok = m_AudioManager->SetEmitterCone(Handle, 360.0f, 360.0f, 1.0f) && ok;
+            break;
+        case SpatialProfile::Footstep:
+            ok = m_AudioManager->SetEmitterRolloff(Handle, 0.7f, 24.0f, 1.2f, Core::Audio::DistanceModel::Inverse) && ok;
+            ok = m_AudioManager->SetEmitterFocus(Handle, 0.30f, 0.07f, 1.0f) && ok;
+            ok = m_AudioManager->SetEmitterImmersion(Handle, 0.45f, 0.30f, 0.18f) && ok;
+            ok = m_AudioManager->SetEmitterDiffraction(Handle, 0.35f, 0.10f) && ok;
+            ok = m_AudioManager->SetEmitterMotionAdaptation(Handle, 0.35f) && ok;
+            ok = m_AudioManager->SetEmitterPitchVariance(Handle, 0.05f) && ok;
+            ok = m_AudioManager->SetEmitterAirAbsorption(Handle, 0.45f) && ok;
+            ok = m_AudioManager->SetEmitterDoppler(Handle, 0.7f, 343.3f) && ok;
+            ok = m_AudioManager->SetEmitterCone(Handle, 300.0f, 360.0f, 0.9f) && ok;
+            break;
+        case SpatialProfile::Weapon:
+            ok = m_AudioManager->SetEmitterRolloff(Handle, 1.2f, 180.0f, 1.0f, Core::Audio::DistanceModel::Inverse) && ok;
+            ok = m_AudioManager->SetEmitterFocus(Handle, 0.55f, 0.10f, 1.05f) && ok;
+            ok = m_AudioManager->SetEmitterImmersion(Handle, 0.60f, 0.50f, 0.28f) && ok;
+            ok = m_AudioManager->SetEmitterDiffraction(Handle, 0.55f, 0.16f) && ok;
+            ok = m_AudioManager->SetEmitterMotionAdaptation(Handle, 0.40f) && ok;
+            ok = m_AudioManager->SetEmitterPitchVariance(Handle, 0.02f) && ok;
+            ok = m_AudioManager->SetEmitterAirAbsorption(Handle, 0.28f) && ok;
+            ok = m_AudioManager->SetEmitterDoppler(Handle, 1.0f, 343.3f) && ok;
+            ok = m_AudioManager->SetEmitterCone(Handle, 85.0f, 180.0f, 0.45f) && ok;
+            ok = m_AudioManager->SetEmitterDirection(Handle, Direction) && ok;
+            break;
+        case SpatialProfile::Voice:
+            ok = m_AudioManager->SetEmitterRolloff(Handle, 0.8f, 42.0f, 1.35f, Core::Audio::DistanceModel::Inverse) && ok;
+            ok = m_AudioManager->SetEmitterFocus(Handle, 0.85f, 0.12f, 1.1f) && ok;
+            ok = m_AudioManager->SetEmitterImmersion(Handle, 0.70f, 0.42f, 0.35f) && ok;
+            ok = m_AudioManager->SetEmitterDiffraction(Handle, 0.50f, 0.22f) && ok;
+            ok = m_AudioManager->SetEmitterMotionAdaptation(Handle, 0.30f) && ok;
+            ok = m_AudioManager->SetEmitterPitchVariance(Handle, 0.01f) && ok;
+            ok = m_AudioManager->SetEmitterAirAbsorption(Handle, 0.33f) && ok;
+            ok = m_AudioManager->SetEmitterDoppler(Handle, 0.85f, 343.3f) && ok;
+            ok = m_AudioManager->SetEmitterCone(Handle, 60.0f, 140.0f, 0.35f) && ok;
+            ok = m_AudioManager->SetEmitterDirection(Handle, Direction) && ok;
+            ok = m_AudioManager->SetEmitterFlags(Handle, true, false, 2) && ok;
+            break;
+        case SpatialProfile::Vehicle:
+            ok = m_AudioManager->SetEmitterRolloff(Handle, 2.5f, 260.0f, 0.9f, Core::Audio::DistanceModel::Exponential) && ok;
+            ok = m_AudioManager->SetEmitterFocus(Handle, 0.35f, 0.08f, 1.05f) && ok;
+            ok = m_AudioManager->SetEmitterImmersion(Handle, 0.85f, 0.58f, 0.42f) && ok;
+            ok = m_AudioManager->SetEmitterDiffraction(Handle, 0.70f, 0.18f) && ok;
+            ok = m_AudioManager->SetEmitterMotionAdaptation(Handle, 0.75f) && ok;
+            ok = m_AudioManager->SetEmitterPitchVariance(Handle, 0.015f) && ok;
+            ok = m_AudioManager->SetEmitterAirAbsorption(Handle, 0.22f) && ok;
+            ok = m_AudioManager->SetEmitterDoppler(Handle, 1.2f, 343.3f) && ok;
+            ok = m_AudioManager->SetEmitterCone(Handle, 100.0f, 220.0f, 0.5f) && ok;
+            ok = m_AudioManager->SetEmitterDirection(Handle, Direction) && ok;
+            break;
+        case SpatialProfile::Default:
+        default:
+            ok = m_AudioManager->SetEmitterRolloff(Handle, 1.0f, 50.0f, 1.0f, Core::Audio::DistanceModel::Inverse) && ok;
+            ok = m_AudioManager->SetEmitterFocus(Handle, 0.15f, 0.05f, 1.0f) && ok;
+            ok = m_AudioManager->SetEmitterImmersion(Handle, 0.35f, 0.40f, 0.25f) && ok;
+            ok = m_AudioManager->SetEmitterDiffraction(Handle, 0.35f, 0.12f) && ok;
+            ok = m_AudioManager->SetEmitterMotionAdaptation(Handle, 0.20f) && ok;
+            ok = m_AudioManager->SetEmitterPitchVariance(Handle, 0.03f) && ok;
+            ok = m_AudioManager->SetEmitterAirAbsorption(Handle, 0.25f) && ok;
+            ok = m_AudioManager->SetEmitterDoppler(Handle, 1.0f, 343.3f) && ok;
+            ok = m_AudioManager->SetEmitterCone(Handle, 360.0f, 360.0f, 1.0f) && ok;
+            break;
+    }
+    return ok;
 }
 
 void SFXManager::StopSound(Core::Audio::AudioSource& Source) {

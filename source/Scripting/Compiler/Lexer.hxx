@@ -50,9 +50,12 @@ namespace Solstice::Scripting {
     class Lexer {
     public:
         Lexer(const std::string& src) : m_Src(src) {}
+        size_t Position() const { return m_Pos; }
+        size_t LastTokenStart() const { return m_LastTokenStart; }
 
         Token Next() {
             SkipWhitespace();
+            m_LastTokenStart = m_Pos;
             if (m_Pos >= m_Src.size()) return {END, ""};
 
             char c = m_Src[m_Pos];
@@ -277,6 +280,7 @@ namespace Solstice::Scripting {
     private:
         std::string m_Src;
         size_t m_Pos = 0;
+        size_t m_LastTokenStart = 0;
 
         void SkipWhitespace() {
             while (m_Pos < m_Src.size() && (isspace(m_Src[m_Pos]) || m_Src[m_Pos] == '/')) {

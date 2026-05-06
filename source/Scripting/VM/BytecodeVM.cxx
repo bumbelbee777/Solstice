@@ -233,6 +233,22 @@ void BytecodeVM::EmitEvent(const std::string& eventName, const std::vector<Value
     }
 }
 
+size_t BytecodeVM::GetEventHandlerCount(const std::string& eventName) const {
+    auto it = m_EventHandlers.find(eventName);
+    if (it == m_EventHandlers.end()) {
+        return 0;
+    }
+    return it->second.size();
+}
+
+void BytecodeVM::ClearEventHandlers(const std::string& eventName) {
+    m_EventHandlers.erase(eventName);
+}
+
+void BytecodeVM::ClearAllEventHandlers() {
+    m_EventHandlers.clear();
+}
+
 void BytecodeVM::Push(Value v) {
     // Note: No lock needed - Push() is only called from ExecuteInstruction() which is called from Run() which already holds the lock
     m_Stack.push_back(v);

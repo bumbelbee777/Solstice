@@ -110,6 +110,8 @@ public:
 
     const std::unordered_map<std::string, uint64_t>& GetPathTable() const { return m_PathTable; }
     std::unordered_map<std::string, uint64_t>& GetPathTable() { return m_PathTable; }
+    const std::unordered_map<uint64_t, AssetData>& GetEmbeddedAssets() const { return m_EmbeddedAssets; }
+    std::unordered_map<uint64_t, AssetData>& GetEmbeddedAssets() { return m_EmbeddedAssets; }
 
     BlendMode GetMGCompositeMode() const { return m_MGCompositeMode; }
     void SetMGCompositeMode(BlendMode m) { m_MGCompositeMode = m; }
@@ -144,6 +146,7 @@ private:
     std::vector<MGTrackRecord> m_MGTracks;
 
     std::unordered_map<std::string, uint64_t> m_PathTable;
+    std::unordered_map<uint64_t, AssetData> m_EmbeddedAssets;
 
     uint16_t m_FileFlags{0};
 };

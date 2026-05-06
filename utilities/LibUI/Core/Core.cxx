@@ -31,8 +31,19 @@ constexpr int kRecentMax = 16;
 static std::string s_ImgIniPath;
 static std::vector<std::string> s_RecentPaths;
 static std::once_flag s_recentPathsLoadedOnce;
+static RuntimeConfig s_RuntimeConfig{};
+static std::mutex s_RuntimeConfigMutex;
+
+static RuntimeConfig RuntimeConfigCopy() {
+    std::lock_guard<std::mutex> lock(s_RuntimeConfigMutex);
+    return s_RuntimeConfig;
+}
 
 static std::filesystem::path ToolsStateDir() {
+    const RuntimeConfig cfg = RuntimeConfigCopy();
+    if (!cfg.StateDirectory.empty()) {
+        return std::filesystem::path(cfg.StateDirectory);
+    }
     if (!s_ImgIniPath.empty()) {
         return std::filesystem::path(s_ImgIniPath).parent_path();
     }
@@ -40,7 +51,11 @@ static std::filesystem::path ToolsStateDir() {
 }
 
 static void RecentPathsSave() {
-    const auto p = ToolsStateDir() / "solstice_tools_recent.txt";
+    RuntimeConfig cfg = RuntimeConfigCopy();
+    if (cfg.RecentPathsFilename.empty()) {
+        cfg.RecentPathsFilename = "solstice_tools_recent.txt";
+    }
+    const auto p = ToolsStateDir() / cfg.RecentPathsFilename;
     std::error_code ec;
     std::filesystem::create_directories(p.parent_path(), ec);
     std::ofstream out(p, std::ios::binary | std::ios::trunc);
@@ -55,7 +70,11 @@ static void RecentPathsSave() {
 static void RecentPathsLoad() {
     try {
         s_RecentPaths.clear();
-        const auto p = ToolsStateDir() / "solstice_tools_recent.txt";
+        RuntimeConfig cfg = RuntimeConfigCopy();
+        if (cfg.RecentPathsFilename.empty()) {
+            cfg.RecentPathsFilename = "solstice_tools_recent.txt";
+        }
+        const auto p = ToolsStateDir() / cfg.RecentPathsFilename;
         std::ifstream in(p, std::ios::binary);
         if (!in) {
             return;
@@ -83,8 +102,9 @@ static void RecentPathsEnsureLoaded() {
     std::call_once(s_recentPathsLoadedOnce, RecentPathsLoad);
 }
 
-/// Segoe UI on Windows when available; override with `SOLSTICE_UI_FONT` (path to .ttf). Called after ImGui + GL backend init.
-static void ApplySolsticeUiFontAndStyle() {
+/// Segoe UI on Windows when available; override with runtime-configured env var (path to .ttf).
+/// Called after ImGui + GL backend init.
+static void ApplyUiFontAndStyle(const RuntimeConfig& config) {
     ImGuiIO& io = ImGui::GetIO();
 #ifdef IMGUI_HAS_DOCK
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
@@ -102,7 +122,7 @@ static void ApplySolsticeUiFontAndStyle() {
     st.ItemSpacing = ImVec2(9.0f, 6.0f);
     st.ItemInnerSpacing = ImVec2(7.0f, 5.0f);
 
-    if (const char* envFont = std::getenv("SOLSTICE_UI_FONT")) {
+    if (const char* envFont = std::getenv(config.UiFontEnvVar.c_str())) {
         if (ImFont* f = io.Fonts->AddFontFromFileTTF(envFont, 18.0f, nullptr, io.Fonts->GetGlyphRangesDefault())) {
             io.FontDefault = f;
         }
@@ -188,12 +208,21 @@ bool Context::Initialize(SDL_Window* window) {
         m_Context = ImGui::CreateContext();
         ImGui::SetCurrentContext(m_Context);
 
+        const RuntimeConfig cfg = RuntimeConfigCopy();
         const char* base = SDL_GetBasePath();
         if (base) {
-            s_ImgIniPath = std::string(base) + "solstice_tools_imgui.ini";
+            if (!cfg.StateDirectory.empty()) {
+                s_ImgIniPath = (std::filesystem::path(cfg.StateDirectory) / cfg.ImGuiIniFilename).string();
+            } else {
+                s_ImgIniPath = (std::filesystem::path(base) / cfg.ImGuiIniFilename).string();
+            }
             // SDL3: SDL_GetBasePath() returns a cached internal pointer; do not SDL_free it (SDL_filesystem.c CachedBasePath).
         } else {
-            s_ImgIniPath = "solstice_tools_imgui.ini";
+            if (!cfg.StateDirectory.empty()) {
+                s_ImgIniPath = (std::filesystem::path(cfg.StateDirectory) / cfg.ImGuiIniFilename).string();
+            } else {
+                s_ImgIniPath = cfg.ImGuiIniFilename;
+            }
         }
         ImGui::SetCurrentContext(m_Context);
         ImGui::GetIO().IniFilename = s_ImgIniPath.c_str();
@@ -230,7 +259,7 @@ bool Context::Initialize(SDL_Window* window) {
             return false;
         }
 
-        ApplySolsticeUiFontAndStyle();
+        ApplyUiFontAndStyle(cfg);
 
         LibUI::Tools::GlLogDriverInfo();
         LibUI::Tools::GlFlushErrors("after ImGui_ImplOpenGL3_Init");
@@ -238,9 +267,9 @@ bool Context::Initialize(SDL_Window* window) {
             LibUI::Tools::GlTryInstallDebugMessenger();
         }
 
-        if (LibUI::Tools::EnvVarTruthy("SOLSTICE_ENABLE_ICON_FONT")) {
+        if (LibUI::Tools::EnvVarTruthy(cfg.EnableIconFontEnvVar.c_str())) {
             bool iconLoaded = false;
-            if (const char* iconEnv = std::getenv("SOLSTICE_ICON_FONT")) {
+            if (const char* iconEnv = std::getenv(cfg.IconFontEnvVar.c_str())) {
                 if (Icons::TryLoadIconFontPackFromFile(iconEnv, 16.f)) {
                     iconLoaded = true;
                 }
@@ -368,6 +397,48 @@ bool Initialize(SDL_Window* window) {
 
 void Shutdown() {
     Context::Instance().Shutdown();
+}
+
+void ConfigureRuntime(const RuntimeConfig& config) {
+    std::lock_guard<std::mutex> lock(s_RuntimeConfigMutex);
+    s_RuntimeConfig = config;
+    if (s_RuntimeConfig.AppDisplayName.empty()) {
+        s_RuntimeConfig.AppDisplayName = "Solstice";
+    }
+    if (s_RuntimeConfig.ImGuiIniFilename.empty()) {
+        s_RuntimeConfig.ImGuiIniFilename = "solstice_tools_imgui.ini";
+    }
+    if (s_RuntimeConfig.RecentPathsFilename.empty()) {
+        s_RuntimeConfig.RecentPathsFilename = "solstice_tools_recent.txt";
+    }
+    if (s_RuntimeConfig.UiFontEnvVar.empty()) {
+        s_RuntimeConfig.UiFontEnvVar = "SOLSTICE_UI_FONT";
+    }
+    if (s_RuntimeConfig.EnableIconFontEnvVar.empty()) {
+        s_RuntimeConfig.EnableIconFontEnvVar = "SOLSTICE_ENABLE_ICON_FONT";
+    }
+    if (s_RuntimeConfig.IconFontEnvVar.empty()) {
+        s_RuntimeConfig.IconFontEnvVar = "SOLSTICE_ICON_FONT";
+    }
+    if (s_RuntimeConfig.DiagLogEnvVar.empty()) {
+        s_RuntimeConfig.DiagLogEnvVar = "SOLSTICE_DIAG_LOG";
+    }
+    if (s_RuntimeConfig.DiagLogFilename.empty()) {
+        s_RuntimeConfig.DiagLogFilename = "SolsticeTools_diag.txt";
+    }
+    if (s_RuntimeConfig.FullDumpEnvVar.empty()) {
+        s_RuntimeConfig.FullDumpEnvVar = "SOLSTICE_FULL_DUMP";
+    }
+    if (s_RuntimeConfig.CrashLogFilename.empty()) {
+        s_RuntimeConfig.CrashLogFilename = "SolsticeCrash.log";
+    }
+    if (s_RuntimeConfig.CrashDumpPrefix.empty()) {
+        s_RuntimeConfig.CrashDumpPrefix = "Solstice";
+    }
+}
+
+RuntimeConfig GetRuntimeConfig() {
+    return RuntimeConfigCopy();
 }
 
 void NewFrame() {

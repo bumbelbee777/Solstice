@@ -9,6 +9,8 @@
 #include <Math/Quaternion.hxx>
 #include <bgfx/bgfx.h>
 #include <SDL3/SDL.h>
+#include <Entity/Registry.hxx>
+#include <Physics/Integration/PhysicsSystem.hxx>
 
 #include <array>
 #include <chrono>
@@ -73,6 +75,7 @@ static void BuildStressScene(Scene& scene,
 }
 
 int main() {
+    const bool enablePhysicsStress = true;
     std::array<PhaseConfig, 3> phases{{
         {"Warmup-150K", 150000u, 8.0f},
         {"Crunch-500K", 500000u, 8.0f},
@@ -87,6 +90,11 @@ int main() {
     renderer.SetHybridMode(false);
     renderer.SetMLEnabled(false);
     std::cout << "Renderer initialized, preparing scenes..." << std::endl;
+    ECS::Registry physicsRegistry;
+    if (enablePhysicsStress) {
+        Physics::PhysicsSystem::Instance().Start(physicsRegistry);
+        renderer.BindECSRegistry(&physicsRegistry);
+    }
 
     MeshLibrary meshLib;
     Core::MaterialLibrary matLib;
@@ -127,6 +135,9 @@ int main() {
         Scene& scene = *currentScene;
 
         renderer.Clear(Vec4(0.05f, 0.08f, 0.12f, 1.0f));
+        if (enablePhysicsStress) {
+            Physics::PhysicsSystem::Instance().Update(static_cast<float>(dt));
+        }
         renderer.RenderScene(scene, camera);
 
         const auto& rs = renderer.GetStats();
@@ -214,5 +225,8 @@ int main() {
                   << " avg_draw=" << avgDrawCalls << "\n";
     }
 
+    if (enablePhysicsStress) {
+        Physics::PhysicsSystem::Instance().Stop();
+    }
     return 0;
 }

@@ -10,7 +10,9 @@ namespace Solstice::Scripting {
     struct MemoryIssue {
         enum class Kind {
             UseAfterFree,
-            DoubleFree
+            DoubleFree,
+            InvalidDeref,
+            InvalidReset
         };
 
         Kind kind;

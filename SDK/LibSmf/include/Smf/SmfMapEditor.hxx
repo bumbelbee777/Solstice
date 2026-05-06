@@ -203,6 +203,61 @@ inline void ValidateMapStructure(const SmfMap& map, std::vector<SmfMapValidation
             }
         }
     }
+
+    for (std::size_t i = 0; i < map.SoftBodyVolumes.size(); ++i) {
+        const auto& s = map.SoftBodyVolumes[i];
+        for (std::size_t j = i + 1; j < map.SoftBodyVolumes.size(); ++j) {
+            if (!s.Name.empty() && s.Name == map.SoftBodyVolumes[j].Name) {
+                SmfMapValidationMessage m;
+                m.Level = SmfMapValidationMessage::Severity::Error;
+                m.Text = "Duplicate soft-body volume name '" + s.Name + "' at indices " + std::to_string(i) + " and "
+                    + std::to_string(j) + ".";
+                outMessages.push_back(std::move(m));
+            }
+        }
+        if (!s.Enabled) {
+            continue;
+        }
+        if (s.GridWidth < kSmfSoftBodyGridMin || s.GridHeight < kSmfSoftBodyGridMin
+            || s.GridWidth > kSmfSoftBodyGridMax || s.GridHeight > kSmfSoftBodyGridMax) {
+            SmfMapValidationMessage m;
+            m.Level = SmfMapValidationMessage::Severity::Warning;
+            m.Text = "Soft-body '" + (s.Name.empty() ? std::string("(unnamed)") : s.Name)
+                + "': grid should stay in [" + std::to_string(kSmfSoftBodyGridMin) + ", "
+                + std::to_string(kSmfSoftBodyGridMax) + "].";
+            outMessages.push_back(std::move(m));
+        }
+        if (s.NodeSpacing <= 0.0f || s.NodeMass <= 0.0f || s.SolverIterations <= 0) {
+            SmfMapValidationMessage m;
+            m.Level = SmfMapValidationMessage::Severity::Error;
+            m.Text = "Soft-body '" + (s.Name.empty() ? std::string("(unnamed)") : s.Name)
+                + "': spacing, mass, and solver iterations must be positive.";
+            outMessages.push_back(std::move(m));
+        }
+    }
+
+    for (std::size_t i = 0; i < map.VehicleVolumes.size(); ++i) {
+        const auto& v = map.VehicleVolumes[i];
+        for (std::size_t j = i + 1; j < map.VehicleVolumes.size(); ++j) {
+            if (!v.Name.empty() && v.Name == map.VehicleVolumes[j].Name) {
+                SmfMapValidationMessage m;
+                m.Level = SmfMapValidationMessage::Severity::Error;
+                m.Text = "Duplicate vehicle volume name '" + v.Name + "' at indices " + std::to_string(i) + " and "
+                    + std::to_string(j) + ".";
+                outMessages.push_back(std::move(m));
+            }
+        }
+        if (!v.Enabled) {
+            continue;
+        }
+        if (v.WheelBase <= 0.0f || v.TrackWidth <= 0.0f || v.Mass <= 0.0f || v.EngineForce < 0.0f || v.BrakeForce < 0.0f) {
+            SmfMapValidationMessage m;
+            m.Level = SmfMapValidationMessage::Severity::Error;
+            m.Text = "Vehicle '" + (v.Name.empty() ? std::string("(unnamed)") : v.Name)
+                + "': wheelbase/track/mass must be positive and forces non-negative.";
+            outMessages.push_back(std::move(m));
+        }
+    }
 }
 
 } // namespace Solstice::Smf

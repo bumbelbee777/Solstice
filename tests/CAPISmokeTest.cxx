@@ -21,6 +21,7 @@
 #endif
 
 static int g_PluginBusHits = 0;
+static int g_ScriptingPrintHookHits = 0;
 
 extern "C" void SolsticeSmoke_PluginBusCb(
     uint32_t SenderPluginId,
@@ -36,6 +37,13 @@ extern "C" void SolsticeSmoke_PluginBusCb(
     (void)PayloadSize;
     if (ChannelUtf8 && std::strcmp(ChannelUtf8, "capismoke.plugin.bus") == 0) {
         g_PluginBusHits++;
+    }
+}
+
+extern "C" void SolsticeSmoke_ScriptingPrintHook(const char* LineUtf8, void* UserData) {
+    (void)UserData;
+    if (LineUtf8 && LineUtf8[0] != '\0') {
+        ++g_ScriptingPrintHookHits;
     }
 }
 
@@ -479,6 +487,40 @@ int TestAudioModule() {
     if (SolsticeV1_AudioSetReverbPreset(1) != SolsticeV1_ResultSuccess) {
         return Fail(145, "SolsticeV1_AudioSetReverbPreset failed");
     }
+    SolsticeV1_AudioSetHRTFEnabled(1);
+    if (SolsticeV1_AudioIsHRTFEnabled() == 0) {
+        return Fail(145, "SolsticeV1_AudioIsHRTFEnabled failed");
+    }
+    SolsticeV1_AudioSetHeadRadius(0.09f);
+    SolsticeV1_AudioSetWaveTracingEnabled(1);
+    if (SolsticeV1_AudioIsWaveTracingEnabled() == 0) {
+        return Fail(145, "SolsticeV1_AudioIsWaveTracingEnabled failed");
+    }
+    SolsticeV1_AudioSetMaxRays(192);
+    SolsticeV1_AudioSetMaxBounces(4);
+    SolsticeV1_AudioSetAmbisonicOrder(2);
+    if (SolsticeV1_AudioGetAmbisonicOrder() < 1) {
+        return Fail(145, "SolsticeV1_AudioGetAmbisonicOrder failed");
+    }
+    SolsticeV1_AudioSetFluidCouplingEnabled(1);
+    if (SolsticeV1_AudioIsFluidCouplingEnabled() == 0) {
+        return Fail(145, "SolsticeV1_AudioIsFluidCouplingEnabled failed");
+    }
+    const float ident[16] = {
+        1,0,0,0,
+        0,1,0,0,
+        0,0,1,0,
+        0,0,0,1
+    };
+    SolsticeV1_AudioSetPortalTransform(ident, 1);
+    SolsticeV1_AudioClearPortalTransform();
+    SolsticeV1_AudioSetMLSpatializationEnabled(1);
+    if (SolsticeV1_AudioIsMLSpatializationEnabled() == 0) {
+        return Fail(145, "SolsticeV1_AudioIsMLSpatializationEnabled failed");
+    }
+    SolsticeV1_AudioTrainMLModel();
+    SolsticeV1_AudioSaveMLWeights("assets/ml/audio_weights.bin");
+    SolsticeV1_AudioLoadMLWeights("assets/ml/audio_weights.bin");
     SolsticeV1_AudioEmitterHandle emitter = 0;
     if (SolsticeV1_AudioCreateEmitter(nullptr, 0.0f, 0.0f, 0.0f, 20.0f, SolsticeV1_False, &emitter) != SolsticeV1_ResultFailure) {
         return Fail(146, "SolsticeV1_AudioCreateEmitter should fail for null path");
@@ -531,6 +573,9 @@ int TestVideoModule() {
 int TestScriptingModule() {
     char compileError[256] = {};
     const char* script = R"(
+        function Hooked() {
+            print("hooked", 7);
+        }
         @Entry {
             let x = 21;
             let y = 21;
@@ -546,6 +591,26 @@ int TestScriptingModule() {
     if (SolsticeV1_ScriptingExecute(script, output, sizeof(output), execError, sizeof(execError))
         != SolsticeV1_ResultSuccess) {
         return FailWithDetail(161, "SolsticeV1_ScriptingExecute failed", execError);
+    }
+    if (std::strstr(output, "sum 42") == nullptr) {
+        return Fail(162, "SolsticeV1_ScriptingExecute output missing expected print line");
+    }
+
+    g_ScriptingPrintHookHits = 0;
+    SolsticeV1_ScriptingSetPrintHook(&SolsticeSmoke_ScriptingPrintHook, nullptr);
+    std::memset(output, 0, sizeof(output));
+    std::memset(execError, 0, sizeof(execError));
+    if (SolsticeV1_ScriptingExecuteExport(script, "Hooked", output, sizeof(output), execError, sizeof(execError))
+        != SolsticeV1_ResultSuccess) {
+        SolsticeV1_ScriptingSetPrintHook(nullptr, nullptr);
+        return FailWithDetail(163, "SolsticeV1_ScriptingExecuteExport failed", execError);
+    }
+    SolsticeV1_ScriptingSetPrintHook(nullptr, nullptr);
+    if (g_ScriptingPrintHookHits <= 0) {
+        return Fail(164, "Scripting print hook was not invoked");
+    }
+    if (std::strstr(output, "hooked 7") == nullptr) {
+        return Fail(165, "SolsticeV1_ScriptingExecuteExport output mismatch");
     }
 
     // Stress compile path without repeatedly triggering JIT backend startup logs.
@@ -564,7 +629,7 @@ int TestScriptingModule() {
         std::memset(compileError, 0, sizeof(compileError));
         if (SolsticeV1_ScriptingCompile(stressCompileScript, compileError, sizeof(compileError))
             != SolsticeV1_ResultSuccess) {
-            return FailWithDetail(162, "Repeated SolsticeV1_ScriptingCompile failed", compileError);
+            return FailWithDetail(166, "Repeated SolsticeV1_ScriptingCompile failed", compileError);
         }
     }
     return 0;

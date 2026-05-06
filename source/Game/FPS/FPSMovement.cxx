@@ -2,7 +2,6 @@
 #include "SnowSystem.hxx"
 #include "../../Core/Debug/Debug.hxx"
 #include "../../Physics/Integration/PhysicsSystem.hxx"
-#include "../../Physics/Integration/ReactPhysics3DBridge.hxx"
 #include <cmath>
 #include <algorithm>
 
@@ -31,10 +30,6 @@ void FPSMovementSystem::Update(ECS::Registry& Registry, float DeltaTime, Render:
         // Update movement (modifies velocity)
         UpdateMovement(Registry, entity, movement, Camera, DeltaTime, SnowSys);
 
-        // CRITICAL: Sync velocity to ReactPhysics3D IMMEDIATELY after setting it
-        // This ensures ReactPhysics3D has the correct velocity before physics runs
-        Physics::ReactPhysics3DBridge& MovementBridge = Physics::PhysicsSystem::Instance().GetBridge();
-
         // Apply snow resistance to velocity before syncing (if snow is enabled)
         if (movement.EnableSnowMovement && movement.SnowResistanceMultiplier > 0.0f) {
             Math::Vec3 horizontalVel = rb.Velocity;
@@ -49,8 +44,6 @@ void FPSMovementSystem::Update(ECS::Registry& Registry, float DeltaTime, Render:
             }
         }
 
-        MovementBridge.SyncToReactPhysics3D();
-
         // Store desired horizontal velocity AFTER movement update for post-physics re-application
         Math::Vec3 desiredHorizontalVel = rb.Velocity;
         desiredHorizontalVel.y = 0.0f;
@@ -60,8 +53,6 @@ void FPSMovementSystem::Update(ECS::Registry& Registry, float DeltaTime, Render:
             desiredHorizontalVel = Math::Vec3(0, 0, 0);
             rb.Velocity.x = 0.0f;
             rb.Velocity.z = 0.0f;
-            // Sync the zeroed velocity
-            MovementBridge.SyncToReactPhysics3D();
         }
 
         // Store desired velocity in movement component for post-physics re-application
@@ -106,10 +97,6 @@ void FPSMovementSystem::Update(ECS::Registry& Registry, float DeltaTime, Render:
             }
         }
 
-        // Sync velocity to ReactPhysics3D immediately after modifying it
-        Physics::ReactPhysics3DBridge& Bridge = Physics::PhysicsSystem::Instance().GetBridge();
-        Bridge.SyncToReactPhysics3D();
-
         // Update desired velocity after movement update (in case it changed)
         Math::Vec3 currentHorizontalVel = rb.Velocity;
         currentHorizontalVel.y = 0.0f;
@@ -143,8 +130,6 @@ void FPSMovementSystem::Update(ECS::Registry& Registry, float DeltaTime, Render:
             float speed = rb.Velocity.Magnitude();
             if (speed > movement.MaxVelocity) {
                 rb.Velocity = rb.Velocity.Normalized() * movement.MaxVelocity;
-                // Re-sync after clamping
-                Bridge.SyncToReactPhysics3D();
             }
         }
     });
@@ -281,8 +266,6 @@ void FPSMovementSystem::UpdateMovement(ECS::Registry& Registry, ECS::EntityId En
                 }
                 rb.Velocity.x = horizontalVel.x;
                 rb.Velocity.z = horizontalVel.z;
-                Physics::ReactPhysics3DBridge& Bridge = Physics::PhysicsSystem::Instance().GetBridge();
-                Bridge.SyncToReactPhysics3D();
             }
         }
         return;
@@ -375,9 +358,6 @@ void FPSMovementSystem::ApplyGroundMovement(Physics::RigidBody& RB, FPSMovement&
         RB.Friction = 0.6f; // Default friction
     }
 
-    // Immediately sync to ReactPhysics3D to ensure velocity is applied
-    Physics::ReactPhysics3DBridge& Bridge = Physics::PhysicsSystem::Instance().GetBridge();
-    Bridge.SyncToReactPhysics3D();
 }
 
 void FPSMovementSystem::ApplyAirMovement(Physics::RigidBody& RB, FPSMovement& Movement,

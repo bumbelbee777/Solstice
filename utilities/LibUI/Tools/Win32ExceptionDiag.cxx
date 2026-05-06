@@ -1,4 +1,5 @@
 #include "LibUI/Tools/Win32ExceptionDiag.hxx"
+#include "LibUI/Core/Core.hxx"
 
 #if defined(_WIN32)
 
@@ -7,10 +8,22 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 namespace LibUI::Tools {
 
 namespace {
+
+char s_CrashLogName[128] = "SolsticeCrash.log";
+char s_FullDumpEnvName[128] = "SOLSTICE_FULL_DUMP";
+char s_CrashDumpPrefix[128] = "Solstice";
+
+void RefreshCrashConfigFromCore() {
+    const LibUI::Core::RuntimeConfig cfg = LibUI::Core::GetRuntimeConfig();
+    strncpy_s(s_CrashLogName, sizeof(s_CrashLogName), cfg.CrashLogFilename.c_str(), _TRUNCATE);
+    strncpy_s(s_FullDumpEnvName, sizeof(s_FullDumpEnvName), cfg.FullDumpEnvVar.c_str(), _TRUNCATE);
+    strncpy_s(s_CrashDumpPrefix, sizeof(s_CrashDumpPrefix), cfg.CrashDumpPrefix.c_str(), _TRUNCATE);
+}
 
 void WriteCrashChunk(const char* data, int len) {
     if (len <= 0) {
@@ -23,7 +36,7 @@ void WriteCrashChunk(const char* data, int len) {
     }
     char tmpPath[MAX_PATH * 2]{};
     const DWORD n = GetTempPathA(static_cast<DWORD>(sizeof(tmpPath)), tmpPath);
-    if (n > 0 && n < sizeof(tmpPath) && strcat_s(tmpPath, sizeof(tmpPath), "SolsticeCrash.log") == 0) {
+    if (n > 0 && n < sizeof(tmpPath) && strcat_s(tmpPath, sizeof(tmpPath), s_CrashLogName) == 0) {
         const HANDLE hFile = CreateFileA(tmpPath, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
             OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (hFile != INVALID_HANDLE_VALUE) {
@@ -59,7 +72,7 @@ bool EnvTruthy(const char* name) {
 #if defined(_M_X64)
 
 void WriteMiniDumpMaybe(_EXCEPTION_POINTERS* ep) {
-    if (!EnvTruthy("SOLSTICE_FULL_DUMP") || !ep) {
+    if (!EnvTruthy(s_FullDumpEnvName) || !ep) {
         return;
     }
     char path[MAX_PATH * 2]{};
@@ -68,7 +81,8 @@ void WriteMiniDumpMaybe(_EXCEPTION_POINTERS* ep) {
         return;
     }
     char suffix[64]{};
-    _snprintf_s(suffix, sizeof(suffix), _TRUNCATE, "Solstice_%08lx.dmp", static_cast<unsigned long>(GetTickCount()));
+    _snprintf_s(suffix, sizeof(suffix), _TRUNCATE, "%s_%08lx.dmp", s_CrashDumpPrefix,
+        static_cast<unsigned long>(GetTickCount()));
     if (strcat_s(path, sizeof(path), suffix) != 0) {
         return;
     }
@@ -197,7 +211,7 @@ void LogStackX64(_EXCEPTION_POINTERS* ep) {
 
 } // namespace
 
-static const char* s_UtilitySehTag = "Solstice";
+static std::string s_UtilitySehTag = "Solstice";
 static PVOID s_VectoredHandlerHandle = nullptr;
 static volatile LONG s_ShutdownMode = 0;
 
@@ -229,7 +243,7 @@ LONG WINAPI Win32VectoredCrashLogger(struct _EXCEPTION_POINTERS* ep) {
     }
     char buf[384]{};
     _snprintf_s(buf, sizeof(buf), _TRUNCATE, "%s VECTORED FATAL: code=0x%08lX addr=%p\r\n",
-        s_UtilitySehTag ? s_UtilitySehTag : "Solstice",
+        s_UtilitySehTag.empty() ? "Solstice" : s_UtilitySehTag.c_str(),
         static_cast<unsigned long>(ep->ExceptionRecord->ExceptionCode), ep->ExceptionRecord->ExceptionAddress);
     WriteCrashLine(buf);
     Win32LogExceptionStack(ep);
@@ -248,7 +262,7 @@ LONG WINAPI Win32UtilityTopLevelExceptionFilter(_EXCEPTION_POINTERS* ep) {
     }
     char buf[384]{};
     _snprintf_s(buf, sizeof(buf), _TRUNCATE, "%s FATAL: code=0x%08lX addr=%p\r\n",
-        s_UtilitySehTag ? s_UtilitySehTag : "Solstice",
+        s_UtilitySehTag.empty() ? "Solstice" : s_UtilitySehTag.c_str(),
         static_cast<unsigned long>(ep->ExceptionRecord->ExceptionCode), ep->ExceptionRecord->ExceptionAddress);
     OutputDebugStringA(buf);
     DWORD written = 0;
@@ -261,11 +275,17 @@ LONG WINAPI Win32UtilityTopLevelExceptionFilter(_EXCEPTION_POINTERS* ep) {
 }
 
 LIBUI_API void Win32InstallUtilityTopLevelFilter(const char* appLabelUtf8) {
-    s_UtilitySehTag = (appLabelUtf8 && appLabelUtf8[0] != '\0') ? appLabelUtf8 : "Solstice";
+    RefreshCrashConfigFromCore();
+    if (appLabelUtf8 && appLabelUtf8[0] != '\0') {
+        s_UtilitySehTag = appLabelUtf8;
+    } else {
+        s_UtilitySehTag = LibUI::Core::GetRuntimeConfig().AppDisplayName;
+    }
     SetUnhandledExceptionFilter(Win32UtilityTopLevelExceptionFilter);
 }
 
 LIBUI_API void Win32InitCrashDiagnostics() {
+    RefreshCrashConfigFromCore();
     SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES | SYMOPT_FAIL_CRITICAL_ERRORS);
     SymInitialize(GetCurrentProcess(), nullptr, TRUE);
     if (!s_VectoredHandlerHandle) {

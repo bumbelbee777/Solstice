@@ -41,6 +41,7 @@ add_executable(MovieMaker
     "SmmGltf.cxx"
     "Media/SmmImage.cxx"
     "Media/SmmAudio.cxx"
+    "Media/SmmAudioMix.cxx"
     "Editing/SmmCurveGraphBridge.cxx"
     "Editing/SmmCurveEditor.cxx"
     "Editing/SmmGraphEditor.cxx"
@@ -49,10 +50,19 @@ add_executable(MovieMaker
     "Editing/SmmFluidPanel.cxx"
     "FfmpegUtil.cxx"
     "VideoExport.cxx"
+    "Cache/FrameCache.cxx"
+    "Export/SharedPreviewMapping.cxx"
     "Workflow/Workflow.cxx"
     "UI/Panels/ComingSoonPanels.cxx"
     "UI/Panels/PreviewPanels.cxx"
 )
+
+# OpenMP enables tile-parallel CPU paths used by composite and audio mixdown helpers.
+find_package(OpenMP QUIET)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(MovieMaker PRIVATE OpenMP::OpenMP_CXX)
+    target_compile_definitions(MovieMaker PRIVATE SOLSTICE_HAVE_OPENMP=1)
+endif()
 
 # LibParallax pulls engine static libs (Core, Math, …) for PARALLAX I/O.
 # ffmpeg: optional CLI — runtime probe/test encode / video pipe; no linked libav.

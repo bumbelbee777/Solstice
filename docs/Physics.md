@@ -4,6 +4,8 @@
 
 The Solstice physics system provides rigid body dynamics, collision detection, and resolution. It integrates with ReactPhysics3D for robust physics simulation while maintaining a custom ECS-based component system. The system supports multiple collider types, continuous collision detection (CCD), and async physics updates.
 
+The runtime now exposes a backend-neutral contract through `IPhysicsBackend` and `PhysicsSystem` query APIs so gameplay, scripting, and rendering code no longer need direct ReactPhysics3D access.
+
 ## Architecture
 
 The physics system consists of:
@@ -139,11 +141,15 @@ void RegisterFluidSimulation(FluidSimulation* fluid);
 void UnregisterFluidSimulation(FluidSimulation* fluid);
 ```
 
-#### Bridge Access
+#### Backend-neutral Queries
 
 ```cpp
-// Get ReactPhysics3D bridge
-ReactPhysics3DBridge& GetBridge();
+RaycastHit RaycastClosest(const RaycastRequest& request);
+bool RaycastAny(const RaycastRequest& request);
+std::vector<RaycastAllHit> RaycastAll(const RaycastRequest& request);
+std::vector<ECS::EntityId> OverlapSphere(const Math::Vec3& center, float radius);
+std::vector<ECS::EntityId> OverlapAabb(const Math::Vec3& min, const Math::Vec3& max);
+PhysicsDebugDrawData GetDebugDrawData();
 ```
 
 ### RigidBody
@@ -303,12 +309,71 @@ void CreateBody(ECS::EntityId entityId, RigidBody& rigidBody);
 void RemoveBody(ECS::EntityId entityId);
 ```
 
-#### Physics World Access
+#### Backend contract
 
 ```cpp
-// Get ReactPhysics3D physics world
-reactphysics3d::PhysicsWorld* GetPhysicsWorld() const;
+// Implemented by backend adapters (ReactPhysics3D today, in-house backend later)
+class IPhysicsBackend {
+    virtual RaycastHit RaycastClosest(const RaycastRequest&) = 0;
+    virtual std::vector<ECS::EntityId> OverlapAabb(const Math::Vec3&, const Math::Vec3&) = 0;
+    virtual PhysicsDebugDrawData BuildDebugDrawData() = 0;
+    // ... plus sync/update and solver config
+};
 ```
+
+#### Future modality placeholders
+
+Vehicle and soft-body types are both active runtime data now:
+- `PhysicsSystem` runs an arcade vehicle pass (`Vehicle` + `RigidBody`) each fixed substep.
+- `PhysicsSystem` runs a fixed-step Position-Based Solver (PBS/PBD) pass over `SoftBody` components each substep.
+
+### Vehicle dynamics pipeline
+
+```cpp
+VehicleConfig cfg{};
+cfg.WheelBase = 2.7f;
+cfg.TrackWidth = 1.7f;
+cfg.Mass = 1350.0f;
+cfg.EngineForce = 11000.0f;
+cfg.BrakeForce = 7000.0f;
+cfg.MaxSteerAngleRadians = 0.55f;
+
+PhysicsSystem::Instance().CreateVehicleStub(entityId, cfg);
+```
+
+Runtime per fixed substep:
+1. Convert body velocity to local-space chassis frame
+2. Compute steer yaw target from wheelbase + steer angle + forward speed
+3. Apply Ackermann steering (front-left/front-right inner/outer wheel angle split)
+4. Apply engine/brake force with speed scaling and longitudinal grip clamping
+5. Apply lateral tire damping + differential bias in local chassis space
+6. Scale grip by coarse surface class (ice/dirt/asphalt from body friction)
+7. Solve per-wheel suspension compression using spring + damping from travel velocity
+8. Track wheel angular speed and slip ratio telemetry
+
+Vehicle telemetry counters exposed via profiler:
+- `Physics.VehicleSlipMeanAbs` (mean absolute slip ratio across wheels)
+- `Physics.VehicleSlipMaxAbs` (peak absolute slip ratio in the current step)
+
+### Soft body PBS pipeline
+
+```cpp
+// Add or update a soft body on an entity
+SoftBodyConfig cfg{};
+cfg.GridWidth = 16;
+cfg.GridHeight = 16;
+cfg.NodeSpacing = 0.2f;
+cfg.SolverIterations = 10;
+cfg.AnchorTopRow = true;
+
+PhysicsSystem::Instance().CreateSoftBodyStub(entityId, cfg);
+```
+
+At runtime each fixed substep:
+1. Predict node positions from velocity + gravity/wind
+2. Iterate distance constraints (structural/shear/bend stiffness tiers)
+3. Project against the ground plane
+4. Write back node velocities/positions and optional entity `RigidBody` centroid
 
 ### BVH (Bounding Volume Hierarchy)
 
@@ -607,4 +672,16 @@ registry.ForEach<RigidBody, ECS::Transform>([](
 - **0.5**: Moderate bounce (default)
 - **0.8**: High bounce (rubber ball)
 - **1.0**: Perfect bounce (superball, not physically realistic)
+
+## Portal authoring helpers (gameplay)
+
+ECS portals used with `ResolvePhysicsPortalCrossings` can be spawned and linked via `Solstice::Game` helpers in [`source/Game/Gameplay/PortalFactory.hxx`](../source/Game/Gameplay/PortalFactory.hxx):
+
+- `MakeInvisiblePortal` / `MakeInvisiblePortalFloorOpening` — debug/particle-free defaults for “invisible” warps.
+- `LinkBidirectionalPortals` — sets `Partner` on both entities and clears `ManualTopology`.
+- `CreateVerticalLoopPortalPair` — paired horizontal apertures at a floor and ceiling height with shared orientation so auto-topology is approximately a vertical translation (infinite-fall style rooms).
+
+## Deterministic streams (PCG)
+
+For reproducible procedural layout (mazes, loot tables, prop variation), use [`source/Core/DeterministicStream.hxx`](../source/Core/DeterministicStream.hxx) (`Solstice::Core::DeterministicStream`): one `uint64_t` master seed plus distinct `streamTag` / `StreamTagFourCC` values per subsystem so draws stay independent but fully determined by the seed.
 

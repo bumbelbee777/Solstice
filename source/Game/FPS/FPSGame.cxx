@@ -1,9 +1,13 @@
 #include "FPSGame.hxx"
 #include "FPSMovement.hxx"
 #include "Weapon.hxx"
+#include "../Systems/AudioSystem.hxx"
+#include "../Systems/PortalSystem.hxx"
+#include "../Systems/FacialSystem.hxx"
 #include "../../Core/Debug/Debug.hxx"
 #include "../../Physics/Dynamics/RigidBody.hxx"
 #include "../../Physics/Integration/PhysicsSystem.hxx"
+#include "../../Entity/Components/AudioComponents.hxx"
 #include "../../Entity/Transform.hxx"
 #include "../../UI/Core/UISystem.hxx"
 #include <bgfx/bgfx.h>
@@ -131,6 +135,13 @@ void FPSGame::ConfigureECSPhases() {
         physics.Update(deltaTime);
     });
 
+    static AudioSystem s_AudioSystem;
+    m_ECSScheduler.Register(ECS::SystemPhase::Simulation, "AudioSystem", s_AudioSystem);
+    static FacialSystem s_FacialSystem;
+    m_ECSScheduler.Register(ECS::SystemPhase::Simulation, "FacialSystem", s_FacialSystem);
+    static PortalSystem s_PortalSystem;
+    m_ECSScheduler.Register(ECS::SystemPhase::Simulation, "PortalSystem", s_PortalSystem);
+
     m_ECSScheduler.Register(ECS::SystemPhase::Late, "Weapons", [this](ECS::Registry&, float deltaTime) {
         WeaponSystem::Update(m_Registry, deltaTime);
     });
@@ -163,6 +174,9 @@ void FPSGame::InitializePlayer() {
     rb.Restitution = 0.0f;
     rb.GravityScale = 1.0f;
     rb.LinearDamping = 0.05f; // Low damping for responsive movement
+
+    // Spatial audio: default listener entity for AudioSystem::SyncListener + portal transforms
+    m_Registry.Add<ECS::AudioListener>(m_PlayerEntity, ECS::AudioListener{});
 
     SIMPLE_LOG("FPSGame: Player initialized");
 }

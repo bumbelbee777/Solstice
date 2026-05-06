@@ -8,6 +8,7 @@ namespace Solstice::Scripting {
 
 struct TypeIssue {
     std::string message;
+    size_t instructionIndex = 0;
 };
 
 class StaticTypeChecker {

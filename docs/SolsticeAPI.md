@@ -16,11 +16,11 @@ Stable **C** entry points for tools and hosts that load `SolsticeEngine` (Window
 | --- | --- |
 | [`Common.h`](../SDK/SolsticeAPI/V1/Common.h) | `SOLSTICE_V1_API`, `SolsticeV1_ResultCode`, `SolsticeV1_Bool` |
 | [`Core.h`](../SDK/SolsticeAPI/V1/Core.h) | Engine init/shutdown, version strings |
-| [`Scripting.h`](../SDK/SolsticeAPI/V1/Scripting.h) | Moonwalk compile/execute (`SolsticeV1_ScriptingCompile` / `Execute`) |
+| [`Scripting.h`](../SDK/SolsticeAPI/V1/Scripting.h) | Moonwalk compile/execute, export execution, and print hook (`SolsticeV1_ScriptingCompile` / `Execute` / `ExecuteExport` / `SetPrintHook`) |
 | [`Narrative.h`](../SDK/SolsticeAPI/V1/Narrative.h) | Narrative JSON validate, JSON→YAML |
 | [`Cutscene.h`](../SDK/SolsticeAPI/V1/Cutscene.h) | Cutscene JSON validate (same parse rules as runtime `CutscenePlayer`) |
 | [`Smf.h`](../SDK/SolsticeAPI/V1/Smf.h) | `.smf` binary validate; **`SolsticeV1_SmfApplyGameplay`** pushes zones/lights to engine |
-| [`Audio.h`](../SDK/SolsticeAPI/V1/Audio.h) | Listener, emitters, music hooks |
+| [`Audio.h`](../SDK/SolsticeAPI/V1/Audio.h) | Listener, emitters, music hooks, supercharged HRTF/wave tracing/ambisonics/fluid/portal/ML toggles |
 | [`Physics.h`](../SDK/SolsticeAPI/V1/Physics.h) | World lifetime and stepping |
 | [`Networking.h`](../SDK/SolsticeAPI/V1/Networking.h) | Relay/listen helpers |
 | [`Fluid.h`](../SDK/SolsticeAPI/V1/Fluid.h) | Grid fluid sandbox API |
@@ -36,6 +36,7 @@ Stable **C** entry points for tools and hosts that load `SolsticeEngine` (Window
 - `SolsticeV1_SmmClampPlayhead` clamps editor playhead decisions to valid session bounds.
 - `SolsticeV1_SmmViewerTab` + `SolsticeV1_SmmSetViewerTab` represent viewer selection policy (default `3D viewport`, optional `2D MG`).
 - `SolsticeV1_SmmExportIntent` + `SolsticeV1_SmmCanRunExport` formalize explicit export opt-in checks.
+- MovieMaker `.prlx` export now targets the current breaking Parallax format revision with embedded asset payload sections (legacy `.prlx` compatibility is not guaranteed).
 
 ## Tests
 
@@ -45,3 +46,4 @@ Stable **C** entry points for tools and hosts that load `SolsticeEngine` (Window
 
 - [Utilities](Utilities.md) — Sharpon and other tools that call these exports.
 - [Narrative](Narrative.md) — dialogue/cutscene data shapes and Moonwalk natives.
+- [Audio](Audio.md) — engine-level audio behaviors, and tuning.

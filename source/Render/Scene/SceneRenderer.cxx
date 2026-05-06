@@ -7,6 +7,7 @@
 #include <Material/Material.hxx>
 #include <Core/Debug/Debug.hxx>
 #include <Core/Profiling/ScopeTimer.hxx>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 
@@ -21,6 +22,8 @@ static bgfx::UniformHandle s_TexAlbedo2 = BGFX_INVALID_HANDLE;
 static bgfx::UniformHandle s_TexBlendMask = BGFX_INVALID_HANDLE;
 static bgfx::UniformHandle s_TexRoughness = BGFX_INVALID_HANDLE;
 static bgfx::UniformHandle s_TexMetallic = BGFX_INVALID_HANDLE;
+
+static bgfx::UniformHandle u_SceneLighting = BGFX_INVALID_HANDLE;
 
 // Multi-Light Uniforms
 static bgfx::UniformHandle u_PointLightPos = BGFX_INVALID_HANDLE;
@@ -294,6 +297,9 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
     if (!bgfx::isValid(u_stylize)) {
         u_stylize = bgfx::createUniform("u_stylize", bgfx::UniformType::Vec4);
     }
+    if (!bgfx::isValid(u_SceneLighting)) {
+        u_SceneLighting = bgfx::createUniform("u_SceneLighting", bgfx::UniformType::Vec4);
+    }
     static bgfx::UniformHandle u_LightDir = bgfx::createUniform("u_LightDir", bgfx::UniformType::Vec4);
     static bgfx::UniformHandle u_LightColor = bgfx::createUniform("u_LightColor", bgfx::UniformType::Vec4);
     static bgfx::UniformHandle u_CameraPos = bgfx::createUniform("u_CameraPos", bgfx::UniformType::Vec4);
@@ -316,31 +322,81 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
 
     {
         PROFILE_SCOPE("SceneRenderer::LightsShadowEnv");
-        // Process lights: First directional becomes sun, others become point lights
-        for (const auto& light : m_Lights) {
+        // Primary directional = first directional in source order (others ignored for this forward pass).
+        bool haveDirectionalSun = false;
+        static thread_local std::vector<std::pair<float, size_t>> pointRankedByDistSq;
+        pointRankedByDistSq.clear();
+        pointRankedByDistSq.reserve(m_Lights.size());
+
+        const float camx = camPos.x;
+        const float camy = camPos.y;
+        const float camz = camPos.z;
+
+        for (size_t Li = 0; Li < m_Lights.size(); ++Li) {
+            const auto& light = m_Lights[Li];
             if (light.Type == Physics::LightSource::LightType::Directional) {
-                // First directional is sun
-                lightDir = light.Position.Normalized();
-                lightColor = light.Color;
-                lightIntensity = light.Intensity;
-            } else if (pltCount < 32) {
-                // Add to point lights
+                if (!haveDirectionalSun) {
+                    lightDir = light.Position.Normalized();
+                    lightColor = light.Color;
+                    lightIntensity = light.Intensity;
+                    haveDirectionalSun = true;
+                }
+                continue;
+            }
+            if (light.Type != Physics::LightSource::LightType::Point) {
+                continue; // Spot and other modes are handled elsewhere for now (volumetrics, etc.).
+            }
+
+            float dx = light.Position.x - camx;
+            float dy = light.Position.y - camy;
+            float dz = light.Position.z - camz;
+            const float dsq = dx * dx + dy * dy + dz * dz;
+            pointRankedByDistSq.push_back({ dsq, Li });
+        }
+
+        constexpr int KMaxPt = 32;
+        pltCount = 0;
+        if (pointRankedByDistSq.empty()) {
+            // no-op
+        } else if (static_cast<int>(pointRankedByDistSq.size()) <= KMaxPt) {
+            for (auto& kv : pointRankedByDistSq) {
+                const auto& light = m_Lights[kv.second];
                 pltPos[pltCount * 4 + 0] = light.Position.x;
                 pltPos[pltCount * 4 + 1] = light.Position.y;
                 pltPos[pltCount * 4 + 2] = light.Position.z;
-                pltPos[pltCount * 4 + 3] = light.Range; // Store range in w
-
+                pltPos[pltCount * 4 + 3] = light.Range;
                 pltCol[pltCount * 4 + 0] = light.Color.x;
                 pltCol[pltCount * 4 + 1] = light.Color.y;
                 pltCol[pltCount * 4 + 2] = light.Color.z;
-                pltCol[pltCount * 4 + 3] = light.Intensity; // Store intensity in w
-
+                pltCol[pltCount * 4 + 3] = light.Intensity;
                 pltPrm[pltCount * 4 + 0] = light.Attenuation;
-                pltPrm[pltCount * 4 + 1] = 0.0f; // Padding
-                pltPrm[pltCount * 4 + 2] = 0.0f; // Padding
-                pltPrm[pltCount * 4 + 3] = 0.0f; // Padding
-
-                pltCount++;
+                pltPrm[pltCount * 4 + 1] = 0.0f;
+                pltPrm[pltCount * 4 + 2] = 0.0f;
+                pltPrm[pltCount * 4 + 3] = 0.0f;
+                ++pltCount;
+            }
+        } else {
+            const size_t nk = std::min(pointRankedByDistSq.size(), static_cast<size_t>(KMaxPt));
+            auto endFirstK = pointRankedByDistSq.begin() + static_cast<std::ptrdiff_t>(nk);
+            std::partial_sort(pointRankedByDistSq.begin(), endFirstK, pointRankedByDistSq.end(),
+                              [](const std::pair<float, size_t>& A, const std::pair<float, size_t>& B) {
+                                  return A.first < B.first;
+                              });
+            for (size_t i = 0; i < nk; ++i) {
+                const auto& light = m_Lights[pointRankedByDistSq[i].second];
+                pltPos[pltCount * 4 + 0] = light.Position.x;
+                pltPos[pltCount * 4 + 1] = light.Position.y;
+                pltPos[pltCount * 4 + 2] = light.Position.z;
+                pltPos[pltCount * 4 + 3] = light.Range;
+                pltCol[pltCount * 4 + 0] = light.Color.x;
+                pltCol[pltCount * 4 + 1] = light.Color.y;
+                pltCol[pltCount * 4 + 2] = light.Color.z;
+                pltCol[pltCount * 4 + 3] = light.Intensity;
+                pltPrm[pltCount * 4 + 0] = light.Attenuation;
+                pltPrm[pltCount * 4 + 1] = 0.0f;
+                pltPrm[pltCount * 4 + 2] = 0.0f;
+                pltPrm[pltCount * 4 + 3] = 0.0f;
+                ++pltCount;
             }
         }
 
@@ -358,6 +414,17 @@ void SceneRenderer::RenderScene(Scene& scene, const Camera& camera,
         }
         float numLightsData[4] = { static_cast<float>(pltCount), 0.0f, 0.0f, 0.0f };
         bgfx::setUniform(u_NumPointLights, numLightsData);
+
+        float envBlendEffective = m_SceneLightingTune.EnvIrradianceBlend;
+        if (!(m_Skybox && m_Skybox->IsInitialized() && bgfx::isValid(m_Skybox->GetCubemap()))) {
+            envBlendEffective = 0.0f;
+        }
+        const float sceneLt[4] = {
+            m_SceneLightingTune.AmbientIntensity,
+            envBlendEffective,
+            m_SceneLightingTune.KeyDiffuseWrap,
+            m_SceneLightingTune.ShadowAmbientFill};
+        bgfx::setUniform(u_SceneLighting, sceneLt);
 
         // Set camera position uniform EVERY FRAME - required for correct view direction calculation
         float camPosData[4] = { camPos.x, camPos.y, camPos.z, 0.0f };

@@ -3,6 +3,7 @@ set(SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
 add_library(Physics STATIC
     Integration/PhysicsSystem.cxx
     Integration/ReactPhysics3DBridge.cxx
+    Integration/PortalPhysics.cxx
     Fluid/FluidSparse.cxx
     Fluid/Fluid.cxx
     Fluid/NSSolver.cxx

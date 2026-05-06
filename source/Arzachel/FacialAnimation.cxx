@@ -195,6 +195,46 @@ Math::Vec2 SaccadeOffset(float timeSec, Seed saccadeSeed) {
     return Math::Vec2(std::sin(slow + ax) * 0.35f, std::cos(slow * 0.83f + ay) * 0.35f);
 }
 
+float EvaluateEnvelopeWeight(float timeSec, const ExpressionEnvelope& envelope) {
+    const float attack = std::max(0.001f, envelope.AttackSec);
+    const float hold = std::max(0.0f, envelope.HoldSec);
+    const float release = std::max(0.001f, envelope.ReleaseSec);
+    const float total = attack + hold + release;
+    if (timeSec <= 0.0f) {
+        return 0.0f;
+    }
+    const float t = std::clamp(timeSec, 0.0f, total);
+    float w = 0.0f;
+    if (t < attack) {
+        w = t / attack;
+    } else if (t < attack + hold) {
+        w = 1.0f;
+    } else {
+        const float u = (t - attack - hold) / release;
+        w = 1.0f - u;
+    }
+    const float shape = std::max(0.2f, envelope.Shape);
+    return std::pow(std::clamp(w, 0.0f, 1.0f), shape);
+}
+
+void AdvanceExpressionTimeline(ExpressionTimelineState& ioState, float dtSec) {
+    const float dt = std::max(0.0f, dtSec);
+    ioState.CurrentAgeSec += dt;
+    ioState.TargetAgeSec += dt;
+    ioState.CurrentWeight = ioState.Current ? EvaluateEnvelopeWeight(ioState.CurrentAgeSec, ioState.CurrentEnv) : 0.0f;
+    ioState.TargetWeight = ioState.Target ? EvaluateEnvelopeWeight(ioState.TargetAgeSec, ioState.TargetEnv) : 0.0f;
+}
+
+void BuildStackFromTimeline(ExpressionStack& outStack, const ExpressionTimelineState& state) {
+    outStack.Expressions.clear();
+    if (state.Current && state.CurrentWeight > 1e-5f) {
+        outStack.Expressions.push_back(ExpressionStack::Layer{state.Current, state.CurrentWeight});
+    }
+    if (state.Target && state.TargetWeight > 1e-5f) {
+        outStack.Expressions.push_back(ExpressionStack::Layer{state.Target, state.TargetWeight});
+    }
+}
+
 static void AccumulateBoneOffsetMap(std::unordered_map<std::string, Skeleton::BoneTransform>& m,
     const std::unordered_map<std::string, Skeleton::BoneTransform>& offsets, float weight) {
     weight = std::clamp(weight, 0.f, 1.f);
@@ -217,6 +257,24 @@ static void AccumulateBoneOffsetMap(std::unordered_map<std::string, Skeleton::Bo
             cur.Rotation = (cur.Rotation * qOff).Normalized();
             cur.Scale = Math::Vec3(cur.Scale.x * std::pow(off.Scale.x, weight), cur.Scale.y * std::pow(off.Scale.y, weight),
                 cur.Scale.z * std::pow(off.Scale.z, weight));
+        }
+    }
+}
+
+static void SoftClampMorphs(std::unordered_map<MorphTargetId, float>& ioMorphs, float softClamp, bool normalize) {
+    const float clampMax = std::max(0.25f, softClamp);
+    float maxAbs = 0.0f;
+    for (auto& kv : ioMorphs) {
+        const float x = kv.second;
+        const float s = (x >= 0.0f) ? 1.0f : -1.0f;
+        const float a = std::abs(x);
+        kv.second = s * (clampMax * std::tanh(a / clampMax));
+        maxAbs = std::max(maxAbs, std::abs(kv.second));
+    }
+    if (normalize && maxAbs > 1.0f) {
+        const float inv = 1.0f / maxAbs;
+        for (auto& kv : ioMorphs) {
+            kv.second *= inv;
         }
     }
 }
@@ -324,6 +382,22 @@ const Expression* BuiltinExpressionByName(std::string_view name) {
 void EvaluateFacialAtTimeToMaps(std::unordered_map<std::string, Skeleton::BoneTransform>& outBoneDeltas,
     std::unordered_map<MorphTargetId, float>& outMorphs, const ExpressionStack& stack, const VisemeSet& visemes,
     float timeSec, Seed facialSeed, bool enableBlink, bool enableSaccade) {
+    EvaluateFacialAtTimeToMapsEx(
+        outBoneDeltas,
+        outMorphs,
+        stack,
+        visemes,
+        timeSec,
+        facialSeed,
+        enableBlink,
+        enableSaccade,
+        FacialSolveConfig{}
+    );
+}
+
+void EvaluateFacialAtTimeToMapsEx(std::unordered_map<std::string, Skeleton::BoneTransform>& outBoneDeltas,
+    std::unordered_map<MorphTargetId, float>& outMorphs, const ExpressionStack& stack, const VisemeSet& visemes,
+    float timeSec, Seed facialSeed, bool enableBlink, bool enableSaccade, const FacialSolveConfig& config) {
     outBoneDeltas.clear();
     outMorphs.clear();
     for (const auto& layer : stack.Expressions) {
@@ -332,16 +406,33 @@ void EvaluateFacialAtTimeToMaps(std::unordered_map<std::string, Skeleton::BoneTr
         }
         const float pw =
             PatternWeight(layer.Expr->Pattern, layer.Expr->PatternPeriodSec, timeSec, layer.Expr->VariationSeed);
-        const float w = std::clamp(layer.Weight * pw, 0.f, 1.f);
+        const float w = std::clamp(layer.Weight * pw * std::max(0.0f, config.ExpressionGlobalWeight), 0.f, 1.f);
         AccumulateBoneOffsetMap(outBoneDeltas, layer.Expr->BoneOffsets, w);
         ApplyMorphOffsets(outMorphs, layer.Expr->MorphWeights, w);
     }
 
     if (!stack.VisemeId.empty() && stack.VisemeStrength > 1e-5f) {
-        Viseme v{};
-        if (visemes.TryGet(stack.VisemeId, v)) {
-            AccumulateBoneOffsetMap(outBoneDeltas, v.BoneOffsets, stack.VisemeStrength);
-            ApplyMorphOffsets(outMorphs, v.MorphWeights, stack.VisemeStrength);
+        const float visemeGain = std::max(0.0f, config.VisemeGlobalWeight);
+        const float blend = std::clamp(stack.VisemeBlend, 0.0f, 1.0f);
+        Viseme a{};
+        if (visemes.TryGet(stack.VisemeId, a)) {
+            if (config.EnableVisemeCoarticulation && !stack.NextVisemeId.empty() && blend > 0.001f) {
+                Viseme b{};
+                if (visemes.TryGet(stack.NextVisemeId, b)) {
+                    const Viseme mixed = visemes.Blend(a, b, blend);
+                    const float w = std::clamp(std::lerp(stack.VisemeStrength, stack.NextVisemeStrength, blend) * visemeGain, 0.0f, 1.5f);
+                    AccumulateBoneOffsetMap(outBoneDeltas, mixed.BoneOffsets, w);
+                    ApplyMorphOffsets(outMorphs, mixed.MorphWeights, w);
+                } else {
+                    const float w = std::clamp(stack.VisemeStrength * visemeGain, 0.0f, 1.5f);
+                    AccumulateBoneOffsetMap(outBoneDeltas, a.BoneOffsets, w);
+                    ApplyMorphOffsets(outMorphs, a.MorphWeights, w);
+                }
+            } else {
+                const float w = std::clamp(stack.VisemeStrength * visemeGain, 0.0f, 1.5f);
+                AccumulateBoneOffsetMap(outBoneDeltas, a.BoneOffsets, w);
+                ApplyMorphOffsets(outMorphs, a.MorphWeights, w);
+            }
         }
     }
 
@@ -359,6 +450,15 @@ void EvaluateFacialAtTimeToMaps(std::unordered_map<std::string, Skeleton::BoneTr
         sacOff["eye_R"] = MakeBT(Math::Vec3(sac.x * mag, sac.y * mag, 0), Math::Quaternion(), Math::Vec3(1, 1, 1));
         AccumulateBoneOffsetMap(outBoneDeltas, sacOff, 1.f);
     }
+    SoftClampMorphs(outMorphs, config.MorphSoftClamp, config.NormalizeMorphWeights);
+}
+
+void EvaluateFacialFromTimelineToMaps(std::unordered_map<std::string, Skeleton::BoneTransform>& outBoneDeltas,
+    std::unordered_map<MorphTargetId, float>& outMorphs, const ExpressionTimelineState& state, const ExpressionStack& baseStack,
+    const VisemeSet& visemes, float timeSec, Seed facialSeed, bool enableBlink, bool enableSaccade, const FacialSolveConfig& config) {
+    ExpressionStack stack = baseStack;
+    BuildStackFromTimeline(stack, state);
+    EvaluateFacialAtTimeToMapsEx(outBoneDeltas, outMorphs, stack, visemes, timeSec, facialSeed, enableBlink, enableSaccade, config);
 }
 
 void ApplyNamedBoneDeltasToPose(const Skeleton::Skeleton& sk, Skeleton::Pose& ioPose,

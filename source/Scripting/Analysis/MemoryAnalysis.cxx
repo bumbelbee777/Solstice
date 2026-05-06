@@ -22,6 +22,53 @@ namespace {
         return PtrState::Unknown;
     }
 
+    using RegState = std::unordered_map<uint8_t, PtrState>;
+
+    PtrState GetStateForReg(const RegState& state, uint8_t reg) {
+        auto it = state.find(reg);
+        if (it == state.end()) {
+            return PtrState::Unknown;
+        }
+        return it->second;
+    }
+
+    void SetStateForReg(RegState& state, uint8_t reg, PtrState value) {
+        state[reg] = value;
+    }
+
+    RegState MergeRegStates(const RegState& a, const RegState& b) {
+        RegState merged;
+        for (const auto& [reg, stateA] : a) {
+            auto itB = b.find(reg);
+            PtrState stateB = (itB == b.end()) ? PtrState::Unknown : itB->second;
+            merged[reg] = MergeStates(stateA, stateB);
+        }
+        for (const auto& [reg, stateB] : b) {
+            if (merged.find(reg) == merged.end()) {
+                auto itA = a.find(reg);
+                PtrState stateA = (itA == a.end()) ? PtrState::Unknown : itA->second;
+                merged[reg] = MergeStates(stateA, stateB);
+            }
+        }
+        return merged;
+    }
+
+    bool RegStatesEqual(const RegState& a, const RegState& b) {
+        std::unordered_set<uint8_t> regs;
+        for (const auto& [reg, _] : a) {
+            regs.insert(reg);
+        }
+        for (const auto& [reg, _] : b) {
+            regs.insert(reg);
+        }
+        for (uint8_t reg : regs) {
+            if (GetStateForReg(a, reg) != GetStateForReg(b, reg)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     void CollectFunctionStarts(const Program& program, std::set<size_t>& starts) {
         starts.insert(0);
         for (const auto& [name, ip] : program.Exports) {
@@ -53,7 +100,7 @@ namespace {
         return "";
     }
 
-    // Build intraprocedural CFG for [rangeBegin, rangeEnd) and run single-slot Ptr lattice.
+    // Build intraprocedural CFG for [rangeBegin, rangeEnd) and run register-aware Ptr lattice.
     void AnalyzeRange(const Program& program, size_t rangeBegin, size_t rangeEnd, const std::string& funcLabel,
                       std::vector<MemoryIssue>& issues) {
         if (rangeBegin >= rangeEnd || rangeEnd > program.Instructions.size()) return;
@@ -125,35 +172,68 @@ namespace {
         }
 
         // Iterative dataflow: IN[b] = merge(OUT[pred])
-        std::vector<PtrState> in((size_t)blocks.size(), PtrState::Unknown);
-        std::vector<PtrState> out((size_t)blocks.size(), PtrState::Unknown);
+        std::vector<RegState> in((size_t)blocks.size());
+        std::vector<RegState> out((size_t)blocks.size());
 
-        auto transfer = [&](PtrState state, size_t start, size_t end) -> PtrState {
+        auto transfer = [&](RegState state, size_t start, size_t end) -> RegState {
             for (size_t ip = start; ip < end; ++ip) {
                 const Instruction& inst = program.Instructions[ip];
+                const auto ptrRegIt = program.PtrOperandRegs.find(ip);
+                const bool hasTrackedReg = (ptrRegIt != program.PtrOperandRegs.end());
+                const uint8_t trackedReg = hasTrackedReg ? ptrRegIt->second : 255;
+
                 switch (inst.Op) {
-                    case OpCode::PTR_NEW:
-                        state = PtrState::Live;
+                    case OpCode::PTR_NEW: {
+                        // PTR_NEW creates a pointer value; if the parser tracked a reg for the
+                        // operand site, mark that reg as live.
+                        if (hasTrackedReg) {
+                            SetStateForReg(state, trackedReg, PtrState::Live);
+                        }
                         break;
-                    case OpCode::PTR_RESET:
-                        if (state == PtrState::Freed) {
+                    }
+                    case OpCode::PTR_RESET: {
+                        if (!hasTrackedReg) {
+                            break;
+                        }
+                        PtrState regState = GetStateForReg(state, trackedReg);
+                        if (regState == PtrState::Freed) {
                             MemoryIssue issue;
                             issue.kind = MemoryIssue::Kind::DoubleFree;
                             issue.functionName = funcLabel;
                             issue.instructionIndex = ip;
                             issues.push_back(issue);
                         }
-                        state = PtrState::Freed;
+                        if (regState == PtrState::Unknown) {
+                            MemoryIssue issue;
+                            issue.kind = MemoryIssue::Kind::InvalidReset;
+                            issue.functionName = funcLabel;
+                            issue.instructionIndex = ip;
+                            issues.push_back(issue);
+                        }
+                        SetStateForReg(state, trackedReg, PtrState::Freed);
                         break;
-                    case OpCode::PTR_GET:
-                        if (state == PtrState::Freed || state == PtrState::Unknown) {
+                    }
+                    case OpCode::PTR_GET: {
+                        if (!hasTrackedReg) {
+                            break;
+                        }
+                        PtrState regState = GetStateForReg(state, trackedReg);
+                        if (regState == PtrState::Freed) {
                             MemoryIssue issue;
                             issue.kind = MemoryIssue::Kind::UseAfterFree;
                             issue.functionName = funcLabel;
                             issue.instructionIndex = ip;
                             issues.push_back(issue);
                         }
+                        if (regState == PtrState::Unknown) {
+                            MemoryIssue issue;
+                            issue.kind = MemoryIssue::Kind::InvalidDeref;
+                            issue.functionName = funcLabel;
+                            issue.instructionIndex = ip;
+                            issues.push_back(issue);
+                        }
                         break;
+                    }
                     default:
                         break;
                 }
@@ -165,7 +245,7 @@ namespace {
         while (changed) {
             changed = false;
             for (int bi = 0; bi < (int)blocks.size(); ++bi) {
-                PtrState meet = PtrState::Unknown;
+                RegState meet;
                 bool first = true;
                 // predecessors: blocks that have an edge to bi
                 for (int pj = 0; pj < (int)blocks.size(); ++pj) {
@@ -175,22 +255,22 @@ namespace {
                                 meet = out[(size_t)pj];
                                 first = false;
                             } else {
-                                meet = MergeStates(meet, out[(size_t)pj]);
+                                meet = MergeRegStates(meet, out[(size_t)pj]);
                             }
                         }
                     }
                 }
                 if (first) {
-                    meet = PtrState::Unknown;
+                    meet = RegState{};
                 }
 
-                if (meet != in[(size_t)bi]) {
+                if (!RegStatesEqual(meet, in[(size_t)bi])) {
                     in[(size_t)bi] = meet;
                     changed = true;
                 }
 
-                PtrState newOut = transfer(in[(size_t)bi], blocks[(size_t)bi].first, blocks[(size_t)bi].second);
-                if (newOut != out[(size_t)bi]) {
+                RegState newOut = transfer(in[(size_t)bi], blocks[(size_t)bi].first, blocks[(size_t)bi].second);
+                if (!RegStatesEqual(newOut, out[(size_t)bi])) {
                     out[(size_t)bi] = newOut;
                     changed = true;
                 }

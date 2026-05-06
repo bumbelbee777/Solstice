@@ -11,6 +11,7 @@ namespace Solstice::Scripting {
 class SOLSTICE_API Compiler {
 public:
     Program Compile(const std::string& source);
+    Program Compile(const std::string& source, const std::string& sourceName);
 
     // Batch compile all Moonwalk files in a directory
     std::unordered_map<std::string, Program> BatchCompile(const std::filesystem::path& directory);

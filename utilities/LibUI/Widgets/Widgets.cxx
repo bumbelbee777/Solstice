@@ -89,6 +89,76 @@ void BulletText(const char* text) {
     }
 }
 
+bool DrawInlineAlert(const char* id, const char* message, InlineAlertSeverity severity, bool dismissible,
+    const char* dismissButtonLabel) {
+    if (!CheckInitialized() || !id || !message || message[0] == '\0') {
+        return false;
+    }
+    try {
+        ImVec4 color = ImVec4(0.75f, 0.75f, 0.78f, 1.0f);
+        switch (severity) {
+        case InlineAlertSeverity::Info:
+            color = ImVec4(0.55f, 0.75f, 1.0f, 1.0f);
+            break;
+        case InlineAlertSeverity::Success:
+            color = ImVec4(0.5f, 0.9f, 0.5f, 1.0f);
+            break;
+        case InlineAlertSeverity::Warning:
+            color = ImVec4(1.0f, 0.75f, 0.35f, 1.0f);
+            break;
+        case InlineAlertSeverity::Error:
+            color = ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
+            break;
+        }
+
+        ImGui::TextColored(color, "%s", message);
+        if (!dismissible) {
+            return true;
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton((std::string(dismissButtonLabel ? dismissButtonLabel : "Dismiss") + "##" + id).c_str())) {
+            return false;
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+bool DrawFilterableVirtualTable(char* filterBuffer, size_t filterBufferSize, const FilterableVirtualTableOptions& options,
+    const std::function<void()>& setupColumns, int rowCount, const std::function<void(int rowIndex)>& drawRow) {
+    if (!CheckInitialized() || !filterBuffer || filterBufferSize == 0 || rowCount < 0 || !drawRow) {
+        return false;
+    }
+    try {
+        if (options.FilterInputId && options.FilterInputId[0] != '\0') {
+            ImGui::InputTextWithHint(options.FilterInputId, options.FilterHint, filterBuffer, filterBufferSize);
+            ImGui::SameLine();
+            if (ImGui::SmallButton(options.ClearButtonLabel)) {
+                filterBuffer[0] = '\0';
+            }
+        }
+
+        if (!ImGui::BeginTable(options.TableId, options.ColumnCount, options.TableFlags, options.TableSize)) {
+            return false;
+        }
+        if (setupColumns) {
+            setupColumns();
+        }
+        ImGuiListClipper clipper;
+        clipper.Begin(rowCount);
+        while (clipper.Step()) {
+            for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
+                drawRow(row);
+            }
+        }
+        ImGui::EndTable();
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 // Input widgets
 bool InputText(const char* label, char* buf, size_t buf_size, ImGuiInputTextFlags flags) {
     if (!CheckInitialized() || !label || !buf || buf_size == 0) return false;
@@ -135,6 +205,24 @@ bool InputInt(const char* label, int* v, int step, int step_fast, ImGuiInputText
     }
 }
 
+bool InputDouble(const char* label, double* v, double step, double step_fast, const char* format, ImGuiInputTextFlags flags) {
+    if (!CheckInitialized() || !label || !v) return false;
+    try {
+        return ImGui::InputDouble(label, v, step, step_fast, format, flags);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool InputScalar(const char* label, ImGuiDataType data_type, void* p_data, const void* p_step, const void* p_step_fast, const char* format, ImGuiInputTextFlags flags) {
+    if (!CheckInitialized() || !label || !p_data) return false;
+    try {
+        return ImGui::InputScalar(label, data_type, p_data, p_step, p_step_fast, format, flags);
+    } catch (...) {
+        return false;
+    }
+}
+
 bool Checkbox(const char* label, bool* v) {
     if (!CheckInitialized() || !label || !v) return false;
     try {
@@ -157,6 +245,78 @@ bool RadioButton(const char* label, int* v, int v_button) {
     if (!CheckInitialized() || !label || !v) return false;
     try {
         return ImGui::RadioButton(label, v, v_button);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool DragFloat(const char* label, float* v, float v_speed, float v_min, float v_max, const char* format, ImGuiSliderFlags flags) {
+    if (!CheckInitialized() || !label || !v) return false;
+    try {
+        return ImGui::DragFloat(label, v, v_speed, v_min, v_max, format, flags);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool DragFloat2(const char* label, float v[2], float v_speed, float v_min, float v_max, const char* format, ImGuiSliderFlags flags) {
+    if (!CheckInitialized() || !label || !v) return false;
+    try {
+        return ImGui::DragFloat2(label, v, v_speed, v_min, v_max, format, flags);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool DragFloat3(const char* label, float v[3], float v_speed, float v_min, float v_max, const char* format, ImGuiSliderFlags flags) {
+    if (!CheckInitialized() || !label || !v) return false;
+    try {
+        return ImGui::DragFloat3(label, v, v_speed, v_min, v_max, format, flags);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool DragFloat4(const char* label, float v[4], float v_speed, float v_min, float v_max, const char* format, ImGuiSliderFlags flags) {
+    if (!CheckInitialized() || !label || !v) return false;
+    try {
+        return ImGui::DragFloat4(label, v, v_speed, v_min, v_max, format, flags);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool DragInt(const char* label, int* v, float v_speed, int v_min, int v_max, const char* format, ImGuiSliderFlags flags) {
+    if (!CheckInitialized() || !label || !v) return false;
+    try {
+        return ImGui::DragInt(label, v, v_speed, v_min, v_max, format, flags);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool DragInt2(const char* label, int v[2], float v_speed, int v_min, int v_max, const char* format, ImGuiSliderFlags flags) {
+    if (!CheckInitialized() || !label || !v) return false;
+    try {
+        return ImGui::DragInt2(label, v, v_speed, v_min, v_max, format, flags);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool DragInt3(const char* label, int v[3], float v_speed, int v_min, int v_max, const char* format, ImGuiSliderFlags flags) {
+    if (!CheckInitialized() || !label || !v) return false;
+    try {
+        return ImGui::DragInt3(label, v, v_speed, v_min, v_max, format, flags);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool DragInt4(const char* label, int v[4], float v_speed, int v_min, int v_max, const char* format, ImGuiSliderFlags flags) {
+    if (!CheckInitialized() || !label || !v) return false;
+    try {
+        return ImGui::DragInt4(label, v, v_speed, v_min, v_max, format, flags);
     } catch (...) {
         return false;
     }
@@ -226,6 +386,23 @@ bool ListBox(const char* label, int* current_item, const char* const items[], in
     }
 }
 
+bool BeginListBox(const char* label, const ImVec2& size) {
+    if (!CheckInitialized() || !label) return false;
+    try {
+        return ImGui::BeginListBox(label, size);
+    } catch (...) {
+        return false;
+    }
+}
+
+void EndListBox() {
+    if (!CheckInitialized()) return;
+    try {
+        ImGui::EndListBox();
+    } catch (...) {
+    }
+}
+
 bool Selectable(const char* label, bool selected, ImGuiSelectableFlags flags, const ImVec2& size) {
     if (!CheckInitialized() || !label) return false;
     try {
@@ -289,6 +466,27 @@ bool BeginWindow(const char* name, bool* p_open, ImGuiWindowFlags flags) {
     } catch (...) {
         return false;
     }
+}
+
+void SetNextWindowPos(const ImVec2& pos, ImGuiCond cond, const ImVec2& pivot) {
+    if (!CheckInitialized()) return;
+    try {
+        ImGui::SetNextWindowPos(pos, cond, pivot);
+    } catch (...) {
+    }
+}
+
+void SetNextWindowSize(const ImVec2& size, ImGuiCond cond) {
+    if (!CheckInitialized()) return;
+    try {
+        ImGui::SetNextWindowSize(size, cond);
+    } catch (...) {
+    }
+}
+
+void SetNextWindowViewport(ImGuiID viewport_id) {
+    (void)viewport_id;
+    // Dear ImGui public API does not expose viewport-ID routing on all supported versions; reserved for future docking glue.
 }
 
 void EndWindow() {
@@ -564,6 +762,142 @@ void SetKeyboardFocusHere(int offset) {
     try {
         ImGui::SetKeyboardFocusHere(offset);
     } catch (...) {
+    }
+}
+
+bool IsItemHovered(ImGuiHoveredFlags flags) {
+    if (!CheckInitialized()) return false;
+    try {
+        return ImGui::IsItemHovered(flags);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool IsItemActive() {
+    if (!CheckInitialized()) return false;
+    try {
+        return ImGui::IsItemActive();
+    } catch (...) {
+        return false;
+    }
+}
+
+bool IsItemClicked(ImGuiMouseButton mouse_button) {
+    if (!CheckInitialized()) return false;
+    try {
+        return ImGui::IsItemClicked(mouse_button);
+    } catch (...) {
+        return false;
+    }
+}
+
+ImVec2 GetItemRectMin() {
+    if (!CheckInitialized()) return ImVec2(0, 0);
+    try {
+        return ImGui::GetItemRectMin();
+    } catch (...) {
+        return ImVec2(0, 0);
+    }
+}
+
+ImVec2 GetItemRectMax() {
+    if (!CheckInitialized()) return ImVec2(0, 0);
+    try {
+        return ImGui::GetItemRectMax();
+    } catch (...) {
+        return ImVec2(0, 0);
+    }
+}
+
+ImVec2 GetItemRectSize() {
+    if (!CheckInitialized()) return ImVec2(0, 0);
+    try {
+        return ImGui::GetItemRectSize();
+    } catch (...) {
+        return ImVec2(0, 0);
+    }
+}
+
+bool IsWindowHovered(ImGuiHoveredFlags flags) {
+    if (!CheckInitialized()) return false;
+    try {
+        return ImGui::IsWindowHovered(flags);
+    } catch (...) {
+        return false;
+    }
+}
+
+void PushStyleVar(ImGuiStyleVar idx, float val) {
+    if (!CheckInitialized()) return;
+    try {
+        ImGui::PushStyleVar(idx, val);
+    } catch (...) {
+    }
+}
+
+void PushStyleVar(ImGuiStyleVar idx, const ImVec2& val) {
+    if (!CheckInitialized()) return;
+    try {
+        ImGui::PushStyleVar(idx, val);
+    } catch (...) {
+    }
+}
+
+void PopStyleVar(int count) {
+    if (!CheckInitialized()) return;
+    try {
+        ImGui::PopStyleVar(count);
+    } catch (...) {
+    }
+}
+
+void PushStyleColor(ImGuiCol idx, ImU32 col) {
+    if (!CheckInitialized()) return;
+    try {
+        ImGui::PushStyleColor(idx, col);
+    } catch (...) {
+    }
+}
+
+void PushStyleColor(ImGuiCol idx, const ImVec4& col) {
+    if (!CheckInitialized()) return;
+    try {
+        ImGui::PushStyleColor(idx, col);
+    } catch (...) {
+    }
+}
+
+void PopStyleColor(int count) {
+    if (!CheckInitialized()) return;
+    try {
+        ImGui::PopStyleColor(count);
+    } catch (...) {
+    }
+}
+
+void PushFont(ImFont* font) {
+    if (!CheckInitialized()) return;
+    try {
+        ImGui::PushFont(font);
+    } catch (...) {
+    }
+}
+
+void PopFont() {
+    if (!CheckInitialized()) return;
+    try {
+        ImGui::PopFont();
+    } catch (...) {
+    }
+}
+
+ImVec2 GetContentRegionAvail() {
+    if (!CheckInitialized()) return ImVec2(0, 0);
+    try {
+        return ImGui::GetContentRegionAvail();
+    } catch (...) {
+        return ImVec2(0, 0);
     }
 }
 
@@ -1035,6 +1369,60 @@ void EndTooltip() {
     try {
         ImGui::EndTooltip();
     } catch (...) {
+    }
+}
+
+bool IsKeyPressed(ImGuiKey key, bool repeat) {
+    if (!CheckInitialized()) return false;
+    try {
+        return ImGui::IsKeyPressed(key, repeat);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool IsKeyChordPressed(ImGuiKeyChord key_chord) {
+    if (!CheckInitialized()) return false;
+    try {
+        return ImGui::IsKeyChordPressed(key_chord);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool IsMouseClicked(ImGuiMouseButton button, bool repeat) {
+    if (!CheckInitialized()) return false;
+    try {
+        return ImGui::IsMouseClicked(button, repeat);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool IsMouseDown(ImGuiMouseButton button) {
+    if (!CheckInitialized()) return false;
+    try {
+        return ImGui::IsMouseDown(button);
+    } catch (...) {
+        return false;
+    }
+}
+
+bool IsMouseDragging(ImGuiMouseButton button, float lock_threshold) {
+    if (!CheckInitialized()) return false;
+    try {
+        return ImGui::IsMouseDragging(button, lock_threshold);
+    } catch (...) {
+        return false;
+    }
+}
+
+ImVec2 GetMousePos() {
+    if (!CheckInitialized()) return ImVec2(0, 0);
+    try {
+        return ImGui::GetMousePos();
+    } catch (...) {
+        return ImVec2(0, 0);
     }
 }
 

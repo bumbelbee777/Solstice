@@ -1,6 +1,7 @@
 #include <Render/Lighting/ShadowRenderer.hxx>
 #include <Render/Post/PostProcessing.hxx>
 #include <Render/Assets/Mesh.hxx>
+#include <Material/Material.hxx>
 #include <Core/Debug/Debug.hxx>
 #include <algorithm>
 #include <cstring>
@@ -69,6 +70,14 @@ void ShadowRenderer::RenderShadowMap(Scene& scene, const Camera& camera, MeshLib
 
     // Render each object to shadow map
     for (SceneObjectID ObjID : visibleObjects) {
+        if (Core::MaterialLibrary* matLib = scene.GetMaterialLibrary()) {
+            const uint32_t matId = scene.GetMaterial(ObjID);
+            if (const Solstice::Core::Material* m = matLib->GetMaterial(matId)) {
+                if ((m->Flags & Solstice::Core::MaterialFlag_CastsShadows) == 0) {
+                    continue;
+                }
+            }
+        }
         uint32_t MeshID = scene.GetMeshID(ObjID);
         Mesh* MeshPtr = meshLib->GetMesh(MeshID);
         if (!MeshPtr || MeshPtr->Vertices.empty()) continue;

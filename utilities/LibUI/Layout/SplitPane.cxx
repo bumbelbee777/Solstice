@@ -23,5 +23,45 @@ void EndVerticalSplit() {
     ImGui::EndChild();
 }
 
+bool BeginThreePaneWorkspace(const char* id, const ThreePaneWorkspaceConfig& config, float* outCenterWidth) {
+    if (!id) {
+        return false;
+    }
+    if (!ImGui::BeginChild(id, ImVec2(0.f, -config.bottomBarHeight), false, config.workspaceFlags)) {
+        return false;
+    }
+
+    const float gap = ImGui::GetStyle().ItemSpacing.x;
+    const float availW = ImGui::GetContentRegionAvail().x;
+    float centerW = availW - config.leftWidth - config.rightWidth - gap * 2.f;
+    if (centerW < config.minCenterWidth) {
+        centerW = std::max(config.minFallbackCenterWidth, availW * config.fallbackCenterRatio);
+    }
+    if (outCenterWidth) {
+        *outCenterWidth = centerW;
+    }
+    return true;
+}
+
+void EndThreePaneWorkspace() {
+    ImGui::EndChild();
+}
+
+bool BeginTwoPaneFixedLeftTable(const char* id, float leftWidth, ImGuiTableFlags flags) {
+    if (!id) {
+        return false;
+    }
+    if (!ImGui::BeginTable(id, 2, flags)) {
+        return false;
+    }
+    ImGui::TableSetupColumn("Left", ImGuiTableColumnFlags_WidthFixed, leftWidth);
+    ImGui::TableSetupColumn("Main", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+    return true;
+}
+
+void EndTwoPaneFixedLeftTable() {
+    ImGui::EndTable();
+}
+
 } // namespace LibUI::Layout
 

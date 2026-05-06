@@ -46,6 +46,10 @@ struct PreviewEntity {
     char PreviewRoughnessTexturePath[768]{};
     /// 0 = off; 0-1 tints albedo to approximate **baked / cavity** shading on schematic preview cubes (no .smat).
     float BakedAOPreview{0.f};
+    /// Use a thin quad card proxy instead of a cube (used for world-space MG sprites).
+    bool UseQuadProxy{false};
+    /// When true, this proxy should cast shadows in the scene shadow pass.
+    bool CastShadows{true};
 };
 
 /// Creates hidden SDL window + `SoftwareRenderer` once (idempotent).
@@ -54,6 +58,8 @@ void Shutdown();
 
 /// Renders lit meshes (ground plane + cubes) to an offscreen target and returns RGBA8 top-down.
 /// `viewportAspect` is width/height. `lights` may be empty (default sun is used).
+/// Internal render size uses the requested `framebufferWidth`/`Height` up to 8192 on the long edge (and at least
+/// 1024 for small panels) so large exports match the requested resolution; very large requests are clamped for safety.
 bool CaptureOrbitRgb(const LibUI::Viewport::OrbitPanZoomState& orbit, float targetX, float targetY, float targetZ,
     float fovYDeg, float viewportAspect, int framebufferWidth, int framebufferHeight,
     const PreviewEntity* entities, size_t entityCount, const Physics::LightSource* lights, size_t lightCount,

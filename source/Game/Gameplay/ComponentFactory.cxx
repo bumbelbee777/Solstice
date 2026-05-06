@@ -1,5 +1,6 @@
 #include "Gameplay/ComponentFactory.hxx"
 #include "Core/Debug/Debug.hxx"
+#include <Math/Matrix.hxx>
 
 namespace Solstice::Game {
 
@@ -140,6 +141,24 @@ ECS::EntityId ComponentFactory::CreateDynamicSphere(ECS::Registry& Registry, con
     auto rb = CreateRigidBodySphere(Position, Radius, Mass, false);
     Registry.Add<Physics::RigidBody>(entity, rb);
 
+    return entity;
+}
+
+ECS::EntityId ComponentFactory::CreatePortalEntity(ECS::Registry& Registry, const Math::Vec3& Position,
+                                                   const ECS::Portal& Spec, const std::string& Name) {
+    ECS::EntityId entity = Registry.Create();
+
+    ECS::Transform tr{};
+    tr.Position = Position;
+    tr.Scale = Math::Vec3(1.0f, 1.0f, 1.0f);
+    tr.Matrix = Math::Matrix4::Translation(Position);
+
+    Registry.Add<ECS::Transform>(entity, tr);
+    Registry.Add<ECS::Portal>(entity, Spec);
+    Registry.Add<ECS::Name>(entity, ECS::Name{Name});
+    Registry.Add<ECS::Kind>(entity, ECS::Kind{ECS::EntityKind::Environment});
+
+    SIMPLE_LOG("ComponentFactory: Created portal entity: " + Name);
     return entity;
 }
 

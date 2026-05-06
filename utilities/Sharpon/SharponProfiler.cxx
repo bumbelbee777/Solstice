@@ -1,8 +1,8 @@
 #include "SharponProfiler.hxx"
+#include "LibUI/Tools/PropertyGrid.hxx"
+#include "LibUI/Widgets/Widgets.hxx"
 
 #include <SolsticeAPI/V1/Profiler.h>
-
-#include <imgui.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -54,24 +54,29 @@ void SharponProfiler_DrawPanel(bool* pOpen) {
     if (pOpen && !*pOpen) {
         return;
     }
-    ImGui::SetNextWindowSize(ImVec2(400, 200), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Performance (SolsticeV1 Profiler)", pOpen)) {
+    LibUI::Widgets::SetNextWindowSize(ImVec2(400, 200), ImGuiCond_FirstUseEver);
+    if (LibUI::Widgets::BeginWindow("Performance (SolsticeV1 Profiler)", pOpen)) {
         if (!g_SetEnabled || !g_GetLastFrame) {
-            ImGui::TextUnformatted("Profiler API not exported by the loaded engine DLL.");
-            ImGui::TextUnformatted("Future: script breakpoints / stepping when the engine exposes them.");
+            LibUI::Widgets::Text("Profiler API not exported by the loaded engine DLL.");
+            LibUI::Widgets::Text("Future: script breakpoints / stepping when the engine exposes them.");
         } else {
-            if (ImGui::Checkbox("Profiler enabled", &g_ProfilerEnabledUi)) {
-                g_SetEnabled(g_ProfilerEnabledUi ? SolsticeV1_True : SolsticeV1_False);
+            if (LibUI::Tools::BeginPropertyGrid("sharpon_profiler_grid", 240.0f)) {
+                if (LibUI::Tools::PropertyBool("Profiler enabled", &g_ProfilerEnabledUi,
+                        "Toggles SolsticeV1 profiler data collection.")) {
+                    g_SetEnabled(g_ProfilerEnabledUi ? SolsticeV1_True : SolsticeV1_False);
+                }
+                LibUI::Tools::PropertyBool("Auto Begin/End frame", &g_AutoFrameUi,
+                    "Run begin/end frame around each Sharpon UI frame.");
+                LibUI::Tools::EndPropertyGrid();
             }
-            ImGui::Checkbox("Auto Begin/End frame (each Sharpon UI frame)", &g_AutoFrameUi);
             if (!g_AutoFrameUi) {
-                if (ImGui::Button("BeginFrame")) {
+                if (LibUI::Widgets::Button("BeginFrame")) {
                     if (g_BeginFrame) {
                         g_BeginFrame();
                     }
                 }
-                ImGui::SameLine();
-                if (ImGui::Button("EndFrame")) {
+                LibUI::Widgets::SameLine();
+                if (LibUI::Widgets::Button("EndFrame")) {
                     if (g_EndFrame) {
                         g_EndFrame();
                     }
@@ -82,11 +87,11 @@ void SharponProfiler_DrawPanel(bool* pOpen) {
             if (g_GetLastFrame(&ms, &fps) == SolsticeV1_ResultSuccess) {
                 ImGui::Text("Last frame: %.3f ms   FPS: %.1f", ms, fps);
             } else {
-                ImGui::TextUnformatted("SolsticeV1_ProfilerGetLastFrame: not available or no data yet.");
+                LibUI::Widgets::Text("SolsticeV1_ProfilerGetLastFrame: not available or no data yet.");
             }
         }
     }
-    ImGui::End();
+    LibUI::Widgets::EndWindow();
 }
 
 void SharponProfiler_TickAutoFrame() {

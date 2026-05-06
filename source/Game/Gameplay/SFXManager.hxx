@@ -19,6 +19,15 @@ enum class SFXCategory {
     Music
 };
 
+enum class SpatialProfile {
+    Default,
+    AmbientBed,
+    Footstep,
+    Weapon,
+    Voice,
+    Vehicle
+};
+
 // Sound effect entry
 struct SoundEffect {
     std::string Path;
@@ -54,6 +63,9 @@ public:
     Core::Audio::AudioSource PlaySound3D(const std::string& Path, const Math::Vec3& Position,
                                          SFXCategory Category, float Volume = 1.0f,
                                          float MaxDistance = 50.0f, bool Loop = false);
+    Core::Audio::AudioSource PlaySound3DProfiled(const std::string& Path, const Math::Vec3& Position,
+                                                 SFXCategory Category, SpatialProfile Profile,
+                                                 float Volume = 1.0f, float MaxDistance = 50.0f, bool Loop = false);
 
     // Music
     void PlayMusic(const std::string& Path, int Loops = -1);
@@ -77,6 +89,8 @@ public:
 
     // Update 3D audio sources
     void UpdateAudioSource(Core::Audio::AudioSource& Source, const Math::Vec3& Position);
+    bool ConfigureEmitterSpatial(Core::Audio::AudioEmitterHandle Handle, SpatialProfile Profile,
+                                 const Math::Vec3& Direction = Math::Vec3(0.0f, 0.0f, -1.0f));
 
     // Stop sounds
     void StopSound(Core::Audio::AudioSource& Source);

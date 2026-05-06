@@ -741,8 +741,11 @@ Ptr.Reset(p);
 - If it can prove that a pointer is:
   - **Used after being reset/freed**, or
   - **Reset/freed twice**,
+  - **Dereferenced from an unknown/unproven pointer state**, or
+  - **Reset from an unknown/unproven pointer state**,
   it emits a **compile-time error** pinpointing the offending instruction and source location.
 - For more complex cases where pointers escape into containers or unknown natives, the analysis is conservative and may refuse to prove safety, but it will still flag obvious local misuse.
+- Static type checks also validate that `Ptr.*` operations use explicit `Ptr<T>`-typed locals/registers (not untyped values or bare `Ptr`).
 
 ### Error examples
 
@@ -754,6 +757,37 @@ let again = Ptr.Get(p); // compile-time error: use-after-free of Ptr<Player> p
 let q: Ptr<Player> = Ptr.New(new Player());
 Ptr.Reset(q);
 Ptr.Reset(q); // compile-time error: double-free / double-reset of Ptr<Player> q
+
+function MaybeUse(p: Ptr<Player>, shouldReset) {
+    if (shouldReset) {
+        Ptr.Reset(p);
+    }
+    return Ptr.Get(p); // compile-time error: invalid dereference (unknown pointer state)
+}
+
+let loose: Ptr = Ptr.New(new Player());
+Ptr.Get(loose); // compile-time error: use Ptr<T> (explicit pointee type), not bare Ptr
+```
+
+### Diagnostic format (compiler/analyzer)
+
+Moonwalk compiler diagnostics now follow a source-mapped, AngelScript-style layout:
+
+- **Headline** with category and reason (e.g. memory/type analysis).
+- **Instruction index** for low-level VM tracing.
+- **Source location** (`file:line:column`) when available.
+- **Focused detail** that explains what failed and why.
+- **Code excerpt + caret** pointing at the relevant token/operation.
+- Applies to parser failures (`Parse error`), static type checks, and memory analysis diagnostics.
+
+Example:
+
+```text
+Memory analysis error (Use-after-free) at instruction 42
+Location: scripts/player.mw:18:12
+Details: Function: MaybeUse
+Code:     return Ptr.Get(p);
+                 ^
 ```
 
 ## Error Handling
@@ -1414,6 +1448,12 @@ Moonwalk supports **coroutines**: script functions that can pause (yield) and re
 | `WaitSeconds(t)` | Yield for `t` seconds (game time). Resumes when `GetGameTime()` has advanced by `t`. |
 | `WaitUntil(condition)` | Yield until `condition()` returns true. `condition` is a script function with no arguments; each frame the engine calls it and resumes the coroutine when the result is truthy (non-zero number, non-empty string). |
 | `Coroutine.Start(func)` | Start a new coroutine running the script function `func` (a function reference). It is queued and run when due; it can itself use `WaitFrames` / `WaitSeconds`. |
+| `Coroutine.StartExport(moduleName, exportName)` | Start a coroutine by module export name. Returns `1` on success and `0` when the module/export is missing. |
+| `Coroutine.ActiveCount()` | Returns how many coroutines are currently queued/suspended in `ScriptManager`. |
+| `Coroutine.StopAll()` | Clears all queued/suspended coroutines immediately. Useful for game state resets and scene transitions. |
+| `Time_FrameCount()` | Returns the `ScriptManager` frame counter (`Update` ticks), useful for deterministic script-side gating. |
+| `Time_FrameDelta()` | Returns the most recent frame delta in seconds passed to `ScriptManager::Update`. |
+| `Time_GameTime()` | Returns accumulated script/game time in seconds tracked by `ScriptManager`. |
 
 ### Example: wait and repeat
 
@@ -1433,7 +1473,9 @@ function isReady() {
 
 @Entry {
     Coroutine.Start(&tickEverySecond);
+    Coroutine.StartExport("WoH_UI", "PulseHud");
     Print("Started background tick");
+    Print("Active coroutines: " + Coroutine.ActiveCount());
     WaitUntil(&isReady);  // script would set ready = 1 elsewhere (e.g. from an event) to resume
     Print("Ready");
 }
@@ -1479,6 +1521,9 @@ Moonwalk provides a simple **event/callback** system: script (or C++) can regist
 |-----|-------------|
 | `Events.On(eventName, handlerFunc)` | Register a script function as a handler for `eventName`. `handlerFunc` is a function reference (e.g. `&myHandler`). When the event is emitted, the VM calls the handler with the event’s arguments. |
 | `Events.Emit(eventName, arg1, arg2, ...)` | Emit `eventName` with the given arguments. All registered handlers for that name are invoked with those arguments. |
+| `Events.HandlerCount(eventName)` | Returns the number of registered handlers for `eventName`. |
+| `Events.Clear(eventName)` | Remove all handlers registered for `eventName`. |
+| `Events.ClearAll()` | Remove all registered event handlers across all events. |
 
 ### Example: script subscribes and emits
 
@@ -1489,7 +1534,9 @@ function onPlayerHit(entityId, damage) {
 
 @Entry {
     Events.On("PlayerHit", &onPlayerHit);
+    Print("Handlers for PlayerHit: " + Events.HandlerCount("PlayerHit"));
     Events.Emit("PlayerHit", 42, 10);
+    Events.Clear("PlayerHit");
 }
 ```
 
@@ -1533,6 +1580,19 @@ vm.RegisterNative("Counter.Add", NativeBinding::BindMethod(&counter, &Counter::A
 ```
 
 This removes most manual `std::variant` extraction from native bindings while preserving the existing VM ABI.
+
+### Input hook bridge for Moonwalk `Input.*`
+
+`source/Scripting/Bindings/ScriptBindings.hxx` exposes `SetScriptInputHooks(...)`, which lets host/game code connect engine input to generic Moonwalk natives without changing VM ABI:
+
+- `Input.IsKeyPressed`
+- `Input.IsKeyJustPressed`
+- `Input.IsKeyJustReleased`
+- `Input.IsMouseButtonPressed`
+- `Input.GetMousePosition`
+- `Input.GetMouseDelta`
+
+If hooks are not supplied, these functions safely return `0`/`Vec2(0,0)` defaults.
 
 ## JIT Runtime Notes
 

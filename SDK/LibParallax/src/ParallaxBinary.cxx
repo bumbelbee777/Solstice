@@ -1,10 +1,12 @@
 #include <Parallax/ParallaxScene.hxx>
+#include <Parallax/DevSessionAssetResolver.hxx>
 
 #include <Smf/SmfTypes.hxx>
 #include <Smf/SmfWire.hxx>
 
 #include <cstring>
 #include <fstream>
+#include <limits>
 #include <zstd.h>
 
 namespace Solstice::Parallax {
@@ -174,11 +176,11 @@ bool ReadAttributeValue(const std::byte*& p, const std::byte* end, AttributeType
     return FromSmfValue(t, sv, outVal);
 }
 
-AttributeType AttrTypeForKey(const ParallaxScene& scene, const ParallaxScene::ElementNode& el, const std::string& key) {
-    if (el.SchemaIndex >= scene.GetSchemas().size()) {
+AttributeType AttrTypeForSchemaKey(const ParallaxScene& scene, uint32_t schemaIndex, const std::string& key) {
+    if (schemaIndex >= scene.GetSchemas().size()) {
         return AttributeType::Float;
     }
-    for (const auto& ad : scene.GetSchemas()[el.SchemaIndex].Attributes) {
+    for (const auto& ad : scene.GetSchemas()[schemaIndex].Attributes) {
         if (ad.Name == key) {
             return ad.Type;
         }
@@ -234,6 +236,9 @@ bool SaveSceneToBytes(const ParallaxScene& scene, std::vector<std::byte>& out, b
     for (const auto& kv : scene.GetPathTable()) {
         intern(kv.first);
     }
+    for (const auto& kv : scene.GetEmbeddedAssets()) {
+        (void)kv;
+    }
 
     std::vector<std::byte> stringTable;
     for (const auto& s : poolOrder) {
@@ -268,7 +273,7 @@ bool SaveSceneToBytes(const ParallaxScene& scene, std::vector<std::byte>& out, b
         const auto& el = scene.GetElements()[ei];
         Solstice::Smf::Wire::AppendU32(attrBlob, static_cast<uint32_t>(el.Attributes.size()));
         for (const auto& kv : el.Attributes) {
-            AttributeType at = AttrTypeForKey(scene, el, kv.first);
+            AttributeType at = AttrTypeForSchemaKey(scene, el.SchemaIndex, kv.first);
             Solstice::Smf::Wire::AppendU32(attrBlob, intern(kv.first));
             attrBlob.push_back(static_cast<std::byte>(static_cast<uint8_t>(at)));
             attrBlob.push_back(std::byte{0});
@@ -333,6 +338,8 @@ bool SaveSceneToBytes(const ParallaxScene& scene, std::vector<std::byte>& out, b
     }
 
     std::vector<std::byte> mgBlob;
+    std::vector<std::byte> mgAttrBlob;
+    std::vector<std::byte> mgTrackBlob;
     MotionGraphicsSectionHeaderDisk mgh{};
     mgh.ElementCount = static_cast<uint32_t>(scene.GetMGElements().size());
     mgh.TrackCount = static_cast<uint32_t>(scene.GetMGTracks().size());
@@ -341,18 +348,45 @@ bool SaveSceneToBytes(const ParallaxScene& scene, std::vector<std::byte>& out, b
     mgh.GlobalAlphaChannelIndex = scene.GetMGGlobalAlphaChannelIndex();
     mgBlob.insert(mgBlob.end(), reinterpret_cast<const std::byte*>(&mgh), reinterpret_cast<const std::byte*>(&mgh) + sizeof(mgh));
     for (const auto& mg : scene.GetMGElements()) {
+        const uint32_t attrOff = static_cast<uint32_t>(mgAttrBlob.size());
+        Solstice::Smf::Wire::AppendU32(mgAttrBlob, static_cast<uint32_t>(mg.Attributes.size()));
+        for (const auto& kv : mg.Attributes) {
+            Solstice::Smf::Wire::AppendU32(mgAttrBlob, intern(kv.first));
+            const auto at = AttrTypeForSchemaKey(scene, mg.SchemaIndex, kv.first);
+            mgAttrBlob.push_back(static_cast<std::byte>(static_cast<uint8_t>(at)));
+            mgAttrBlob.push_back(std::byte{0});
+            mgAttrBlob.push_back(std::byte{0});
+            mgAttrBlob.push_back(std::byte{0});
+            WriteAttributeValue(mgAttrBlob, at, kv.second);
+        }
         MGElementEntryDisk me{};
         me.SchemaIndex = mg.SchemaIndex;
         me.NameOffset = intern(mg.Name);
         me.ParentMGIndex = mg.Parent;
         me.FirstChildMGIndex = mg.FirstChild;
         me.NextSiblingMGIndex = mg.NextSibling;
-        me.AttributeDataOffset = 0;
+        me.AttributeDataOffset = attrOff;
         me.FirstTrackIndex = mg.FirstTrackIndex;
         me.TrackCount = mg.TrackCount;
         mgBlob.insert(mgBlob.end(), reinterpret_cast<const std::byte*>(&me), reinterpret_cast<const std::byte*>(&me) + sizeof(me));
     }
     for (const auto& tr : scene.GetMGTracks()) {
+        const uint64_t dataOff = static_cast<uint64_t>(mgTrackBlob.size());
+        for (const auto& kf : tr.Keyframes) {
+            KeyframeHeader kh{};
+            kh.TimeTicks = kf.TimeTicks;
+            kh.EasingType = kf.Easing;
+            kh.Flags = kf.Flags;
+            kh.EaseOut = kf.EaseOut;
+            kh.Interp = kf.Interp;
+            mgTrackBlob.insert(mgTrackBlob.end(), reinterpret_cast<const std::byte*>(&kh),
+                               reinterpret_cast<const std::byte*>(&kh) + sizeof(kh));
+            WriteAttributeValue(mgTrackBlob, tr.ValueType, kf.Value);
+            if (tr.ValueType == AttributeType::Float && static_cast<KeyframeInterpolation>(kf.Interp) == KeyframeInterpolation::Bezier) {
+                const float t[] = {kf.TangentOut, kf.TangentIn};
+                mgTrackBlob.insert(mgTrackBlob.end(), reinterpret_cast<const std::byte*>(t), reinterpret_cast<const std::byte*>(t) + 8);
+            }
+        }
         MGTrackEntryDisk te{};
         te.PropertyNameOffset = intern(tr.PropertyName);
         te.ValueType = static_cast<uint8_t>(tr.ValueType);
@@ -360,9 +394,11 @@ bool SaveSceneToBytes(const ParallaxScene& scene, std::vector<std::byte>& out, b
         te.CompressionType = static_cast<uint8_t>(tr.Compression);
         te.Flags = tr.Flags;
         te.KeyframeCount = static_cast<uint32_t>(tr.Keyframes.size());
-        te.DataOffset = 0;
+        te.DataOffset = dataOff;
         mgBlob.insert(mgBlob.end(), reinterpret_cast<const std::byte*>(&te), reinterpret_cast<const std::byte*>(&te) + sizeof(te));
     }
+    mgBlob.insert(mgBlob.end(), mgAttrBlob.begin(), mgAttrBlob.end());
+    mgBlob.insert(mgBlob.end(), mgTrackBlob.begin(), mgTrackBlob.end());
 
     std::vector<std::byte> pathBlob;
     Solstice::Smf::Wire::AppendU32(pathBlob, static_cast<uint32_t>(scene.GetPathTable().size()));
@@ -372,6 +408,26 @@ bool SaveSceneToBytes(const ParallaxScene& scene, std::vector<std::byte>& out, b
         pe.AssetHash = kv.second;
         pathBlob.insert(pathBlob.end(), reinterpret_cast<const std::byte*>(&pe), reinterpret_cast<const std::byte*>(&pe) + sizeof(pe));
     }
+
+    std::vector<std::byte> assetBlob;
+    Solstice::Smf::Wire::AppendU32(assetBlob, static_cast<uint32_t>(scene.GetEmbeddedAssets().size()));
+    const size_t assetEntryStart = assetBlob.size();
+    assetBlob.resize(assetEntryStart + scene.GetEmbeddedAssets().size() * sizeof(AssetPayloadEntryDisk));
+    std::vector<std::byte> assetPayloadData;
+    size_t assetIdx = 0;
+    for (const auto& kv : scene.GetEmbeddedAssets()) {
+        const uint32_t dataOff = static_cast<uint32_t>(assetPayloadData.size());
+        assetPayloadData.insert(assetPayloadData.end(), kv.second.Bytes.begin(), kv.second.Bytes.end());
+        AssetPayloadEntryDisk ae{};
+        ae.AssetHash = kv.first;
+        ae.HintType = kv.second.HintType;
+        ae.LogicalPathOffset = 0;
+        ae.DataOffset = dataOff;
+        ae.DataSize = static_cast<uint32_t>(kv.second.Bytes.size());
+        std::memcpy(assetBlob.data() + assetEntryStart + assetIdx * sizeof(AssetPayloadEntryDisk), &ae, sizeof(ae));
+        ++assetIdx;
+    }
+    assetBlob.insert(assetBlob.end(), assetPayloadData.begin(), assetPayloadData.end());
 
     std::vector<std::byte> elementGraph;
     elementGraph.insert(elementGraph.end(), elemBlob.begin(), elemBlob.end());
@@ -409,6 +465,8 @@ bool SaveSceneToBytes(const ParallaxScene& scene, std::vector<std::byte>& out, b
     fh.RenderJobTableOffset = fh.AudioMixOffset;
     fh.RenderJobCount = 0;
     fh.PathTableOffset = append(pathBlob);
+    fh.AssetPayloadOffset = append(assetBlob);
+    fh.AssetPayloadSize = static_cast<uint32_t>(assetBlob.size());
     fh.Flags = compressWhole ? 1u : 0u;
 
     std::memcpy(file.data(), &fh, sizeof(fh));
@@ -517,7 +575,8 @@ bool LoadSceneFromBytes(ParallaxScene& scene, std::span<const std::byte> data, P
 
     if (!inRange(fh.StringTableOffset, fh.StringTableSize) || !inRange(fh.SchemaRegistryOffset, fh.SchemaRegistrySize) ||
         !inRange(fh.ElementGraphOffset, fh.ElementGraphSize) || !inRange(fh.ChannelDataIndexOffset, 4) ||
-        !inRange(fh.ChannelDataBlobOffset, fh.ChannelDataBlobSize) || !inRange(fh.MotionGraphicsSectionOffset, fh.MotionGraphicsSectionSize)) {
+        !inRange(fh.ChannelDataBlobOffset, fh.ChannelDataBlobSize) || !inRange(fh.MotionGraphicsSectionOffset, fh.MotionGraphicsSectionSize) ||
+        !inRange(fh.AssetPayloadOffset, fh.AssetPayloadSize)) {
         if (err) {
             *err = ParallaxError::CorruptHeader;
         }
@@ -676,12 +735,142 @@ bool LoadSceneFromBytes(ParallaxScene& scene, std::span<const std::byte> data, P
     }
 
     const std::byte* pMG = base + fh.MotionGraphicsSectionOffset;
+    const std::byte* pMGEnd = pMG + fh.MotionGraphicsSectionSize;
     if (fh.MotionGraphicsSectionSize >= sizeof(MotionGraphicsSectionHeaderDisk)) {
         MotionGraphicsSectionHeaderDisk mgh{};
         std::memcpy(&mgh, pMG, sizeof(mgh));
+        pMG += sizeof(mgh);
         loaded.SetMGCompositeMode(static_cast<BlendMode>(mgh.CompositeMode));
         loaded.SetMGGlobalAlpha(mgh.GlobalAlpha);
         loaded.SetMGGlobalAlphaChannelIndex(mgh.GlobalAlphaChannelIndex);
+
+        loaded.GetMGElements().clear();
+        loaded.GetMGTracks().clear();
+        loaded.GetMGElements().reserve(mgh.ElementCount);
+        loaded.GetMGTracks().reserve(mgh.TrackCount);
+
+        std::vector<uint32_t> mgAttrOffsets;
+        mgAttrOffsets.reserve(mgh.ElementCount);
+        for (uint32_t i = 0; i < mgh.ElementCount && pMG + sizeof(MGElementEntryDisk) <= pMGEnd; ++i) {
+            MGElementEntryDisk me{};
+            std::memcpy(&me, pMG, sizeof(me));
+            pMG += sizeof(me);
+            MGElementRecord rec{};
+            rec.SchemaIndex = me.SchemaIndex;
+            rec.Name = strAt(me.NameOffset);
+            rec.Parent = me.ParentMGIndex;
+            rec.FirstChild = me.FirstChildMGIndex;
+            rec.NextSibling = me.NextSiblingMGIndex;
+            rec.FirstTrackIndex = me.FirstTrackIndex;
+            rec.TrackCount = me.TrackCount;
+            mgAttrOffsets.push_back(me.AttributeDataOffset);
+            loaded.GetMGElements().push_back(std::move(rec));
+        }
+
+        std::vector<MGTrackEntryDisk> mgTrackEntries;
+        mgTrackEntries.reserve(mgh.TrackCount);
+        for (uint32_t i = 0; i < mgh.TrackCount && pMG + sizeof(MGTrackEntryDisk) <= pMGEnd; ++i) {
+            MGTrackEntryDisk te{};
+            std::memcpy(&te, pMG, sizeof(te));
+            pMG += sizeof(te);
+            mgTrackEntries.push_back(te);
+            MGTrackRecord tr{};
+            tr.PropertyName = strAt(te.PropertyNameOffset);
+            tr.ValueType = static_cast<AttributeType>(te.ValueType);
+            tr.EasingType = te.EasingType;
+            tr.Compression = static_cast<ChannelCompression>(te.CompressionType);
+            tr.Flags = te.Flags;
+            loaded.GetMGTracks().push_back(std::move(tr));
+        }
+
+        const std::byte* mgAttrBase = pMG;
+        for (size_t i = 0; i < loaded.GetMGElements().size(); ++i) {
+            const uint64_t off = static_cast<uint64_t>(mgAttrOffsets[i]);
+            if (off > static_cast<uint64_t>(pMGEnd - mgAttrBase)) {
+                continue;
+            }
+            const std::byte* ap = mgAttrBase + off;
+            if (ap + 4 > pMGEnd) {
+                continue;
+            }
+            uint32_t acount = Solstice::Smf::Wire::ReadU32(ap);
+            ap += 4;
+            for (uint32_t ai = 0; ai < acount && ap < pMGEnd; ++ai) {
+                if (ap + 8 > pMGEnd) {
+                    break;
+                }
+                uint32_t nameOff = Solstice::Smf::Wire::ReadU32(ap);
+                ap += 4;
+                AttributeType at = static_cast<AttributeType>(static_cast<uint8_t>(*ap));
+                ap += 4;
+                AttributeValue val;
+                if (!ReadAttributeValue(ap, pMGEnd, at, val)) {
+                    break;
+                }
+                loaded.GetMGElements()[i].Attributes[strAt(nameOff)] = std::move(val);
+            }
+        }
+
+        const std::byte* mgTrackBase = pMG;
+        for (size_t i = 0; i < loaded.GetMGTracks().size() && i < mgTrackEntries.size(); ++i) {
+            const auto& te = mgTrackEntries[i];
+            const std::byte* cdata = mgTrackBase + static_cast<size_t>(te.DataOffset);
+            const std::byte* cend = pMGEnd;
+            if (cdata >= cend) {
+                continue;
+            }
+            auto& outTrack = loaded.GetMGTracks()[i];
+            for (uint32_t ki = 0; ki < te.KeyframeCount && cdata + sizeof(KeyframeHeader) <= cend; ++ki) {
+                KeyframeHeader kh{};
+                std::memcpy(&kh, cdata, sizeof(kh));
+                cdata += sizeof(kh);
+                KeyframeRecord kr{};
+                kr.TimeTicks = kh.TimeTicks;
+                kr.Easing = kh.EasingType;
+                kr.Flags = kh.Flags;
+                kr.EaseOut = kh.EaseOut;
+                kr.Interp = kh.Interp;
+                kr.TangentIn = 1.f / 3.f;
+                kr.TangentOut = 1.f / 3.f;
+                if (!ReadAttributeValue(cdata, cend, outTrack.ValueType, kr.Value)) {
+                    break;
+                }
+                if (outTrack.ValueType == AttributeType::Float
+                    && static_cast<KeyframeInterpolation>(kr.Interp) == KeyframeInterpolation::Bezier) {
+                    if (static_cast<size_t>(cend - cdata) < 8) {
+                        break;
+                    }
+                    std::memcpy(&kr.TangentOut, cdata, 4);
+                    cdata += 4;
+                    std::memcpy(&kr.TangentIn, cdata, 4);
+                    cdata += 4;
+                }
+                outTrack.Keyframes.push_back(std::move(kr));
+            }
+        }
+    }
+
+    if (fh.AssetPayloadOffset != 0 && fh.AssetPayloadSize >= 4) {
+        const std::byte* ap = base + fh.AssetPayloadOffset;
+        const std::byte* aend = ap + fh.AssetPayloadSize;
+        uint32_t count = Solstice::Smf::Wire::ReadU32(ap);
+        ap += 4;
+        if (static_cast<size_t>(aend - ap) >= count * sizeof(AssetPayloadEntryDisk)) {
+            const std::byte* entriesBase = ap;
+            const std::byte* payloadBase = ap + count * sizeof(AssetPayloadEntryDisk);
+            for (uint32_t i = 0; i < count; ++i) {
+                AssetPayloadEntryDisk ae{};
+                std::memcpy(&ae, entriesBase + i * sizeof(AssetPayloadEntryDisk), sizeof(ae));
+                if (static_cast<uint64_t>(ae.DataOffset) + static_cast<uint64_t>(ae.DataSize) > static_cast<uint64_t>(aend - payloadBase)) {
+                    continue;
+                }
+                AssetData dataOut{};
+                dataOut.HintType = ae.HintType;
+                const std::byte* src = payloadBase + ae.DataOffset;
+                dataOut.Bytes.assign(src, src + ae.DataSize);
+                loaded.GetEmbeddedAssets()[ae.AssetHash] = std::move(dataOut);
+            }
+        }
     }
 
     MergeBuiltinSchemaAttributes(loaded);
@@ -694,7 +883,6 @@ bool LoadSceneFromBytes(ParallaxScene& scene, std::span<const std::byte> data, P
 }
 
 std::unique_ptr<ParallaxScene> LoadScene(const std::filesystem::path& path, IAssetResolver* resolver, ParallaxError* outError) {
-    (void)resolver;
     std::ifstream f(path, std::ios::binary);
     if (!f) {
         if (outError) {
@@ -716,6 +904,11 @@ std::unique_ptr<ParallaxScene> LoadScene(const std::filesystem::path& path, IAss
     auto scene = std::make_unique<ParallaxScene>();
     if (!LoadSceneFromBytes(*scene, buf, outError)) {
         return nullptr;
+    }
+    if (auto* devResolver = dynamic_cast<DevSessionAssetResolver*>(resolver)) {
+        for (const auto& kv : scene->GetEmbeddedAssets()) {
+            devResolver->Register(kv.first, kv.second);
+        }
     }
     return scene;
 }

@@ -1,4 +1,5 @@
 #include "LibUI/Tools/DiagLog.hxx"
+#include "LibUI/Core/Core.hxx"
 
 #include <cstdio>
 #include <cstring>
@@ -29,11 +30,12 @@ std::FILE* DiagLogTempFilePtr() {
         return state == 1 ? f : nullptr;
     }
     state = -1;
-    if (!EnvVarTruthy("SOLSTICE_DIAG_LOG")) {
+    const LibUI::Core::RuntimeConfig cfg = LibUI::Core::GetRuntimeConfig();
+    if (!EnvVarTruthy(cfg.DiagLogEnvVar.c_str())) {
         return nullptr;
     }
     std::error_code ec;
-    const std::filesystem::path path = std::filesystem::temp_directory_path(ec) / "SolsticeTools_diag.txt";
+    const std::filesystem::path path = std::filesystem::temp_directory_path(ec) / cfg.DiagLogFilename;
     if (ec) {
         return nullptr;
     }
@@ -50,7 +52,7 @@ std::FILE* DiagLogTempFilePtr() {
     }
 #endif
     state = 1;
-    std::fprintf(f, "\n--- SolsticeTools diag (pid=%lu) ---\n", DiagProcessId());
+    std::fprintf(f, "\n--- %s diag (pid=%lu) ---\n", cfg.AppDisplayName.c_str(), DiagProcessId());
     std::fflush(f);
     return f;
 }

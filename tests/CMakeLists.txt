@@ -294,6 +294,50 @@ target_link_libraries(LZXRoundTripTest PRIVATE SolsticeEngine SolsticeTestSuppor
 set_target_properties(LZXRoundTripTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_TEST_BIN_DIR}")
 solstice_copy_runtime_dlls(LZXRoundTripTest)
 
+add_executable(AudioHRTFTest AudioHRTFTest.cxx)
+target_link_libraries(AudioHRTFTest PRIVATE SolsticeEngine SolsticeTestSupport)
+set_target_properties(AudioHRTFTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_TEST_BIN_DIR}")
+solstice_copy_runtime_dlls(AudioHRTFTest)
+
+add_executable(AudioWaveTracingTest AudioWaveTracingTest.cxx)
+target_link_libraries(AudioWaveTracingTest PRIVATE SolsticeEngine SolsticeTestSupport)
+set_target_properties(AudioWaveTracingTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_TEST_BIN_DIR}")
+solstice_copy_runtime_dlls(AudioWaveTracingTest)
+
+add_executable(AudioAmbisonicsTest AudioAmbisonicsTest.cxx)
+target_link_libraries(AudioAmbisonicsTest PRIVATE SolsticeEngine SolsticeTestSupport)
+set_target_properties(AudioAmbisonicsTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_TEST_BIN_DIR}")
+solstice_copy_runtime_dlls(AudioAmbisonicsTest)
+
+# SMM export pipeline primitive tests (lock-free queue, frame arena, SIMD blend).
+add_executable(SmmExportPipelineTest SmmExportPipelineTest.cxx)
+target_include_directories(SmmExportPipelineTest PRIVATE
+    "${CMAKE_SOURCE_DIR}/utilities"
+    "${CMAKE_SOURCE_DIR}/source"
+)
+target_link_libraries(SmmExportPipelineTest PRIVATE SolsticeTestSupport)
+set_target_properties(SmmExportPipelineTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_TEST_BIN_DIR}")
+solstice_copy_runtime_dlls(SmmExportPipelineTest)
+
+# SMM frame cache tests: round-trip, delta encoding, TTL, eviction, mmap reads.
+add_executable(SmmFrameCacheTest
+    SmmFrameCacheTest.cxx
+    "${CMAKE_SOURCE_DIR}/utilities/MovieMaker/Cache/FrameCache.cxx"
+)
+target_include_directories(SmmFrameCacheTest PRIVATE
+    "${CMAKE_SOURCE_DIR}/utilities"
+    "${CMAKE_SOURCE_DIR}/utilities/MovieMaker"
+    "${CMAKE_SOURCE_DIR}/source"
+)
+target_link_libraries(SmmFrameCacheTest PRIVATE Core SolsticeTestSupport)
+if(MSVC)
+    # Mirror MovieMaker: linking the static `Core` lib requires `SOLSTICE_STATIC_LINK` so
+    # `SOLSTICE_API` resolves to nothing (rather than `__declspec(dllimport)` -> __imp_* refs).
+    target_compile_definitions(SmmFrameCacheTest PRIVATE SOLSTICE_STATIC_LINK)
+endif()
+set_target_properties(SmmFrameCacheTest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SOLSTICE_TEST_BIN_DIR}")
+solstice_copy_runtime_dlls(SmmFrameCacheTest)
+
 if(TARGET Multimedia)
     find_program(SOLSTICE_FFMPEG_CLI NAMES ffmpeg ffmpeg.exe)
     set(SOLSTICE_LAVFI_TEST_MP4 "${SOLSTICE_STAGING_DIR}/test_support/solstice_lavfi_pattern.mp4")
@@ -352,6 +396,11 @@ solstice_add_ctest(RelicFormatTest "quick")
 solstice_add_ctest(MeshletCullingTest "quick")
 solstice_add_ctest(PVSQueryTest "quick")
 solstice_add_ctest(LZXRoundTripTest "quick")
+solstice_add_ctest(AudioHRTFTest "quick")
+solstice_add_ctest(AudioWaveTracingTest "quick")
+solstice_add_ctest(AudioAmbisonicsTest "quick")
+solstice_add_ctest(SmmExportPipelineTest "quick")
+solstice_add_ctest(SmmFrameCacheTest "quick")
 if(TARGET MultimediaFfmpegTest)
     add_test(
         NAME MultimediaFfmpegTest
@@ -387,6 +436,11 @@ set(_solstice_quick_test_targets
     MeshletCullingTest
     PVSQueryTest
     LZXRoundTripTest
+    AudioHRTFTest
+    AudioWaveTracingTest
+    AudioAmbisonicsTest
+    SmmExportPipelineTest
+    SmmFrameCacheTest
 )
 foreach(_qt IN LISTS _solstice_quick_test_targets)
     if(TARGET ${_qt})

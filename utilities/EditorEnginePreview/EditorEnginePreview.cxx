@@ -30,6 +30,10 @@
 #include <thread>
 #include <vector>
 
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
+
 namespace Solstice::EditorEnginePreview {
 
 CinematicViewStatePod g_PendingCinematic{};
@@ -46,11 +50,14 @@ MeshLibrary g_MeshLib;
 Solstice::Core::MaterialLibrary g_MatLib;
 uint32_t g_PlaneMesh = 0;
 uint32_t g_CubeMesh = 0;
+uint32_t g_QuadMesh = 0;
 uint32_t g_MatPlane = 0;
 static constexpr size_t kMaxEntityMats = 256;
 uint32_t g_EntityMatIds[kMaxEntityMats]{};
 
 bool g_Inited = false;
+int g_LastFbW = 0;
+int g_LastFbH = 0;
 
 static void ApplyPendingCinematicToPost() {
     if (!g_Renderer) {
@@ -277,6 +284,7 @@ bool EnsureInitialized() {
 
     g_PlaneMesh = g_MeshLib.AddMesh(MF::CreatePlane(96.f, 96.f));
     g_CubeMesh = g_MeshLib.AddMesh(MF::CreateCube(1.f));
+    g_QuadMesh = g_MeshLib.AddMesh(MF::CreatePlane(1.f, 1.f));
 
     g_MatPlane = MaterialForAlbedo(Math::Vec3(0.22f, 0.24f, 0.28f));
     for (size_t j = 0; j < kMaxEntityMats; ++j) {
@@ -316,6 +324,8 @@ void Shutdown() {
         SDL_DestroyWindow(g_Window);
         g_Window = nullptr;
     }
+    g_LastFbW = 0;
+    g_LastFbH = 0;
     g_Inited = false;
 }
 
@@ -331,24 +341,37 @@ bool CaptureOrbitRgb(const LibUI::Viewport::OrbitPanZoomState& orbit, float targ
     if (!EnsureInitialized() || !g_Renderer) {
         return false;
     }
-    // Preserve the viewport aspect ratio while fitting into [32,1024] (the old 4:1 clamp broke aspect vs. the UI panel).
+    // Preserve aspect ratio. Small panels still scale up toward 1024 (legacy UX); large captures use native
+    // resolution up to kAbsMaxLongEdge so Movie Maker exports (e.g. 4K) match the requested framebuffer size.
+    constexpr int kMinDim = 32;
+    constexpr int kSmallPanelUpscaleFloor = 1024;
+    constexpr int kAbsMaxLongEdge = 8192;
+
     const int rw = std::max(1, framebufferWidth);
     const int rh = std::max(1, framebufferHeight);
     const double ar = static_cast<double>(rw) / static_cast<double>(rh);
-    const double s = std::min(1024.0 / static_cast<double>(rw), 1024.0 / static_cast<double>(rh));
+
+    int lim = (std::max)({kSmallPanelUpscaleFloor, rw, rh});
+    lim = (std::min)(lim, kAbsMaxLongEdge);
+    const double s = std::min(static_cast<double>(lim) / static_cast<double>(rw), static_cast<double>(lim) / static_cast<double>(rh));
+
     int fbW = static_cast<int>(std::lround(static_cast<double>(rw) * s));
     int fbH = static_cast<int>(std::lround(static_cast<double>(rh) * s));
-    fbW = std::clamp(fbW, 32, 1024);
-    fbH = std::clamp(fbH, 32, 1024);
+    fbW = std::clamp(fbW, kMinDim, kAbsMaxLongEdge);
+    fbH = std::clamp(fbH, kMinDim, kAbsMaxLongEdge);
     {
         const double ar2 = static_cast<double>(fbW) / static_cast<double>(fbH);
         if (ar2 > ar) {
-            fbW = std::clamp(static_cast<int>(std::lround(static_cast<double>(fbH) * ar)), 32, 1024);
+            fbW = std::clamp(static_cast<int>(std::lround(static_cast<double>(fbH) * ar)), kMinDim, kAbsMaxLongEdge);
         } else if (ar2 < ar) {
-            fbH = std::clamp(static_cast<int>(std::lround(static_cast<double>(fbW) / ar)), 32, 1024);
+            fbH = std::clamp(static_cast<int>(std::lround(static_cast<double>(fbW) / ar)), kMinDim, kAbsMaxLongEdge);
         }
     }
-    g_Renderer->Resize(fbW, fbH);
+    if (fbW != g_LastFbW || fbH != g_LastFbH) {
+        g_Renderer->Resize(fbW, fbH);
+        g_LastFbW = fbW;
+        g_LastFbH = fbH;
+    }
     ApplyPendingCinematicToPost();
 
     ClearEditorPreviewTextureSlots(*g_Renderer, kMaxEntityMats);
@@ -389,6 +412,11 @@ bool CaptureOrbitRgb(const LibUI::Viewport::OrbitPanZoomState& orbit, float targ
                 }
                 m->SetAlbedoColor(albedoD, 0.35f);
             }
+            if (e.CastShadows) {
+                m->Flags |= Solstice::Core::MaterialFlag_CastsShadows;
+            } else {
+                m->Flags &= ~static_cast<uint16_t>(Solstice::Core::MaterialFlag_CastsShadows);
+            }
             SanitizeMaterialTextureRefs(*m, texReg);
             ApplyPreviewTextureMaps(*g_Renderer, *m, e, static_cast<unsigned>(i));
         }
@@ -396,14 +424,28 @@ bool CaptureOrbitRgb(const LibUI::Viewport::OrbitPanZoomState& orbit, float targ
     for (size_t i = 0; i < nEnt; ++i) {
         const PreviewEntity& e = entities[i];
         const float base = std::max(e.HalfExtent, 0.05f) * 2.f;
-        const Math::Vec3 scl{
-            base * std::max(e.Scale.x, 0.01f),
-            base * std::max(e.Scale.y, 0.01f),
-            base * std::max(e.Scale.z, 0.01f),
-        };
         constexpr float kDeg = 3.14159265f / 180.f;
-        const Math::Quaternion rot = Math::Quaternion::FromEuler(e.PitchDeg * kDeg, e.YawDeg * kDeg, e.RollDeg * kDeg);
-        const SceneObjectID oid = g_Scene.AddObject(g_CubeMesh, e.Position, rot, scl);
+        Math::Vec3 scl{};
+        Math::Quaternion rot{};
+        uint32_t meshId = g_CubeMesh;
+        if (e.UseQuadProxy) {
+            meshId = g_QuadMesh;
+            scl = Math::Vec3{
+                base * std::max(e.Scale.x, 0.01f),
+                base * std::max(e.Scale.y, 0.01f),
+                base * 0.03f * std::max(e.Scale.z, 0.01f),
+            };
+            // MeshFactory plane is ground-aligned; rotate upright for card-like MG proxy quads.
+            rot = Math::Quaternion::FromEuler((e.PitchDeg - 90.0f) * kDeg, e.YawDeg * kDeg, e.RollDeg * kDeg);
+        } else {
+            scl = Math::Vec3{
+                base * std::max(e.Scale.x, 0.01f),
+                base * std::max(e.Scale.y, 0.01f),
+                base * std::max(e.Scale.z, 0.01f),
+            };
+            rot = Math::Quaternion::FromEuler(e.PitchDeg * kDeg, e.YawDeg * kDeg, e.RollDeg * kDeg);
+        }
+        const SceneObjectID oid = g_Scene.AddObject(meshId, e.Position, rot, scl);
         g_Scene.SetMaterial(oid, g_EntityMatIds[i]);
     }
 
@@ -428,9 +470,12 @@ bool CaptureOrbitRgb(const LibUI::Viewport::OrbitPanZoomState& orbit, float targ
     g_Renderer->QueueFramebufferCapture();
     g_Renderer->Present();
 
-    // `bgfx::frame()` kicks the render thread and returns; the swapchain screenshot callback runs
-    // asynchronously (see bgfx.h). Do not poll with extra `bgfx::frame()` by default — a second present
-    // faulted on Intel UHD D3D11. Wait with yield + sleep until TryGet succeeds.
+    // bgfx's screenshot callback fires asynchronously after the next backbuffer swap. The
+    // export pipeline already decouples this readback from ffmpeg writes via the lock-free
+    // SPSC encoder queue (see VideoExport.cxx EncoderWriter), so a slow GPU readback no longer
+    // stalls encoder throughput; instead the encoder thread keeps draining previously-finished
+    // frames while we wait here. The polling loop below uses a bounded wall-clock budget so
+    // long exports cannot deadlock on a degraded driver.
     auto tryGrab = [&]() -> bool {
         if (g_Renderer->TryGetLastFramebufferCaptureRGBA8(outRgba, outW, outH)) {
             return !outRgba.empty() && outW > 0 && outH > 0;
@@ -438,21 +483,36 @@ bool CaptureOrbitRgb(const LibUI::Viewport::OrbitPanZoomState& orbit, float targ
         return false;
     };
 
-    constexpr int kYieldIters = 8000;
-    for (int i = 0; i < kYieldIters; ++i) {
+    // Adaptive polling: short tight-loop first (most successful captures complete here in <1 ms on
+    // the GPU happy path), then back off to yield, then sleep with a fence-aware deadline. Bound by
+    // wall-clock so very high-resolution exports do not hang indefinitely on degraded drivers.
+    using clock = std::chrono::steady_clock;
+    const auto t0 = clock::now();
+    constexpr auto kFastSpinBudget = std::chrono::milliseconds(2);
+    constexpr auto kYieldBudget = std::chrono::milliseconds(50);
+    constexpr auto kSleepBudget = std::chrono::milliseconds(2000);
+
+    while (clock::now() - t0 < kFastSpinBudget) {
+        if (tryGrab()) {
+            return true;
+        }
+#if defined(_MSC_VER)
+        _mm_pause();
+#endif
+    }
+
+    while (clock::now() - t0 < kYieldBudget) {
         if (tryGrab()) {
             return true;
         }
         std::this_thread::yield();
     }
 
-    constexpr int kSleepIters = 8000;
-    constexpr auto kSleep = std::chrono::milliseconds(1);
-    for (int spin = 0; spin < kSleepIters; ++spin) {
+    while (clock::now() - t0 < kSleepBudget) {
         if (tryGrab()) {
             return true;
         }
-        std::this_thread::sleep_for(kSleep);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     // Optional: one extra API frame (may crash on some Intel iGPUs).
@@ -468,7 +528,7 @@ bool CaptureOrbitRgb(const LibUI::Viewport::OrbitPanZoomState& orbit, float targ
             if (tryGrab()) {
                 return true;
             }
-            std::this_thread::sleep_for(kSleep);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
 

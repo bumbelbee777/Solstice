@@ -12,6 +12,15 @@ namespace Solstice::Physics { class PhysicsSystem; }
 namespace Solstice::Scripting {
     class BytecodeVM;
 
+    struct ScriptInputHooks {
+        std::function<bool(int)> IsKeyPressed;
+        std::function<bool(int)> IsKeyJustPressed;
+        std::function<bool(int)> IsKeyJustReleased;
+        std::function<bool(int)> IsMouseButtonPressed;
+        std::function<Solstice::Math::Vec2()> GetMousePosition;
+        std::function<Solstice::Math::Vec2()> GetMouseDelta;
+    };
+
     // Helper to extract values from Value
     SOLSTICE_API float GetFloat(const Value& v);
     SOLSTICE_API int64_t GetInt(const Value& v);
@@ -32,4 +41,7 @@ namespace Solstice::Scripting {
         Physics::PhysicsSystem* physicsSystem = nullptr,
         Render::Camera* camera = nullptr
     );
+
+    // Optional global input hooks used by Input.* natives.
+    SOLSTICE_API void SetScriptInputHooks(const ScriptInputHooks& hooks);
 }

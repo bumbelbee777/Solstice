@@ -101,6 +101,39 @@ struct SmfFluidVolume {
     float Prandtl{0.71f};
 };
 
+/// Authoring-time soft-body cloth volume; runtime expands this into a PBD cloth entity via `PhysicsSystem`.
+struct SmfSoftBodyVolume {
+    std::string Name;
+    bool Enabled{true};
+    SmfVec3 Origin{};
+    int32_t GridWidth{12};
+    int32_t GridHeight{12};
+    float NodeSpacing{0.25f};
+    float NodeMass{1.0f};
+    float Damping{0.05f};
+    float StructuralStiffness{0.95f};
+    float ShearStiffness{0.85f};
+    float BendStiffness{0.60f};
+    int32_t SolverIterations{8};
+    bool AnchorTopRow{true};
+};
+
+/// Authoring-time vehicle setup; runtime materializes an arcade vehicle + rigid body.
+struct SmfVehicleVolume {
+    std::string Name;
+    bool Enabled{true};
+    SmfVec3 Origin{};
+    float WheelBase{2.5f};
+    float TrackWidth{1.6f};
+    float Mass{1200.0f};
+    float EngineForce{9000.0f};
+    float BrakeForce{6000.0f};
+    float MaxSteerAngleRadians{0.55f};
+};
+
+inline constexpr int kSmfSoftBodyGridMin = 2;
+inline constexpr int kSmfSoftBodyGridMax = 256;
+
 inline constexpr int kSmfFluidResolutionMin = 4;
 inline constexpr int kSmfFluidResolutionMax = 128;
 inline constexpr int64_t kSmfFluidInteriorCellBudget = 262144;
@@ -120,6 +153,8 @@ struct SmfMap {
     SmfWorldAuthoringHooks WorldAuthoringHooks;
 
     std::vector<SmfFluidVolume> FluidVolumes;
+    std::vector<SmfSoftBodyVolume> SoftBodyVolumes;
+    std::vector<SmfVehicleVolume> VehicleVolumes;
 
     /// Optional path to a **baked** RGBA lightmap (relative to the .smf; optional **BKM1** tag in **SMAL** after world hooks).
     std::string BakedLightmapPath;
@@ -134,6 +169,8 @@ struct SmfMap {
         Skybox.reset();
         WorldAuthoringHooks = {};
         FluidVolumes.clear();
+        SoftBodyVolumes.clear();
+        VehicleVolumes.clear();
         BakedLightmapPath.clear();
     }
 };

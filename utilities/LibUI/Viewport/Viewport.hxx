@@ -75,7 +75,10 @@ LIBUI_API bool ScreenToLetterboxUv(const ImVec2& screen_pos, const ImVec2& panel
                                    float tex_w, float tex_h, float& out_u, float& out_v);
 
 /// Orbit with LMB drag (or `orbit_mouse_button`), pan with MMB drag or LMB+Alt, dolly with wheel while hovered.
-LIBUI_API void ApplyOrbitPanZoom(OrbitPanZoomState& state, const Frame& frame, const OrbitPanZoomParams& params = {});
+/// ``suppressLmbOrbitRotation``: when true and ``orbit_mouse_button`` is LMB, skip yaw/pitch rotation so viewport drags
+/// can move picks without orbiting (wheel zoom / Alt+LMB pan still apply).
+LIBUI_API void ApplyOrbitPanZoom(OrbitPanZoomState& state, const Frame& frame, const OrbitPanZoomParams& params = {},
+    bool suppressLmbOrbitRotation = false);
 
 /// Default orbit/pan/zoom and perspective projection (editor-style isometric-ish pitch).
 LIBUI_API void ResetOrbitPanZoom(OrbitPanZoomState& state);

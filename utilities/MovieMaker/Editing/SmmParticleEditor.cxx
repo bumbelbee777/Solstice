@@ -8,6 +8,7 @@
 #include <LibUI/FileDialogs/FileDialogs.hxx>
 #include <LibUI/Graphics/PreviewTexture.hxx>
 #include <LibUI/Undo/SnapshotStack.hxx>
+#include <LibUI/Widgets/Widgets.hxx>
 
 #include <Parallax/MGRaster.hxx>
 
@@ -132,8 +133,8 @@ void DrawParticleEditorPanel(const char* windowTitle, bool* visible, ParticleEdi
         return;
     }
     const char* title = (windowTitle && windowTitle[0]) ? windowTitle : "Particles";
-    if (!ImGui::Begin(title, visible)) {
-        ImGui::End();
+    if (!LibUI::Widgets::BeginWindow(title, visible)) {
+        LibUI::Widgets::EndWindow();
         return;
     }
     if (!s_particleCommittedInited) {
@@ -142,34 +143,34 @@ void DrawParticleEditorPanel(const char* windowTitle, bool* visible, ParticleEdi
     }
     g_particleEditPanelFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
 
-    ImGui::Checkbox("Enable preview", &st.enabled);
+    LibUI::Widgets::Checkbox("Enable preview", &st.enabled);
     TrackParticleWidget(s_particleCommitted);
-    ImGui::Checkbox("Attach to selected scene element index", &st.attachToSceneElement);
+    LibUI::Widgets::Checkbox("Attach to selected scene element index", &st.attachToSceneElement);
     TrackParticleWidget(s_particleCommitted);
-    ImGui::SetNextItemWidth(120);
-    ImGui::InputInt("Element index", &st.attachElementIndex);
+    LibUI::Widgets::SetNextItemWidth(120);
+    LibUI::Widgets::InputInt("Element index", &st.attachElementIndex);
     TrackParticleWidget(s_particleCommitted);
-    ImGui::DragFloat("Spawn / sec", &st.spawnPerSec, 0.5f, 0.f, 500.f);
+    LibUI::Widgets::DragFloat("Spawn / sec", &st.spawnPerSec, 0.5f, 0.f, 500.f);
     TrackParticleWidget(s_particleCommitted);
-    ImGui::DragFloat("Lifetime (s)", &st.lifetimeSec, 0.02f, 0.05f, 20.f);
+    LibUI::Widgets::DragFloat("Lifetime (s)", &st.lifetimeSec, 0.02f, 0.05f, 20.f);
     TrackParticleWidget(s_particleCommitted);
-    ImGui::DragFloat3("Vel min", &st.velMin.x, 0.05f);
+    LibUI::Widgets::DragFloat3("Vel min", &st.velMin.x, 0.05f);
     TrackParticleWidget(s_particleCommitted);
-    ImGui::DragFloat3("Vel max", &st.velMax.x, 0.05f);
+    LibUI::Widgets::DragFloat3("Vel max", &st.velMax.x, 0.05f);
     TrackParticleWidget(s_particleCommitted);
-    ImGui::DragFloat3("Gravity", &st.gravity.x, 0.05f);
+    LibUI::Widgets::DragFloat3("Gravity", &st.gravity.x, 0.05f);
     TrackParticleWidget(s_particleCommitted);
-    ImGui::DragFloat("Linear drag", &st.linearDrag, 0.02f, 0.f, 12.f);
+    LibUI::Widgets::DragFloat("Linear drag", &st.linearDrag, 0.02f, 0.f, 12.f);
     TrackParticleWidget(s_particleCommitted);
-    ImGui::DragFloat("Start size", &st.startSize, 0.005f, 0.001f, 2.f);
+    LibUI::Widgets::DragFloat("Start size", &st.startSize, 0.005f, 0.001f, 2.f);
     TrackParticleWidget(s_particleCommitted);
-    ImGui::DragFloat("End size", &st.endSize, 0.005f, 0.f, 2.f);
+    LibUI::Widgets::DragFloat("End size", &st.endSize, 0.005f, 0.f, 2.f);
     TrackParticleWidget(s_particleCommitted);
-    ImGui::DragInt("Max particles", &st.maxParticles, 32.f, 64, 65536);
+    LibUI::Widgets::DragInt("Max particles", &st.maxParticles, 32.f, 64, 65536);
     TrackParticleWidget(s_particleCommitted);
-    ImGui::ColorEdit4("Color start (legacy, when gradient off)", st.colorStart);
+    LibUI::Widgets::ColorEdit4("Color start (legacy, when gradient off)", st.colorStart);
     TrackParticleWidget(s_particleCommitted);
-    ImGui::ColorEdit4("Color end (legacy)", st.colorEnd);
+    LibUI::Widgets::ColorEdit4("Color end (legacy)", st.colorEnd);
     TrackParticleWidget(s_particleCommitted);
     if (!st.gradStopsInited) {
         for (int c = 0; c < 4; ++c) {
@@ -181,22 +182,22 @@ void DrawParticleEditorPanel(const char* windowTitle, bool* visible, ParticleEdi
         st.gradientStops = 2;
         st.gradStopsInited = true;
     }
-    ImGui::Checkbox("Multi-stop color over life (viewport)", &st.useColorGradient);
+    LibUI::Widgets::Checkbox("Multi-stop color over life (viewport)", &st.useColorGradient);
     TrackParticleWidget(s_particleCommitted);
     if (st.useColorGradient) {
-        ImGui::SliderInt("Stops (sort T with button below)", &st.gradientStops, 2, st.kMaxParticleGradient);
+        LibUI::Widgets::SliderInt("Stops (sort T with button below)", &st.gradientStops, 2, st.kMaxParticleGradient);
         TrackParticleWidget(s_particleCommitted);
         for (int i = 0; i < st.gradientStops; ++i) {
             ImGui::PushID(i);
-            ImGui::SetNextItemWidth(120.f);
-            ImGui::DragFloat("t (0-1 along life)", &st.gradT[i], 0.002f, 0.f, 1.f, "%.3f");
+            LibUI::Widgets::SetNextItemWidth(120.f);
+            LibUI::Widgets::DragFloat("t (0-1 along life)", &st.gradT[i], 0.002f, 0.f, 1.f, "%.3f");
             TrackParticleWidget(s_particleCommitted);
-            ImGui::SameLine();
-            ImGui::ColorEdit4("rgba", st.gradRgba[i]);
+            LibUI::Widgets::SameLine();
+            LibUI::Widgets::ColorEdit4("rgba", st.gradRgba[i]);
             TrackParticleWidget(s_particleCommitted);
             ImGui::PopID();
         }
-        if (ImGui::Button("Sort stops by T##gradsort")) {
+        if (LibUI::Widgets::Button("Sort stops by T##gradsort")) {
             try {
                 g_particleEditUndo.PushBeforeChange(s_particleCommitted);
             } catch (const std::bad_alloc&) {
@@ -212,20 +213,20 @@ void DrawParticleEditorPanel(const char* windowTitle, bool* visible, ParticleEdi
                 }
             }
         }
-        ImGui::TextDisabled("Export maps first/last stop to `ColorStart` and `ColorEnd` on write.");
+        LibUI::Widgets::TextDisabled("Export maps first/last stop to `ColorStart` and `ColorEnd` on write.");
     }
-    ImGui::Separator();
-    ImGui::Checkbox("Use imported sprite in viewport", &st.useImportedSprite);
+    LibUI::Widgets::Separator();
+    LibUI::Widgets::Checkbox("Use imported sprite in viewport", &st.useImportedSprite);
     TrackParticleWidget(s_particleCommitted);
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 88.0f);
-    ImGui::InputTextWithHint("##partsprite", "Sprite image path (PNG, JPEG, …)", st.particleSpritePath,
+    LibUI::Widgets::SetNextItemWidth(LibUI::Widgets::GetContentRegionAvail().x - 88.0f);
+    LibUI::Widgets::InputTextWithHint("##partsprite", "Sprite image path (PNG, JPEG, ...)", st.particleSpritePath,
         sizeof(st.particleSpritePath));
     TrackParticleWidget(s_particleCommitted);
-    ImGui::SameLine();
+    LibUI::Widgets::SameLine();
     if (!fileDialogWindow) {
         ImGui::BeginDisabled();
     }
-    if (ImGui::Button("Browse##psprite")) {
+    if (LibUI::Widgets::Button("Browse##psprite")) {
         if (fileDialogWindow) {
             LibUI::FileDialogs::ShowOpenFile(
                 fileDialogWindow, "Open particle sprite",
@@ -242,22 +243,22 @@ void DrawParticleEditorPanel(const char* windowTitle, bool* visible, ParticleEdi
     if (!fileDialogWindow) {
         ImGui::EndDisabled();
     }
-    if (ImGui::Button("Burst +64")) {
+    if (LibUI::Widgets::Button("Burst +64")) {
         try {
             g_particleEditUndo.PushBeforeChange(s_particleCommitted);
         } catch (const std::bad_alloc&) {
         }
         st.burstPending += 64;
     }
-    ImGui::SameLine();
-    if (ImGui::Button("Burst +256")) {
+    LibUI::Widgets::SameLine();
+    if (LibUI::Widgets::Button("Burst +256")) {
         try {
             g_particleEditUndo.PushBeforeChange(s_particleCommitted);
         } catch (const std::bad_alloc&) {
         }
         st.burstPending += 256;
     }
-    if (ImGui::Button("Clear particles")) {
+    if (LibUI::Widgets::Button("Clear particles")) {
         try {
             g_particleEditUndo.PushBeforeChange(s_particleCommitted);
         } catch (const std::bad_alloc&) {
@@ -267,9 +268,9 @@ void DrawParticleEditorPanel(const char* windowTitle, bool* visible, ParticleEdi
         st.burstPending = 0;
     }
     if (session && session->scene && session->resolver && session->particleEditor == &st) {
-        ImGui::Separator();
-        ImGui::TextUnformatted("Parallax (.prlx)");
-        if (ImGui::Button("Write emitter to scene")) {
+        LibUI::Widgets::Separator();
+        LibUI::Widgets::Text("Parallax (.prlx)");
+        if (LibUI::Widgets::Button("Write emitter to scene")) {
             std::string err;
             Smm::PushSceneUndoSnapshot(*session->scene, session->compressPrlx);
             if (!Smm::Particles::SyncEditorToParallaxScene(*session->scene, *session->particleEditor, *session->resolver, err)) {
@@ -285,8 +286,8 @@ void DrawParticleEditorPanel(const char* windowTitle, bool* visible, ParticleEdi
                 }
             }
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Read emitter from scene")) {
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Read emitter from scene")) {
             try {
                 g_particleEditUndo.PushBeforeChange(s_particleCommitted);
             } catch (const std::bad_alloc&) {
@@ -296,17 +297,17 @@ void DrawParticleEditorPanel(const char* windowTitle, bool* visible, ParticleEdi
                 *session->statusLine = "Loaded particle emitter from scene (if present).";
             }
         }
-        ImGui::TextDisabled("Export/save .prlx also merges the editor emitter automatically.");
+        LibUI::Widgets::TextDisabled("Export/save .prlx also merges the editor emitter automatically.");
     }
-    ImGui::Checkbox("Ribbon trails (unified viewport)", &st.ribbonTrails);
+    LibUI::Widgets::Checkbox("Ribbon trails (unified viewport)", &st.ribbonTrails);
     TrackParticleWidget(s_particleCommitted);
-    ImGui::SliderInt("Ribbon segments", &st.ribbonSegments, 2, 12);
+    LibUI::Widgets::SliderInt("Ribbon segments", &st.ribbonSegments, 2, 12);
     TrackParticleWidget(s_particleCommitted);
-    ImGui::TextDisabled("Preview: billboards in unified viewport (sprite or gradient disk).");
+    LibUI::Widgets::TextDisabled("Preview: billboards in unified viewport (sprite or gradient disk).");
     if (!ImGui::IsAnyItemActive()) {
         s_particleCommitted = st;
     }
-    ImGui::End();
+    LibUI::Widgets::EndWindow();
 }
 
 void SyncParticleSpritePreview(SDL_Window* window, LibUI::Graphics::PreviewTextureRgba& tex, const ParticleEditorState& st) {

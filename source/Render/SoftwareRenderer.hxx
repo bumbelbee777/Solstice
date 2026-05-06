@@ -120,6 +120,9 @@ public:
     void SetWireframe(bool Enable);
     void SetShowDebugOverlay(bool Enable);
 
+    /// Forward-pass global lighting tune (see `SceneLightingTune`, `docs/Renderer.md`).
+    void SetSceneLightingTune(const SceneLightingTune& tune);
+
     // Initialization state
     bool IsInitialized() const { return m_Initialized; }
 
@@ -151,6 +154,10 @@ public:
     // Physics debug visualization
     void SetPhysicsDebugMode(bool Enable) { m_ShowPhysicsDebug = Enable; }
     void RenderPhysicsDebug(const void* PhysicsSystem); // void* to avoid circular dependency
+
+    /// ECS portal frame + particle streaks (`PortalDebugDrawBuffer`). Drawn on \c VIEW_SCENE after main scene submit.
+    void SetPortalDebugMode(bool Enable) { m_ShowPortalDebug = Enable; }
+    void RenderPortalDebug(const Camera& Cam);
 
     // Optional physics integration: when set, RenderScene will sync physics transforms to the scene
     void BindECSRegistry(Solstice::ECS::Registry* registry) { m_PhysicsRegistry = registry; }
@@ -254,6 +261,7 @@ private:
 
     // Physics debug
     bool m_ShowPhysicsDebug{false};
+    bool m_ShowPortalDebug{true};
 
     // Post Processing
     std::unique_ptr<PostProcessing> m_PostProcessing;

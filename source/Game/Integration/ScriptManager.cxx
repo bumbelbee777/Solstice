@@ -55,6 +55,25 @@ bool ScriptManager::Initialize(
         const auto& sf = std::get<Scripting::ScriptFunc>(value);
         StartCoroutine(m_ScriptVM.GetProgram(), sf.entryIP, {});
     });
+    Scripting::NativeBinding::Register<int64_t, std::string, std::string>(m_ScriptVM, "Coroutine.StartExport",
+        [this](const std::string& moduleName, const std::string& exportName) -> int64_t {
+            if (!m_ScriptVM.HasModule(moduleName)) {
+                return 0;
+            }
+            const Scripting::Program& mod = m_ScriptVM.GetModule(moduleName);
+            const auto it = mod.Exports.find(exportName);
+            if (it == mod.Exports.end()) {
+                return 0;
+            }
+            StartCoroutine(mod, it->second, {});
+            return 1;
+        });
+    Scripting::NativeBinding::Register<int64_t>(m_ScriptVM, "Coroutine.ActiveCount", [this]() -> int64_t {
+        return static_cast<int64_t>(m_Coroutines.size());
+    });
+    Scripting::NativeBinding::Register<void>(m_ScriptVM, "Coroutine.StopAll", [this]() {
+        m_Coroutines.clear();
+    });
     Scripting::NativeBinding::Register<void, Scripting::Value>(m_ScriptVM, "WaitUntil", [this](const Scripting::Value& value) {
         if (!std::holds_alternative<Scripting::ScriptFunc>(value)) {
             return;
@@ -432,6 +451,17 @@ void ScriptManager::RegisterProgressionAndUiScriptBindings() {
     using namespace Scripting::NativeBinding;
     Register<double>(m_ScriptVM, "Time_FrameDelta", [this]() { return m_ScriptFrameDelta; });
     Register<double>(m_ScriptVM, "Time_GameTime", [this]() { return m_GameTime; });
+    Register<int64_t>(m_ScriptVM, "Time_FrameCount", [this]() { return static_cast<int64_t>(m_FrameCount); });
+
+    Register<int64_t, std::string>(m_ScriptVM, "Events.HandlerCount", [this](const std::string& eventName) -> int64_t {
+        return static_cast<int64_t>(m_ScriptVM.GetEventHandlerCount(eventName));
+    });
+    Register<void, std::string>(m_ScriptVM, "Events.Clear", [this](const std::string& eventName) {
+        m_ScriptVM.ClearEventHandlers(eventName);
+    });
+    Register<void>(m_ScriptVM, "Events.ClearAll", [this]() {
+        m_ScriptVM.ClearAllEventHandlers();
+    });
 
     Register<void, std::string, int64_t>(m_ScriptVM, "Achievement_Configure", [this](const std::string& id, int64_t target) {
         if (m_Achievements) {

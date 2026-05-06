@@ -7,6 +7,23 @@
 
 namespace LibUI::Widgets {
 
+enum class InlineAlertSeverity {
+    Info,
+    Success,
+    Warning,
+    Error
+};
+
+struct FilterableVirtualTableOptions {
+    const char* FilterInputId{nullptr};
+    const char* FilterHint{"Filter"};
+    const char* ClearButtonLabel{"Clear"};
+    const char* TableId{"##table"};
+    int ColumnCount{1};
+    ImGuiTableFlags TableFlags{ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY};
+    ImVec2 TableSize{0.0f, 0.0f};
+};
+
 // Basic widgets
 LIBUI_API bool Button(const char* label, const ImVec2& size = ImVec2(0, 0));
 LIBUI_API bool SmallButton(const char* label);
@@ -17,6 +34,10 @@ LIBUI_API void TextDisabled(const char* text);
 LIBUI_API void TextWrapped(const char* text);
 LIBUI_API void LabelText(const char* label, const char* text);
 LIBUI_API void BulletText(const char* text);
+LIBUI_API bool DrawInlineAlert(const char* id, const char* message, InlineAlertSeverity severity, bool dismissible = true,
+    const char* dismissButtonLabel = "Dismiss");
+LIBUI_API bool DrawFilterableVirtualTable(char* filterBuffer, size_t filterBufferSize, const FilterableVirtualTableOptions& options,
+    const std::function<void()>& setupColumns, int rowCount, const std::function<void(int rowIndex)>& drawRow);
 
 // Input widgets
 LIBUI_API bool InputText(const char* label, char* buf, size_t buf_size, ImGuiInputTextFlags flags = 0);
@@ -24,9 +45,19 @@ LIBUI_API bool InputTextMultiline(const char* label, char* buf, size_t buf_size,
 LIBUI_API bool InputTextWithHint(const char* label, const char* hint, char* buf, size_t buf_size, ImGuiInputTextFlags flags = 0);
 LIBUI_API bool InputFloat(const char* label, float* v, float step = 0.0f, float step_fast = 0.0f, const char* format = "%.3f", ImGuiInputTextFlags flags = 0);
 LIBUI_API bool InputInt(const char* label, int* v, int step = 1, int step_fast = 100, ImGuiInputTextFlags flags = 0);
+LIBUI_API bool InputDouble(const char* label, double* v, double step = 0.0, double step_fast = 0.0, const char* format = "%.6f", ImGuiInputTextFlags flags = 0);
+LIBUI_API bool InputScalar(const char* label, ImGuiDataType data_type, void* p_data, const void* p_step = nullptr, const void* p_step_fast = nullptr, const char* format = nullptr, ImGuiInputTextFlags flags = 0);
 LIBUI_API bool Checkbox(const char* label, bool* v);
 LIBUI_API bool RadioButton(const char* label, bool active);
 LIBUI_API bool RadioButton(const char* label, int* v, int v_button);
+LIBUI_API bool DragFloat(const char* label, float* v, float v_speed = 1.0f, float v_min = 0.0f, float v_max = 0.0f, const char* format = "%.3f", ImGuiSliderFlags flags = 0);
+LIBUI_API bool DragFloat2(const char* label, float v[2], float v_speed = 1.0f, float v_min = 0.0f, float v_max = 0.0f, const char* format = "%.3f", ImGuiSliderFlags flags = 0);
+LIBUI_API bool DragFloat3(const char* label, float v[3], float v_speed = 1.0f, float v_min = 0.0f, float v_max = 0.0f, const char* format = "%.3f", ImGuiSliderFlags flags = 0);
+LIBUI_API bool DragFloat4(const char* label, float v[4], float v_speed = 1.0f, float v_min = 0.0f, float v_max = 0.0f, const char* format = "%.3f", ImGuiSliderFlags flags = 0);
+LIBUI_API bool DragInt(const char* label, int* v, float v_speed = 1.0f, int v_min = 0, int v_max = 0, const char* format = "%d", ImGuiSliderFlags flags = 0);
+LIBUI_API bool DragInt2(const char* label, int v[2], float v_speed = 1.0f, int v_min = 0, int v_max = 0, const char* format = "%d", ImGuiSliderFlags flags = 0);
+LIBUI_API bool DragInt3(const char* label, int v[3], float v_speed = 1.0f, int v_min = 0, int v_max = 0, const char* format = "%d", ImGuiSliderFlags flags = 0);
+LIBUI_API bool DragInt4(const char* label, int v[4], float v_speed = 1.0f, int v_min = 0, int v_max = 0, const char* format = "%d", ImGuiSliderFlags flags = 0);
 LIBUI_API bool SliderFloat(const char* label, float* v, float v_min, float v_max, const char* format = "%.3f", ImGuiSliderFlags flags = 0);
 LIBUI_API bool SliderInt(const char* label, int* v, int v_min, int v_max, const char* format = "%d", ImGuiSliderFlags flags = 0);
 LIBUI_API bool SliderFloat2(const char* label, float v[2], float v_min, float v_max, const char* format = "%.3f", ImGuiSliderFlags flags = 0);
@@ -36,6 +67,8 @@ LIBUI_API bool SliderFloat4(const char* label, float v[4], float v_min, float v_
 // Advanced widgets
 LIBUI_API bool Combo(const char* label, int* current_item, const char* const items[], int items_count, int popup_max_height_in_items = -1);
 LIBUI_API bool ListBox(const char* label, int* current_item, const char* const items[], int items_count, int height_in_items = -1);
+LIBUI_API bool BeginListBox(const char* label, const ImVec2& size = ImVec2(0, 0));
+LIBUI_API void EndListBox();
 LIBUI_API bool Selectable(const char* label, bool selected = false, ImGuiSelectableFlags flags = 0, const ImVec2& size = ImVec2(0, 0));
 LIBUI_API bool ColorEdit3(const char* label, float col[3], ImGuiColorEditFlags flags = 0);
 LIBUI_API bool ColorEdit4(const char* label, float col[4], ImGuiColorEditFlags flags = 0);
@@ -46,6 +79,9 @@ LIBUI_API bool ProgressBar(float fraction, const ImVec2& size_arg = ImVec2(-1, 0
 // Layout
 LIBUI_API bool BeginWindow(const char* name, bool* p_open = nullptr, ImGuiWindowFlags flags = 0);
 LIBUI_API void EndWindow();
+LIBUI_API void SetNextWindowPos(const ImVec2& pos, ImGuiCond cond = 0, const ImVec2& pivot = ImVec2(0, 0));
+LIBUI_API void SetNextWindowSize(const ImVec2& size, ImGuiCond cond = 0);
+LIBUI_API void SetNextWindowViewport(ImGuiID viewport_id);
 LIBUI_API bool BeginChild(const char* str_id, const ImVec2& size = ImVec2(0, 0), bool border = false, ImGuiWindowFlags flags = 0);
 LIBUI_API void EndChild();
 LIBUI_API void SameLine(float offset_x = 0.0f, float spacing_w = -1.0f);
@@ -78,6 +114,24 @@ LIBUI_API void PopItemWidth();
 LIBUI_API float GetItemWidth();
 LIBUI_API void SetItemDefaultFocus();
 LIBUI_API void SetKeyboardFocusHere(int offset = 0);
+LIBUI_API bool IsItemHovered(ImGuiHoveredFlags flags = 0);
+LIBUI_API bool IsItemActive();
+LIBUI_API bool IsItemClicked(ImGuiMouseButton mouse_button = 0);
+LIBUI_API ImVec2 GetItemRectMin();
+LIBUI_API ImVec2 GetItemRectMax();
+LIBUI_API ImVec2 GetItemRectSize();
+LIBUI_API bool IsWindowHovered(ImGuiHoveredFlags flags = 0);
+
+// Style scope helpers
+LIBUI_API void PushStyleVar(ImGuiStyleVar idx, float val);
+LIBUI_API void PushStyleVar(ImGuiStyleVar idx, const ImVec2& val);
+LIBUI_API void PopStyleVar(int count = 1);
+LIBUI_API void PushStyleColor(ImGuiCol idx, ImU32 col);
+LIBUI_API void PushStyleColor(ImGuiCol idx, const ImVec4& col);
+LIBUI_API void PopStyleColor(int count = 1);
+LIBUI_API void PushFont(ImFont* font);
+LIBUI_API void PopFont();
+LIBUI_API ImVec2 GetContentRegionAvail();
 
 // Tree nodes
 LIBUI_API bool TreeNode(const char* label);
@@ -143,6 +197,14 @@ LIBUI_API bool IsPopupOpen(const char* str_id, ImGuiPopupFlags flags = 0);
 LIBUI_API void SetTooltip(const char* fmt, ...);
 LIBUI_API void BeginTooltip();
 LIBUI_API void EndTooltip();
+
+// Input helpers
+LIBUI_API bool IsKeyPressed(ImGuiKey key, bool repeat = true);
+LIBUI_API bool IsKeyChordPressed(ImGuiKeyChord key_chord);
+LIBUI_API bool IsMouseClicked(ImGuiMouseButton button, bool repeat = false);
+LIBUI_API bool IsMouseDown(ImGuiMouseButton button);
+LIBUI_API bool IsMouseDragging(ImGuiMouseButton button, float lock_threshold = -1.0f);
+LIBUI_API ImVec2 GetMousePos();
 
 // Editor-specific helpers
 LIBUI_API bool InputTextMultiline(const char* label, std::string& str, const ImVec2& size = ImVec2(0, 0), ImGuiInputTextFlags flags = 0);

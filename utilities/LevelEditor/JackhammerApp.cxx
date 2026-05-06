@@ -1,8 +1,10 @@
 // Jackhammer — Solstice Level Editor: .smf (Solstice Map Format v1) authoring.
 
 #include "JackhammerBspTextureOps.hxx"
+#include "JackhammerEntityHelpers.hxx"
 #include "JackhammerLightmapBake.hxx"
 #include "JackhammerPrefabs.hxx"
+#include "JackhammerPlugins.hxx"
 #include "JackhammerViewportGeoTools.hxx"
 
 #include "LibUI/Core/Core.hxx"
@@ -13,14 +15,18 @@
 #include "LibUI/Viewport/Viewport.hxx"
 #include "LibUI/Viewport/ViewportGizmo.hxx"
 #include "LibUI/Viewport/ViewportMath.hxx"
+#include "LibUI/Viewport/ViewportInteraction.hxx"
 #include "LibUI/Tools/RecentPathsUi.hxx"
 #include "LibUI/Tools/ClipboardButton.hxx"
+#include "LibUI/Tools/PathInputBrowse.hxx"
 #include "LibUI/Tools/UnsavedChangesModal.hxx"
 #include "LibUI/Tools/AppAbout.hxx"
 #include "UtilityPluginHost/UtilityPluginUi.hxx"
 #include "EditorEnginePreview/EditorEnginePreview.hxx"
 #include "LibUI/Graphics/PreviewTexture.hxx"
 #include "LibUI/Icons/Icons.hxx"
+#include "LibUI/Layout/SplitPane.hxx"
+#include "LibUI/Widgets/Widgets.hxx"
 #include "LibUI/Shell/Frame.hxx"
 #include "LibUI/Shell/DropFile.hxx"
 #include "LibUI/Shell/GlWindow.hxx"
@@ -102,6 +108,42 @@ constexpr int kJhEntityListMaxDisplayedRows = 16384;
 constexpr size_t kJhEntityListMaxScanEntities = 100000;
 constexpr size_t kJhMaxTextureTintCacheEntries = 512;
 
+using Jackhammer::EntityHelpers::ComputeEntityOriginAabb;
+using Jackhammer::EntityHelpers::MakeUniqueAcousticZoneName;
+using Jackhammer::EntityHelpers::MakeUniqueAuthoringLightName;
+using Jackhammer::EntityHelpers::MakeUniqueEntityName;
+using Jackhammer::EntityHelpers::MakeUniqueFluidVolumeName;
+using Jackhammer::EntityHelpers::MakeUniqueSoftBodyVolumeName;
+using Jackhammer::EntityHelpers::MakeUniqueVehicleVolumeName;
+using Jackhammer::EntityHelpers::ReadEntityPitchDegrees;
+using Jackhammer::EntityHelpers::ReadEntityRollDegrees;
+using Jackhammer::EntityHelpers::ReadEntityScaleVec3;
+using Jackhammer::EntityHelpers::ReadEntityUniformScale;
+using Jackhammer::EntityHelpers::ReadEntityYawDegrees;
+using Jackhammer::EntityHelpers::ResolveMapAssetPath;
+using Jackhammer::EntityHelpers::SetEntityDiffuseTexturePath;
+using Jackhammer::EntityHelpers::SetEntityFloatByKey;
+using Jackhammer::EntityHelpers::SetEntityMaterialPath;
+using Jackhammer::EntityHelpers::SetEntityModelAssetPath;
+using Jackhammer::EntityHelpers::SetEntityNormalTexturePath;
+using Jackhammer::EntityHelpers::SetEntityOriginVec3;
+using Jackhammer::EntityHelpers::SetEntityPitchDegrees;
+using Jackhammer::EntityHelpers::SetEntityRoughnessTexturePath;
+using Jackhammer::EntityHelpers::SetEntityRollDegrees;
+using Jackhammer::EntityHelpers::SetEntityScaleVec3;
+using Jackhammer::EntityHelpers::SetEntityUniformScale;
+using Jackhammer::EntityHelpers::SetEntityVec3ByKey;
+using Jackhammer::EntityHelpers::SetEntityYawDegrees;
+using Jackhammer::EntityHelpers::ToMapRelativePathIfPossible;
+using Jackhammer::EntityHelpers::TryGetEntityDiffuseTexturePath;
+using Jackhammer::EntityHelpers::TryGetEntityMaterialPath;
+using Jackhammer::EntityHelpers::TryGetEntityModelAssetPath;
+using Jackhammer::EntityHelpers::TryGetEntityFloatByKey;
+using Jackhammer::EntityHelpers::TryGetEntityNormalTexturePath;
+using Jackhammer::EntityHelpers::TryGetEntityOriginVec3;
+using Jackhammer::EntityHelpers::TryGetEntityRoughnessTexturePath;
+using Jackhammer::EntityHelpers::TryGetEntityVec3ByKey;
+
 static Jackhammer::MeshOps::JhTriangleMesh& JhMeshWorkshopState() {
     static Jackhammer::MeshOps::JhTriangleMesh mesh;
     return mesh;
@@ -115,6 +157,8 @@ static std::vector<std::pair<Solstice::Smf::SmfVec3, Solstice::Smf::SmfVec3>>& J
 #define s_jhBspCsgPieces (JhBspCsgPiecesState())
 // 0=none, 1=block drag (LMB in viewport; use RMB to orbit)
 static int s_jhGeoTool = 0;
+static LibUI::Viewport::TransformTool s_jhTransformTool = LibUI::Viewport::TransformTool::Translate;
+static LibUI::Viewport::TransformAxis s_jhTransformAxis = LibUI::Viewport::TransformAxis::None;
 static bool s_jhBlockDragActive = false;
 static float s_jhBlockDragX0 = 0.f;
 static float s_jhBlockDragZ0 = 0.f;
@@ -162,6 +206,59 @@ static Jackhammer::ViewportGeo::MeasureState& JhMeasureState() {
     static Jackhammer::ViewportGeo::MeasureState m{};
     return m;
 }
+
+static std::unordered_set<std::uint64_t> s_jhViewportPickTokens{};
+static LibUI::Viewport::OrbitLeftDragSuppression s_jhVpOrbitSuppress{};
+static ImVec2 s_jhVpDragPlanePrev{};
+static std::uint64_t s_jhVpDragToken{};
+static bool s_jhVpDragUndoPushed{false};
+static bool s_jhVpMarqueeActive{false};
+static bool s_jhVpMarqueeChord{false};
+static ImVec2 s_jhVpMarqueeA{};
+static ImVec2 s_jhVpMarqueeB{};
+constexpr int kJhMaxViewportPickBoxes = 4096;
+
+static void JhFillViewportPickArrays(const Solstice::Smf::SmfMap& map, std::vector<LibUI::Tools::AxisAlignedBox3>& boxes,
+    std::vector<LibUI::Viewport::PickToken>& tokens) {
+    boxes.clear();
+    tokens.clear();
+    const float heE = 0.35f;
+    const float heL = 0.28f;
+    for (size_t ei = 0; ei < map.Entities.size(); ++ei) {
+        if (static_cast<int>(boxes.size()) >= kJhMaxViewportPickBoxes) {
+            break;
+        }
+        const Solstice::Smf::SmfVec3* o = TryGetEntityOriginVec3(map.Entities[ei]);
+        if (!o) {
+            continue;
+        }
+        LibUI::Tools::AxisAlignedBox3 b{};
+        b.minX = o->x - heE;
+        b.minY = o->y - heE;
+        b.minZ = o->z - heE;
+        b.maxX = o->x + heE;
+        b.maxY = o->y + heE;
+        b.maxZ = o->z + heE;
+        boxes.push_back(b);
+        tokens.push_back(LibUI::Viewport::MakePickToken(1, static_cast<std::uint64_t>(ei)));
+    }
+    for (size_t li = 0; li < map.AuthoringLights.size(); ++li) {
+        if (static_cast<int>(boxes.size()) >= kJhMaxViewportPickBoxes) {
+            break;
+        }
+        const Solstice::Smf::SmfAuthoringLight& L = map.AuthoringLights[li];
+        LibUI::Tools::AxisAlignedBox3 b{};
+        b.minX = L.Position.x - heL;
+        b.minY = L.Position.y - heL;
+        b.minZ = L.Position.z - heL;
+        b.maxX = L.Position.x + heL;
+        b.maxY = L.Position.y + heL;
+        b.maxZ = L.Position.z + heL;
+        boxes.push_back(b);
+        tokens.push_back(LibUI::Viewport::MakePickToken(2, static_cast<std::uint64_t>(li)));
+    }
+}
+
 #define s_jhMeasure (JhMeasureState())
 static float s_jhTerrainBrushR = 2.f;
 static float s_jhTerrainRaise = 0.04f; // per-frame while LMB down in terrain tool
@@ -216,7 +313,8 @@ using Solstice::Smf::SmfAcousticZone;
 using Solstice::Smf::SmfAuthoringLight;
 using Solstice::Smf::SmfAuthoringLightType;
 using Solstice::Smf::SmfFluidVolume;
-using Solstice::Smf::FindEntityIndex;
+using Solstice::Smf::SmfSoftBodyVolume;
+using Solstice::Smf::SmfVehicleVolume;
 
 static void SyncSmfGameplayToEngine(const SmfMap& map) noexcept {
     try {
@@ -225,87 +323,6 @@ static void SyncSmfGameplayToEngine(const SmfMap& map) noexcept {
     } catch (const std::exception&) {
     } catch (...) {
     }
-}
-
-/// Picks a unique entity name among existing `map.Entities` (for duplicate / paste).
-static std::string MakeUniqueEntityName(const SmfMap& map, const std::string& preferred) {
-    std::string base = preferred.empty() ? std::string("entity") : preferred;
-    if (!FindEntityIndex(map, base)) {
-        return base;
-    }
-    for (int i = 2; i < 100000; ++i) {
-        std::string c = base + "_" + std::to_string(i);
-        if (!FindEntityIndex(map, c)) {
-            return c;
-        }
-    }
-    return base + "_dup";
-}
-
-static std::string MakeUniqueAcousticZoneName(const SmfMap& map, const std::string& preferred) {
-    const std::string base = preferred.empty() ? std::string("reverb_zone") : preferred;
-    auto used = [&](const std::string& n) {
-        for (const auto& z : map.AcousticZones) {
-            if (z.Name == n) {
-                return true;
-            }
-        }
-        return false;
-    };
-    if (!used(base)) {
-        return base;
-    }
-    for (int i = 2; i < 100000; ++i) {
-        const std::string c = base + "_" + std::to_string(i);
-        if (!used(c)) {
-            return c;
-        }
-    }
-    return base + "_dup";
-}
-
-static std::string MakeUniqueAuthoringLightName(const SmfMap& map, const std::string& preferred) {
-    const std::string base = preferred.empty() ? std::string("light") : preferred;
-    auto used = [&](const std::string& n) {
-        for (const auto& L : map.AuthoringLights) {
-            if (L.Name == n) {
-                return true;
-            }
-        }
-        return false;
-    };
-    if (!used(base)) {
-        return base;
-    }
-    for (int i = 2; i < 100000; ++i) {
-        const std::string c = base + "_" + std::to_string(i);
-        if (!used(c)) {
-            return c;
-        }
-    }
-    return base + "_dup";
-}
-
-static std::string MakeUniqueFluidVolumeName(const SmfMap& map, const std::string& preferred) {
-    const std::string base = preferred.empty() ? std::string("fluid_volume") : preferred;
-    auto used = [&](const std::string& n) {
-        for (const auto& f : map.FluidVolumes) {
-            if (f.Name == n) {
-                return true;
-            }
-        }
-        return false;
-    };
-    if (!used(base)) {
-        return base;
-    }
-    for (int i = 2; i < 100000; ++i) {
-        const std::string c = base + "_" + std::to_string(i);
-        if (!used(c)) {
-            return c;
-        }
-    }
-    return base + "_dup";
 }
 
 static const char* SmfAuthoringLightTypeLabel(SmfAuthoringLightType t) {
@@ -332,222 +349,8 @@ static const LibUI::FileDialogs::FileFilter kJhImageFileFilters[] = {
     {"All files", "*"},
 };
 
-static const char* kDiffuseTextureKeys[] = {"diffuseTexture", "albedoTexture", "texture"};
-static const char* kMaterialPathKeys[] = {"materialPath", "smatPath"};
-static const char* kNormalTextureKeys[] = {"normalTexture", "normalMap"};
-static const char* kRoughnessTextureKeys[] = {"roughnessTexture", "roughnessMap"};
-static const char* kModelAssetKeys[] = {"modelPath", "meshPath", "gltfPath"};
-
-static const char* TryGetEntityDiffuseTexturePath(const SmfEntity& ent) {
-    for (const char* key : kDiffuseTextureKeys) {
-        for (const auto& pr : ent.Properties) {
-            if (pr.Key == key && pr.Type == SmfAttributeType::String) {
-                if (const auto* s = std::get_if<std::string>(&pr.Value)) {
-                    if (!s->empty()) {
-                        return s->c_str();
-                    }
-                }
-            }
-        }
-    }
-    return nullptr;
-}
-
-static void SetEntityDiffuseTexturePath(SmfEntity& ent, const std::string& pathUtf8) {
-    if (pathUtf8.empty()) {
-        for (const char* key : kDiffuseTextureKeys) {
-            ent.Properties.erase(std::remove_if(ent.Properties.begin(), ent.Properties.end(),
-                                     [key](const SmfProperty& p) { return p.Key == key && p.Type == SmfAttributeType::String; }),
-                ent.Properties.end());
-        }
-        return;
-    }
-    for (const char* key : kDiffuseTextureKeys) {
-        for (auto& pr : ent.Properties) {
-            if (pr.Key == key && pr.Type == SmfAttributeType::String) {
-                pr.Value = pathUtf8;
-                return;
-            }
-        }
-    }
-    ent.Properties.push_back({"diffuseTexture", SmfAttributeType::String, pathUtf8});
-}
-
-static const char* TryGetEntityMaterialPath(const SmfEntity& ent) {
-    for (const char* key : kMaterialPathKeys) {
-        for (const auto& pr : ent.Properties) {
-            if (pr.Key == key && pr.Type == SmfAttributeType::String) {
-                if (const auto* s = std::get_if<std::string>(&pr.Value)) {
-                    if (!s->empty()) {
-                        return s->c_str();
-                    }
-                }
-            }
-        }
-    }
-    return nullptr;
-}
-
-static void SetEntityMaterialPath(SmfEntity& ent, const std::string& pathUtf8) {
-    if (pathUtf8.empty()) {
-        for (const char* key : kMaterialPathKeys) {
-            ent.Properties.erase(std::remove_if(ent.Properties.begin(), ent.Properties.end(),
-                                     [key](const SmfProperty& p) { return p.Key == key && p.Type == SmfAttributeType::String; }),
-                ent.Properties.end());
-        }
-        return;
-    }
-    for (const char* key : kMaterialPathKeys) {
-        for (auto& pr : ent.Properties) {
-            if (pr.Key == key && pr.Type == SmfAttributeType::String) {
-                pr.Value = pathUtf8;
-                return;
-            }
-        }
-    }
-    ent.Properties.push_back({"materialPath", SmfAttributeType::String, pathUtf8});
-}
-
-static const char* TryGetEntityNormalTexturePath(const SmfEntity& ent) {
-    for (const char* key : kNormalTextureKeys) {
-        for (const auto& pr : ent.Properties) {
-            if (pr.Key == key && pr.Type == SmfAttributeType::String) {
-                if (const auto* s = std::get_if<std::string>(&pr.Value)) {
-                    if (!s->empty()) {
-                        return s->c_str();
-                    }
-                }
-            }
-        }
-    }
-    return nullptr;
-}
-
-static void SetEntityNormalTexturePath(SmfEntity& ent, const std::string& pathUtf8) {
-    if (pathUtf8.empty()) {
-        for (const char* key : kNormalTextureKeys) {
-            ent.Properties.erase(std::remove_if(ent.Properties.begin(), ent.Properties.end(),
-                                     [key](const SmfProperty& p) { return p.Key == key && p.Type == SmfAttributeType::String; }),
-                ent.Properties.end());
-        }
-        return;
-    }
-    for (const char* key : kNormalTextureKeys) {
-        for (auto& pr : ent.Properties) {
-            if (pr.Key == key && pr.Type == SmfAttributeType::String) {
-                pr.Value = pathUtf8;
-                return;
-            }
-        }
-    }
-    ent.Properties.push_back({"normalTexture", SmfAttributeType::String, pathUtf8});
-}
-
-static const char* TryGetEntityRoughnessTexturePath(const SmfEntity& ent) {
-    for (const char* key : kRoughnessTextureKeys) {
-        for (const auto& pr : ent.Properties) {
-            if (pr.Key == key && pr.Type == SmfAttributeType::String) {
-                if (const auto* s = std::get_if<std::string>(&pr.Value)) {
-                    if (!s->empty()) {
-                        return s->c_str();
-                    }
-                }
-            }
-        }
-    }
-    return nullptr;
-}
-
-static void SetEntityRoughnessTexturePath(SmfEntity& ent, const std::string& pathUtf8) {
-    if (pathUtf8.empty()) {
-        for (const char* key : kRoughnessTextureKeys) {
-            ent.Properties.erase(std::remove_if(ent.Properties.begin(), ent.Properties.end(),
-                                     [key](const SmfProperty& p) { return p.Key == key && p.Type == SmfAttributeType::String; }),
-                ent.Properties.end());
-        }
-        return;
-    }
-    for (const char* key : kRoughnessTextureKeys) {
-        for (auto& pr : ent.Properties) {
-            if (pr.Key == key && pr.Type == SmfAttributeType::String) {
-                pr.Value = pathUtf8;
-                return;
-            }
-        }
-    }
-    ent.Properties.push_back({"roughnessTexture", SmfAttributeType::String, pathUtf8});
-}
-
-static const char* TryGetEntityModelAssetPath(const SmfEntity& ent) {
-    for (const char* key : kModelAssetKeys) {
-        for (const auto& pr : ent.Properties) {
-            if (pr.Key == key && pr.Type == SmfAttributeType::String) {
-                if (const auto* s = std::get_if<std::string>(&pr.Value)) {
-                    if (!s->empty()) {
-                        return s->c_str();
-                    }
-                }
-            }
-        }
-    }
-    return nullptr;
-}
-
-static void SetEntityModelAssetPath(SmfEntity& ent, const std::string& pathUtf8) {
-    if (pathUtf8.empty()) {
-        for (const char* key : kModelAssetKeys) {
-            ent.Properties.erase(std::remove_if(ent.Properties.begin(), ent.Properties.end(),
-                                     [key](const SmfProperty& p) { return p.Key == key && p.Type == SmfAttributeType::String; }),
-                ent.Properties.end());
-        }
-        return;
-    }
-    for (const char* key : kModelAssetKeys) {
-        for (auto& pr : ent.Properties) {
-            if (pr.Key == key && pr.Type == SmfAttributeType::String) {
-                pr.Value = pathUtf8;
-                return;
-            }
-        }
-    }
-    ent.Properties.push_back({"modelPath", SmfAttributeType::String, pathUtf8});
-}
-
-static std::string ToMapRelativePathIfPossible(const std::string& assetPathUtf8, const std::optional<std::string>& currentMapPath) {
-    if (!currentMapPath || currentMapPath->empty()) {
-        return assetPathUtf8;
-    }
-    std::error_code ec;
-    const std::filesystem::path mapDir = std::filesystem::path(*currentMapPath).parent_path();
-    const std::filesystem::path absAsset = std::filesystem::absolute(std::filesystem::path(assetPathUtf8), ec);
-    if (ec || absAsset.empty() || mapDir.empty()) {
-        return assetPathUtf8;
-    }
-    const std::filesystem::path rel = std::filesystem::relative(absAsset, mapDir, ec);
-    if (ec || rel.empty()) {
-        return assetPathUtf8;
-    }
-    return rel.generic_string();
-}
-
-/// Resolve a map-relative or absolute UTF-8 path for engine preview I/O (`.smat`, raster maps).
 static std::string JhResolveMapAssetPath(const std::optional<std::string>& currentMapPath, const std::string& pathUtf8) {
-    if (pathUtf8.empty()) {
-        return {};
-    }
-    std::error_code ec;
-    const std::filesystem::path p(pathUtf8);
-    if (p.is_absolute()) {
-        return p.lexically_normal().generic_string();
-    }
-    if (!currentMapPath || currentMapPath->empty()) {
-        return pathUtf8;
-    }
-    const std::filesystem::path mapDir = std::filesystem::path(*currentMapPath).parent_path();
-    if (mapDir.empty()) {
-        return pathUtf8;
-    }
-    return (mapDir / p).lexically_normal().generic_string();
+    return ResolveMapAssetPath(currentMapPath, pathUtf8);
 }
 
 struct JhAcousticImportOp {
@@ -638,42 +441,6 @@ void RedoMap(SmfMap& map, int& selectedEntity, bool& dirty) {
     dirty = true;
     ClampEntitySelection(map, selectedEntity);
     SyncSmfGameplayToEngine(map);
-}
-
-static std::vector<std::pair<std::string, std::string>>& LevelPluginLoadErrorsState() {
-    static std::vector<std::pair<std::string, std::string>> errs;
-    return errs;
-}
-#define g_LevelPluginLoadErrors (LevelPluginLoadErrorsState())
-
-static Solstice::UtilityPluginHost::UtilityPluginHost& LevelEditorPlugins() {
-    // Function-local static avoids startup work before crash diagnostics are installed in main().
-    static Solstice::UtilityPluginHost::UtilityPluginHost host;
-    return host;
-}
-
-void LoadLevelEditorPlugins() {
-    g_LevelPluginLoadErrors.clear();
-    try {
-        const char* base = SDL_GetBasePath();
-        std::filesystem::path dir = base ? std::filesystem::path(base) / "plugins" : std::filesystem::path("plugins");
-        Solstice::UtilityPluginHost::PluginAbiSymbols abi{};
-        abi.GetName = SOLSTICE_UTILITY_ABI_LEVEL_EDITOR_GETNAME;
-        abi.OnLoad = SOLSTICE_UTILITY_ABI_LEVEL_EDITOR_ONLOAD;
-        abi.OnUnload = SOLSTICE_UTILITY_ABI_LEVEL_EDITOR_ONUNLOAD;
-        auto& plugins = LevelEditorPlugins();
-        plugins.UnloadAll();
-        plugins.LoadAllFromDirectory(dir.string(), abi, g_LevelPluginLoadErrors);
-    } catch (const std::exception& ex) {
-        g_LevelPluginLoadErrors.push_back({"plugins/", std::string("Reload failed: ") + ex.what()});
-    } catch (...) {
-        g_LevelPluginLoadErrors.push_back({"plugins/", "Reload failed: unknown exception."});
-    }
-}
-
-void LevelEditorPluginsDrawPanel(bool* pOpen) {
-    Solstice::UtilityPluginHost::DrawPluginManagerWindow(LevelEditorPlugins(), pOpen, "Plugins##Jackhammer", "LevelEditor",
-        g_LevelPluginLoadErrors, [] { LoadLevelEditorPlugins(); });
 }
 
 void QueueOpenPath(std::string p);
@@ -1465,90 +1232,8 @@ void EditSmfPropertyValue(SmfProperty& prop, bool& dirty) {
     ImGui::PopID();
 }
 
-const SmfVec3* TryGetEntityOriginVec3(const SmfEntity& ent) {
-    for (const auto& pr : ent.Properties) {
-        if ((pr.Key == "origin" || pr.Key == "position") && pr.Type == SmfAttributeType::Vec3) {
-            if (auto* v = std::get_if<SmfVec3>(&pr.Value)) {
-                return v;
-            }
-        }
-    }
-    return nullptr;
-}
-
 static bool JhComputeEntityOriginAabb(const SmfMap& map, SmfVec3& outMin, SmfVec3& outMax) {
-    bool any = false;
-    for (const auto& ent : map.Entities) {
-        const SmfVec3* o = TryGetEntityOriginVec3(ent);
-        if (!o) {
-            continue;
-        }
-        if (!any) {
-            outMin = outMax = *o;
-            any = true;
-        } else {
-            outMin.x = std::min(outMin.x, o->x);
-            outMin.y = std::min(outMin.y, o->y);
-            outMin.z = std::min(outMin.z, o->z);
-            outMax.x = std::max(outMax.x, o->x);
-            outMax.y = std::max(outMax.y, o->y);
-            outMax.z = std::max(outMax.z, o->z);
-        }
-    }
-    return any;
-}
-
-bool SetEntityOriginVec3(SmfEntity& ent, const SmfVec3& pos) {
-    for (auto& pr : ent.Properties) {
-        if ((pr.Key == "origin" || pr.Key == "position") && pr.Type == SmfAttributeType::Vec3) {
-            pr.Value = SmfValue{pos};
-            return true;
-        }
-    }
-    ent.Properties.push_back({"origin", SmfAttributeType::Vec3, SmfValue{pos}});
-    return true;
-}
-
-static const SmfVec3* TryGetEntityVec3ByKey(const SmfEntity& ent, const char* key) {
-    for (const auto& pr : ent.Properties) {
-        if (pr.Key == key && pr.Type == SmfAttributeType::Vec3) {
-            if (auto* v = std::get_if<SmfVec3>(&pr.Value)) {
-                return v;
-            }
-        }
-    }
-    return nullptr;
-}
-
-static float TryGetEntityFloatByKey(const SmfEntity& ent, const char* key, float defaultVal) {
-    for (const auto& pr : ent.Properties) {
-        if (pr.Key == key && pr.Type == SmfAttributeType::Float) {
-            if (auto* f = std::get_if<float>(&pr.Value)) {
-                return *f;
-            }
-        }
-    }
-    return defaultVal;
-}
-
-static void SetEntityVec3ByKey(SmfEntity& ent, const char* key, const SmfVec3& v) {
-    for (auto& pr : ent.Properties) {
-        if (pr.Key == key && pr.Type == SmfAttributeType::Vec3) {
-            pr.Value = SmfValue{v};
-            return;
-        }
-    }
-    ent.Properties.push_back({key, SmfAttributeType::Vec3, SmfValue{v}});
-}
-
-static void SetEntityFloatByKey(SmfEntity& ent, const char* key, float f) {
-    for (auto& pr : ent.Properties) {
-        if (pr.Key == key && pr.Type == SmfAttributeType::Float) {
-            pr.Value = SmfValue{f};
-            return;
-        }
-    }
-    ent.Properties.push_back({key, SmfAttributeType::Float, SmfValue{f}});
+    return ComputeEntityOriginAabb(map, outMin, outMax);
 }
 
 } // namespace
@@ -1610,6 +1295,8 @@ int RunApp(int argc, char** argv) {
     int acousticZoneSel = -1;
     int authoringLightSel = -1;
     int fluidVolSel = -1;
+    int softBodySel = -1;
+    int vehicleSel = -1;
     std::string lastValidateCodec = "(not run yet)";
     std::string lastValidateEngine = "(not run yet)";
     std::string lastApplyGameplayEngine = "(not run yet)";
@@ -1997,21 +1684,21 @@ int RunApp(int argc, char** argv) {
                         kSmfFilters);
                 }
             }
-            if (ImGui::IsKeyPressed(ImGuiKey_F7, false)) {
+            if (LibUI::Widgets::IsKeyPressed(ImGuiKey_F7, false)) {
                 runValidate();
             }
-            if (ImGui::IsKeyPressed(ImGuiKey_F8, false)) {
+            if (LibUI::Widgets::IsKeyPressed(ImGuiKey_F8, false)) {
                 runApplyGameplay();
             }
             if (!map.Entities.empty()) {
-                if (ImGui::IsKeyPressed(ImGuiKey_PageUp, false)) {
+                if (LibUI::Widgets::IsKeyPressed(ImGuiKey_PageUp, false)) {
                     if (selectedEntity < 0) {
                         selectedEntity = 0;
                     } else {
                         selectedEntity = std::max(0, selectedEntity - 1);
                     }
                 }
-                if (ImGui::IsKeyPressed(ImGuiKey_PageDown, false)) {
+                if (LibUI::Widgets::IsKeyPressed(ImGuiKey_PageDown, false)) {
                     const int n = static_cast<int>(map.Entities.size()) - 1;
                     if (selectedEntity < 0) {
                         selectedEntity = 0;
@@ -2024,15 +1711,15 @@ int RunApp(int argc, char** argv) {
 
         LibUI::Shell::BeginMainHostWindow("JackhammerRoot", LibUI::Shell::MainHostFlags_MenuBarNoTitle());
 
-        if (ImGui::BeginMenuBar()) {
-            if (ImGui::BeginMenu("File")) {
+        if (LibUI::Widgets::BeginMenuBar()) {
+            if (LibUI::Widgets::BeginMenu("File")) {
                 if (LibUI::Icons::MenuItemWithIcon(LibUI::Icons::Id::Validate, "Validate map", "F7")) {
                     runValidate();
                 }
                 if (LibUI::Icons::MenuItemWithIcon(LibUI::Icons::Id::Play, "Probe engine apply gameplay (DLL)", "F8")) {
                     runApplyGameplay();
                 }
-                ImGui::Separator();
+                LibUI::Widgets::Separator();
                 if (LibUI::Icons::MenuItemWithIcon(LibUI::Icons::Id::New, "New", "Ctrl+N")) {
                     requestNew();
                 }
@@ -2086,7 +1773,7 @@ int RunApp(int argc, char** argv) {
                         },
                         kSmfFilters);
                 }
-                ImGui::Separator();
+                LibUI::Widgets::Separator();
                 if (LibUI::Icons::MenuItemWithIcon(LibUI::Icons::Id::Import, "Import RELIC into path table…")) {
                     LibUI::FileDialogs::ShowOpenFile(
                         window, "Import RELIC", [](std::optional<std::string> path) {
@@ -2123,28 +1810,28 @@ int RunApp(int argc, char** argv) {
                         },
                         kGltfFilters);
                 }
-                ImGui::Separator();
+                LibUI::Widgets::Separator();
                 if (LibUI::Icons::MenuItemWithIcon(LibUI::Icons::Id::Save, "Write recovery snapshot now")) {
                     tryWriteJhRecoverySnapshot();
                 }
-                ImGui::EndMenu();
+                LibUI::Widgets::EndMenu();
             }
-            if (ImGui::BeginMenu("Edit")) {
+            if (LibUI::Widgets::BeginMenu("Edit")) {
                 if (LibUI::Icons::MenuItemWithIcon(LibUI::Icons::Id::Prev, "Undo", "Ctrl+Z", false, g_mapUndo.CanUndo())) {
                     UndoMap(map, selectedEntity, dirty);
                 }
                 if (LibUI::Icons::MenuItemWithIcon(LibUI::Icons::Id::Next, "Redo", "Ctrl+Y", false, g_mapUndo.CanRedo())) {
                     RedoMap(map, selectedEntity, dirty);
                 }
-                ImGui::Separator();
-                if (ImGui::BeginMenu("Add Arzachel prop to mesh workshop")) {
-                    if (ImGui::MenuItem("Cube")) {
+                LibUI::Widgets::Separator();
+                if (LibUI::Widgets::BeginMenu("Add Arzachel prop to mesh workshop")) {
+                    if (LibUI::Widgets::MenuItem("Cube")) {
                         Jackhammer::ArzachelProps::PropBuildParams p;
                         p.uniformScale = std::max(0.01f, s_jhArzUniformScale);
                         Jackhammer::ArzachelProps::AddArzachelProp(Jackhammer::ArzachelProps::PropKind::ArzachelCube, p,
                             s_jhMeshWorkshop, s_jhMeshWorkshopLine, sizeof(s_jhMeshWorkshopLine));
                     }
-                    if (ImGui::MenuItem("UV sphere")) {
+                    if (LibUI::Widgets::MenuItem("UV sphere")) {
                         Jackhammer::ArzachelProps::PropBuildParams p;
                         p.uniformScale = std::max(0.01f, s_jhArzUniformScale);
                         p.i0 = std::max(3, s_jhPrimSphLo);
@@ -2152,7 +1839,7 @@ int RunApp(int argc, char** argv) {
                             Jackhammer::ArzachelProps::PropKind::UvSphere, p, s_jhMeshWorkshop, s_jhMeshWorkshopLine,
                             sizeof(s_jhMeshWorkshopLine));
                     }
-                    if (ImGui::MenuItem("Isosphere")) {
+                    if (LibUI::Widgets::MenuItem("Isosphere")) {
                         Jackhammer::ArzachelProps::PropBuildParams p;
                         p.uniformScale = std::max(0.01f, s_jhArzUniformScale);
                         p.i2 = std::max(0, s_jhArzIsoSubdiv);
@@ -2160,7 +1847,7 @@ int RunApp(int argc, char** argv) {
                             Jackhammer::ArzachelProps::PropKind::Icosphere, p, s_jhMeshWorkshop, s_jhMeshWorkshopLine,
                             sizeof(s_jhMeshWorkshopLine));
                     }
-                    if (ImGui::MenuItem("Cylinder")) {
+                    if (LibUI::Widgets::MenuItem("Cylinder")) {
                         Jackhammer::ArzachelProps::PropBuildParams p;
                         p.uniformScale = std::max(0.01f, s_jhArzUniformScale);
                         p.i0 = std::max(3, s_jhPrimCylRad);
@@ -2168,7 +1855,7 @@ int RunApp(int argc, char** argv) {
                             Jackhammer::ArzachelProps::PropKind::Cylinder, p, s_jhMeshWorkshop, s_jhMeshWorkshopLine,
                             sizeof(s_jhMeshWorkshopLine));
                     }
-                    if (ImGui::MenuItem("Torus")) {
+                    if (LibUI::Widgets::MenuItem("Torus")) {
                         Jackhammer::ArzachelProps::PropBuildParams p;
                         p.uniformScale = std::max(0.01f, s_jhArzUniformScale);
                         p.i0 = std::max(3, s_jhPrimTorMaj);
@@ -2177,59 +1864,59 @@ int RunApp(int argc, char** argv) {
                             Jackhammer::ArzachelProps::PropKind::Torus, p, s_jhMeshWorkshop, s_jhMeshWorkshopLine,
                             sizeof(s_jhMeshWorkshopLine));
                     }
-                    if (ImGui::MenuItem("Ground plane")) {
+                    if (LibUI::Widgets::MenuItem("Ground plane")) {
                         Jackhammer::ArzachelProps::PropBuildParams p;
                         p.uniformScale = std::max(0.01f, s_jhArzUniformScale);
                         Jackhammer::ArzachelProps::AddArzachelProp(
                             Jackhammer::ArzachelProps::PropKind::GroundPlane, p, s_jhMeshWorkshop, s_jhMeshWorkshopLine,
                             sizeof(s_jhMeshWorkshopLine));
                     }
-                    if (ImGui::MenuItem("Tetrahedron")) {
+                    if (LibUI::Widgets::MenuItem("Tetrahedron")) {
                         Jackhammer::ArzachelProps::PropBuildParams p;
                         p.uniformScale = std::max(0.01f, s_jhArzUniformScale);
                         Jackhammer::ArzachelProps::AddArzachelProp(
                             Jackhammer::ArzachelProps::PropKind::Tetrahedron, p, s_jhMeshWorkshop, s_jhMeshWorkshopLine,
                             sizeof(s_jhMeshWorkshopLine));
                     }
-                    if (ImGui::MenuItem("Square pyramid")) {
+                    if (LibUI::Widgets::MenuItem("Square pyramid")) {
                         Jackhammer::ArzachelProps::PropBuildParams p;
                         p.uniformScale = std::max(0.01f, s_jhArzUniformScale);
                         Jackhammer::ArzachelProps::AddArzachelProp(
                             Jackhammer::ArzachelProps::PropKind::SquarePyramid, p, s_jhMeshWorkshop, s_jhMeshWorkshopLine,
                             sizeof(s_jhMeshWorkshopLine));
                     }
-                    ImGui::EndMenu();
+                    LibUI::Widgets::EndMenu();
                 }
-                ImGui::EndMenu();
+                LibUI::Widgets::EndMenu();
             }
-            if (ImGui::BeginMenu("View")) {
+            if (LibUI::Widgets::BeginMenu("View")) {
                 if (LibUI::Icons::MenuItemWithIcon(LibUI::Icons::Id::Plugins, "Plugins")) {
                     showPluginsPanel = true;
                 }
-                ImGui::EndMenu();
+                LibUI::Widgets::EndMenu();
             }
-            if (ImGui::BeginMenu("Help")) {
+            if (LibUI::Widgets::BeginMenu("Help")) {
                 if (LibUI::Icons::MenuItemWithIcon(LibUI::Icons::Id::Shortcuts, "Keyboard shortcuts…")) {
                     showShortcutsPanel = true;
                 }
                 if (LibUI::Icons::MenuItemWithIcon(LibUI::Icons::Id::About, "About Jackhammer")) {
                     showAboutPanel = true;
                 }
-                ImGui::EndMenu();
+                LibUI::Widgets::EndMenu();
             }
-            ImGui::EndMenuBar();
+            LibUI::Widgets::EndMenuBar();
         }
 
         if (showReloadFromDiskModal) {
-            ImGui::OpenPopup("JH_ReloadFromDisk");
+            LibUI::Widgets::OpenPopup("JH_ReloadFromDisk");
             showReloadFromDiskModal = false;
         }
-        if (ImGui::BeginPopupModal("JH_ReloadFromDisk", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextUnformatted("Discard unsaved edits and reload the file from disk?");
+        if (LibUI::Widgets::BeginPopupModal("JH_ReloadFromDisk", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            LibUI::Widgets::Text("Discard unsaved edits and reload the file from disk?");
             if (currentPath) {
                 ImGui::TextWrapped("%s", currentPath->c_str());
             }
-            if (ImGui::Button("Reload", ImVec2(120, 0)) && currentPath) {
+            if (LibUI::Widgets::Button("Reload", ImVec2(120, 0)) && currentPath) {
                 Solstice::Smf::SmfError err = Solstice::Smf::SmfError::None;
                 if (Solstice::Smf::LoadSmfFromFile(std::filesystem::path(*currentPath), map, &lastHeader, &err)) {
                     selectedEntity = map.Entities.empty() ? -1 : 0;
@@ -2240,45 +1927,45 @@ int RunApp(int argc, char** argv) {
                 } else {
                     status = std::string("Reload failed: ") + SmfErrorMessage(err);
                 }
-                ImGui::CloseCurrentPopup();
+                LibUI::Widgets::CloseCurrentPopup();
             }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-                ImGui::CloseCurrentPopup();
+            LibUI::Widgets::SameLine();
+            if (LibUI::Widgets::Button("Cancel", ImVec2(120, 0))) {
+                LibUI::Widgets::CloseCurrentPopup();
             }
-            ImGui::EndPopup();
+            LibUI::Widgets::EndPopup();
         }
 
         if (jhRecoveryModalOpen) {
-            ImGui::OpenPopup("JH_SmfRecovery");
+            LibUI::Widgets::OpenPopup("JH_SmfRecovery");
         }
-        if (ImGui::BeginPopupModal("JH_SmfRecovery", &jhRecoveryModalOpen, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextUnformatted("A local .smf recovery snapshot is available. Restore it?");
-            if (ImGui::Button("Restore", ImVec2(140, 0))) {
+        if (LibUI::Widgets::BeginPopupModal("JH_SmfRecovery", &jhRecoveryModalOpen, ImGuiWindowFlags_AlwaysAutoResize)) {
+            LibUI::Widgets::Text("A local .smf recovery snapshot is available. Restore it?");
+            if (LibUI::Widgets::Button("Restore", ImVec2(140, 0))) {
                 std::vector<std::byte> buf;
                 std::string re;
                 if (Solstice::EditorAudio::FileRecovery::ReadLatest(jhRecoveryDir, "smf", buf, &re)) {
                     if (restoreJhMapFromRecoveryBytes(std::span<const std::byte>(buf.data(), buf.size()))) {
                         Solstice::EditorAudio::FileRecovery::ClearMatchingPrefix(jhRecoveryDir, "smf");
                         jhRecoveryModalOpen = false;
-                        ImGui::CloseCurrentPopup();
+                        LibUI::Widgets::CloseCurrentPopup();
                     }
                 } else {
                     status = "Could not read recovery: " + re;
                 }
             }
-            ImGui::SameLine();
-            if (ImGui::Button("Dismiss", ImVec2(140, 0))) {
+            LibUI::Widgets::SameLine();
+            if (LibUI::Widgets::Button("Dismiss", ImVec2(140, 0))) {
                 jhRecoveryModalOpen = false;
-                ImGui::CloseCurrentPopup();
+                LibUI::Widgets::CloseCurrentPopup();
             }
-            ImGui::EndPopup();
+            LibUI::Widgets::EndPopup();
         }
 
         if (unsavedPrompt != UnsavedPromptKind::None) {
-            ImGui::OpenPopup("JH_Unsaved");
+            LibUI::Widgets::OpenPopup("JH_Unsaved");
         }
-        if (ImGui::BeginPopupModal("JH_Unsaved", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (LibUI::Widgets::BeginPopupModal("JH_Unsaved", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             const char* msg = "Save changes before continuing?";
             if (unsavedPrompt == UnsavedPromptKind::QuitApp) {
                 msg = "Save changes before quitting?";
@@ -2287,10 +1974,10 @@ int RunApp(int argc, char** argv) {
             } else if (unsavedPrompt == UnsavedPromptKind::OpenMap) {
                 msg = "Save changes before opening another file?";
             }
-            ImGui::TextUnformatted(msg);
+            LibUI::Widgets::Text(msg);
             auto finishUnsaved = [&](UnsavedPromptKind kind) {
                 unsavedPrompt = UnsavedPromptKind::None;
-                ImGui::CloseCurrentPopup();
+                LibUI::Widgets::CloseCurrentPopup();
                 if (kind == UnsavedPromptKind::QuitApp) {
                     running = false;
                 } else if (kind == UnsavedPromptKind::NewMap) {
@@ -2362,10 +2049,11 @@ int RunApp(int argc, char** argv) {
 
         if (!jhBannerFile.empty() || !jhBannerViewport.empty()) {
             if (!jhBannerFile.empty()) {
-                ImGui::TextColored(ImVec4(1.f, 0.35f, 0.35f, 1.f), "%s", jhBannerFile.c_str());
+                LibUI::Widgets::DrawInlineAlert("jh_banner_file", jhBannerFile.c_str(), LibUI::Widgets::InlineAlertSeverity::Error, false);
             }
             if (!jhBannerViewport.empty()) {
-                ImGui::TextColored(ImVec4(1.f, 0.42f, 0.32f, 1.f), "%s", jhBannerViewport.c_str());
+                LibUI::Widgets::DrawInlineAlert(
+                    "jh_banner_viewport", jhBannerViewport.c_str(), LibUI::Widgets::InlineAlertSeverity::Warning, false);
             }
             if (ImGui::SmallButton("Dismiss##jherr")) {
                 jhBannerFile.clear();
@@ -2376,16 +2064,12 @@ int RunApp(int argc, char** argv) {
         }
 
         constexpr float kJhBottomBarH = 86.f;
-        ImGui::BeginChild(
-            "jh_main_workspace", ImVec2(0.f, -kJhBottomBarH), false, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-        const float jhLeftW = 272.f;
-        const float jhRightW = 308.f;
-        const float jhGap = ImGui::GetStyle().ItemSpacing.x;
-        const float jhAvailW = ImGui::GetContentRegionAvail().x;
-        float jhCenterW = jhAvailW - jhLeftW - jhRightW - jhGap * 2.f;
-        if (jhCenterW < 120.f) {
-            jhCenterW = std::max(80.f, jhAvailW * 0.28f);
-        }
+        float jhCenterW = 0.0f;
+        LibUI::Layout::ThreePaneWorkspaceConfig jhLayout{};
+        jhLayout.bottomBarHeight = kJhBottomBarH;
+        LibUI::Layout::BeginThreePaneWorkspace("jh_main_workspace", jhLayout, &jhCenterW);
+        const float jhLeftW = jhLayout.leftWidth;
+        const float jhRightW = jhLayout.rightWidth;
 
         ImGui::BeginChild("jh_left_col", ImVec2(jhLeftW, 0), true);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.f, 8.f));
@@ -2552,32 +2236,36 @@ int RunApp(int argc, char** argv) {
         }
 
         ImGui::Separator();
-        if (ImGui::BeginTable("entList", 2, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY)) {
-            ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableSetupColumn("Class", ImGuiTableColumnFlags_WidthStretch);
-            ImGui::TableHeadersRow();
-            ImGuiListClipper clipper;
-            clipper.Begin(static_cast<int>(s_jhEntListRows.size()));
-            while (clipper.Step()) {
-                for (int row = clipper.DisplayStart; row < clipper.DisplayEnd; ++row) {
-                    const int i = s_jhEntListRows[static_cast<size_t>(row)];
-                    const auto& e = map.Entities[static_cast<size_t>(i)];
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::PushID(i);
-                    const bool sel = (selectedEntity == i);
-                    if (ImGui::Selectable(e.Name.empty() ? "(unnamed)" : e.Name.c_str(), sel, ImGuiSelectableFlags_SpanAllColumns)) {
-                        selectedEntity = i;
-                    }
-                    ImGui::TableNextColumn();
-                    ImGui::TextUnformatted(e.ClassName.empty() ? "?" : e.ClassName.c_str());
-                    ImGui::PopID();
+        LibUI::Widgets::FilterableVirtualTableOptions entTable{};
+        entTable.TableId = "entList";
+        entTable.ColumnCount = 2;
+        entTable.TableFlags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY;
+        entTable.TableSize = ImVec2(0.0f, 0.0f);
+        char entFilterPlaceholder[2] = {};
+        LibUI::Widgets::DrawFilterableVirtualTable(
+            entFilterPlaceholder, sizeof(entFilterPlaceholder), entTable,
+            []() {
+                ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Class", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableHeadersRow();
+            },
+            static_cast<int>(s_jhEntListRows.size()),
+            [&](int row) {
+                const int i = s_jhEntListRows[static_cast<size_t>(row)];
+                const auto& e = map.Entities[static_cast<size_t>(i)];
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::PushID(i);
+                const bool sel = (selectedEntity == i);
+                if (ImGui::Selectable(e.Name.empty() ? "(unnamed)" : e.Name.c_str(), sel, ImGuiSelectableFlags_SpanAllColumns)) {
+                    selectedEntity = i;
                 }
-            }
-            ImGui::EndTable();
-        }
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(e.ClassName.empty() ? "?" : e.ClassName.c_str());
+                ImGui::PopID();
+            });
         ImGui::PopStyleVar();
-        ImGui::EndChild();
+        LibUI::Layout::EndThreePaneWorkspace();
 
         ImGui::SameLine();
 
@@ -2665,68 +2353,19 @@ int RunApp(int argc, char** argv) {
             }
         }
         if (s_jhPreviewUseSmat) {
-            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 88.f);
-            ImGui::InputTextWithHint("##jhsmatpath", ".smat path (map-relative or absolute)", s_jhPreviewSmatBuf,
-                sizeof(s_jhPreviewSmatBuf));
-            ImGui::SameLine();
-            if (ImGui::Button("Browse##jhsmat")) {
-                LibUI::FileDialogs::ShowOpenFile(
-                    window, "Solstice material (.smat)",
-                    [&](std::optional<std::string> path) {
-                        if (!path || path->empty()) {
-                            return;
-                        }
-                        const std::string rel = ToMapRelativePathIfPossible(*path, currentPath);
-                        std::snprintf(s_jhPreviewSmatBuf, sizeof(s_jhPreviewSmatBuf), "%s", rel.c_str());
-                    },
-                    kSmatFilters);
-            }
+            LibUI::Tools::InputPathOpenBrowseRowHint(88.f, "##jhsmatpath", ".smat path (map-relative or absolute)", s_jhPreviewSmatBuf,
+                sizeof(s_jhPreviewSmatBuf), window, "Solstice material (.smat)", "Browse##jhsmat", kSmatFilters,
+                [&](const std::string& path) { return ToMapRelativePathIfPossible(path, currentPath); });
             if (s_jhPreviewBindMaterialMaps) {
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 72.f);
-                ImGui::InputTextWithHint("##jhmapalb", "Albedo map (optional)", s_jhPreviewMapAlbedo, sizeof(s_jhPreviewMapAlbedo));
-                ImGui::SameLine();
-                if (ImGui::SmallButton("…##jhmalb")) {
-                    LibUI::FileDialogs::ShowOpenFile(
-                        window, "Preview albedo map",
-                        [&](std::optional<std::string> path) {
-                            if (!path || path->empty()) {
-                                return;
-                            }
-                            const std::string rel = ToMapRelativePathIfPossible(*path, currentPath);
-                            std::snprintf(s_jhPreviewMapAlbedo, sizeof(s_jhPreviewMapAlbedo), "%s", rel.c_str());
-                        },
-                        kJhImageFileFilters);
-                }
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 72.f);
-                ImGui::InputTextWithHint("##jhmapnrm", "Normal map (optional)", s_jhPreviewMapNormal, sizeof(s_jhPreviewMapNormal));
-                ImGui::SameLine();
-                if (ImGui::SmallButton("…##jhmnrm")) {
-                    LibUI::FileDialogs::ShowOpenFile(
-                        window, "Preview normal map",
-                        [&](std::optional<std::string> path) {
-                            if (!path || path->empty()) {
-                                return;
-                            }
-                            const std::string rel = ToMapRelativePathIfPossible(*path, currentPath);
-                            std::snprintf(s_jhPreviewMapNormal, sizeof(s_jhPreviewMapNormal), "%s", rel.c_str());
-                        },
-                        kJhImageFileFilters);
-                }
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 72.f);
-                ImGui::InputTextWithHint("##jhmaprgh", "Roughness map (optional)", s_jhPreviewMapRough, sizeof(s_jhPreviewMapRough));
-                ImGui::SameLine();
-                if (ImGui::SmallButton("…##jhmrgh")) {
-                    LibUI::FileDialogs::ShowOpenFile(
-                        window, "Preview roughness map",
-                        [&](std::optional<std::string> path) {
-                            if (!path || path->empty()) {
-                                return;
-                            }
-                            const std::string rel = ToMapRelativePathIfPossible(*path, currentPath);
-                            std::snprintf(s_jhPreviewMapRough, sizeof(s_jhPreviewMapRough), "%s", rel.c_str());
-                        },
-                        kJhImageFileFilters);
-                }
+                LibUI::Tools::InputPathOpenBrowseRowHint(72.f, "##jhmapalb", "Albedo map (optional)", s_jhPreviewMapAlbedo,
+                    sizeof(s_jhPreviewMapAlbedo), window, "Preview albedo map", "...##jhmalb", kJhImageFileFilters,
+                    [&](const std::string& path) { return ToMapRelativePathIfPossible(path, currentPath); });
+                LibUI::Tools::InputPathOpenBrowseRowHint(72.f, "##jhmapnrm", "Normal map (optional)", s_jhPreviewMapNormal,
+                    sizeof(s_jhPreviewMapNormal), window, "Preview normal map", "...##jhmnrm", kJhImageFileFilters,
+                    [&](const std::string& path) { return ToMapRelativePathIfPossible(path, currentPath); });
+                LibUI::Tools::InputPathOpenBrowseRowHint(72.f, "##jhmaprgh", "Roughness map (optional)", s_jhPreviewMapRough,
+                    sizeof(s_jhPreviewMapRough), window, "Preview roughness map", "...##jhmrgh", kJhImageFileFilters,
+                    [&](const std::string& path) { return ToMapRelativePathIfPossible(path, currentPath); });
             }
         }
         ImGui::EndChild();
@@ -2971,9 +2610,13 @@ int RunApp(int argc, char** argv) {
                 if (s_jhOverlayLights) {
                     const size_t nLtDraw = std::min(map.AuthoringLights.size(), kJhMaxLightOverlayDraw);
                     for (size_t li = 0; li < nLtDraw; ++li) {
+                        const std::uint64_t lhTok =
+                            LibUI::Viewport::MakePickToken(2, static_cast<std::uint64_t>(li));
+                        const bool litSel = (!s_jhViewportPickTokens.empty() && s_jhViewportPickTokens.count(lhTok) > 0)
+                            || (s_jhViewportPickTokens.empty() && authoringLightSel >= 0
+                                && static_cast<size_t>(authoringLightSel) == li);
                         Jackhammer::ViewportDraw::DrawAuthoringLightOverlay(engineVp.draw_list, projMin, projMax, viewM, projM,
-                            map.AuthoringLights[li],
-                            authoringLightSel >= 0 && static_cast<size_t>(authoringLightSel) == li);
+                            map.AuthoringLights[li], litSel);
                     }
                 }
                 if (s_jhOverlayParticles) {
@@ -2990,8 +2633,11 @@ int RunApp(int argc, char** argv) {
                         if (!o) {
                             continue;
                         }
-                        const bool isSel =
-                            selectedEntity >= 0 && static_cast<size_t>(selectedEntity) == ei;
+                        const std::uint64_t entTok =
+                            LibUI::Viewport::MakePickToken(1, static_cast<std::uint64_t>(ei));
+                        const bool isSel = (!s_jhViewportPickTokens.empty() && s_jhViewportPickTokens.count(entTok) > 0)
+                            || (s_jhViewportPickTokens.empty() && selectedEntity >= 0
+                                && static_cast<size_t>(selectedEntity) == ei);
                         if (isSel) {
                             continue;
                         }
@@ -3000,45 +2646,34 @@ int RunApp(int argc, char** argv) {
                         ++markersDrawn;
                     }
                 }
-                if (selectedEntity >= 0 && static_cast<size_t>(selectedEntity) < map.Entities.size()) {
-                    const auto& ent = map.Entities[static_cast<size_t>(selectedEntity)];
-                    const SmfVec3* origin = TryGetEntityOriginVec3(ent);
-                    if (origin) {
-                        LibUI::Viewport::DrawWorldCrossXZ(engineVp.draw_list, projMin, projMax, viewM, projM,
-                            origin->x, origin->y, origin->z, 0.35f, IM_COL32(255, 200, 64, 255));
-                        LibUI::Viewport::DrawWorldAxisAlignedBoxSelectionOutlineUniformImGui(engineVp.draw_list, projMin, projMax,
-                            viewM, projM, origin->x, origin->y, origin->z, 0.42f, IM_COL32(255, 220, 90, 255), 2.0f, 2.4f,
-                            IM_COL32(18, 16, 10, 250), 3.2f);
+                for (size_t sei = 0; sei < map.Entities.size(); ++sei) {
+                    const std::uint64_t selTok = LibUI::Viewport::MakePickToken(1, static_cast<std::uint64_t>(sei));
+                    const bool showSel = (!s_jhViewportPickTokens.empty() && s_jhViewportPickTokens.count(selTok) > 0)
+                        || (s_jhViewportPickTokens.empty() && selectedEntity >= 0 && static_cast<size_t>(selectedEntity) == sei);
+                    if (!showSel) {
+                        continue;
                     }
+                    const SmfVec3* origin = TryGetEntityOriginVec3(map.Entities[sei]);
+                    if (!origin) {
+                        continue;
+                    }
+                    LibUI::Viewport::DrawWorldCrossXZ(engineVp.draw_list, projMin, projMax, viewM, projM,
+                        origin->x, origin->y, origin->z, 0.35f, IM_COL32(255, 200, 64, 255));
+                    LibUI::Viewport::DrawWorldAxisAlignedBoxSelectionOutlineUniformImGui(engineVp.draw_list, projMin, projMax,
+                        viewM, projM, origin->x, origin->y, origin->z, 0.42f, IM_COL32(255, 220, 90, 255), 2.0f, 2.4f,
+                        IM_COL32(18, 16, 10, 250), 3.2f);
                 }
 
-                if (engineVp.hovered && ImGui::IsKeyPressed(ImGuiKey_F, false) && selectedEntity >= 0 &&
-                    static_cast<size_t>(selectedEntity) < map.Entities.size()) {
-                    const SmfVec3* fo = TryGetEntityOriginVec3(map.Entities[static_cast<size_t>(selectedEntity)]);
-                    if (fo) {
-                        LibUI::Viewport::FocusOrbitOnTarget(s_engineViewportNav, fo->x, fo->y, fo->z, 0.f, 0.f, 0.f);
-                    }
-                }
-
-                if (engineVp.hovered && io.KeyCtrl && ImGui::IsMouseReleased(ImGuiMouseButton_Left) && selectedEntity >= 0 &&
-                    static_cast<size_t>(selectedEntity) < map.Entities.size() && s_jhGeoTool == 0) {
-                    const ImVec2 drag = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
-                    if (drag.x * drag.x + drag.y * drag.y < 25.f) {
-                        float hitX = 0.f;
-                        float hitZ = 0.f;
-                        if (LibUI::Viewport::ScreenToXZPlane(viewM, projM, projMin, projMax,
-                                ImGui::GetMousePos(), 0.f, hitX, hitZ)) {
-                            if (s_placeGridSnap > 1e-6f) {
-                                hitX = std::round(hitX / s_placeGridSnap) * s_placeGridSnap;
-                                hitZ = std::round(hitZ / s_placeGridSnap) * s_placeGridSnap;
-                            }
-                            PushMapUndoSnapshot(map);
-                            SmfEntity& ent = map.Entities[static_cast<size_t>(selectedEntity)];
-                            const SmfVec3* cur = TryGetEntityOriginVec3(ent);
-                            const float keepY = cur ? cur->y : 0.f;
-                            SetEntityOriginVec3(ent, SmfVec3{hitX, keepY, hitZ});
-                            dirty = true;
+                if (engineVp.hovered && ImGui::IsKeyPressed(ImGuiKey_F, false)) {
+                    if (selectedEntity >= 0 && static_cast<size_t>(selectedEntity) < map.Entities.size()) {
+                        const SmfVec3* fo = TryGetEntityOriginVec3(map.Entities[static_cast<size_t>(selectedEntity)]);
+                        if (fo) {
+                            LibUI::Viewport::FocusOrbitOnTarget(s_engineViewportNav, fo->x, fo->y, fo->z, 0.f, 0.f, 0.f);
                         }
+                    } else if (authoringLightSel >= 0 && static_cast<size_t>(authoringLightSel) < map.AuthoringLights.size()) {
+                        const Solstice::Smf::SmfAuthoringLight& L = map.AuthoringLights[static_cast<size_t>(authoringLightSel)];
+                        LibUI::Viewport::FocusOrbitOnTarget(
+                            s_engineViewportNav, L.Position.x, L.Position.y, L.Position.z, 0.f, 0.f, 0.f);
                     }
                 }
                 if (s_jhGeoTool == 1 && engineVp.hovered) {
@@ -3108,12 +2743,317 @@ int RunApp(int argc, char** argv) {
                 Jackhammer::ViewportGeo::ProcessTerrainSculpt(s_jhGeoTool, io, engineVp.hovered, viewM, projM, projMin,
                     projMax, s_jhBlockBaseY, s_placeGridSnap, s_jhTerrainBrushR, s_jhTerrainRaise, s_jhMeshWorkshop,
                     status);
+                if (s_jhGeoTool == 0) {
+                    (void)LibUI::Viewport::ApplyStandardTransformToolHotkeys(s_jhTransformTool, engineVp.hovered);
+                    (void)LibUI::Viewport::ApplyStandardTransformAxisHotkeys(s_jhTransformAxis, engineVp.hovered);
+                }
+
+                if (s_jhGeoTool == 0) {
+                    std::vector<LibUI::Tools::AxisAlignedBox3> jhPickBoxes;
+                    std::vector<LibUI::Viewport::PickToken> jhPickTokens;
+                    JhFillViewportPickArrays(map, jhPickBoxes, jhPickTokens);
+
+                    if (ImGui::IsMouseReleased(ImGuiMouseButton_Left)) {
+                        s_jhVpDragToken = 0;
+                        s_jhVpDragUndoPushed = false;
+                        s_jhVpOrbitSuppress.ClearStroke();
+                        if (s_jhVpMarqueeActive && s_jhVpMarqueeChord && jhPickBoxes.size() == jhPickTokens.size()) {
+                            const float rx0 = (std::min)(s_jhVpMarqueeA.x, s_jhVpMarqueeB.x);
+                            const float ry0 = (std::min)(s_jhVpMarqueeA.y, s_jhVpMarqueeB.y);
+                            const float rx1 = (std::max)(s_jhVpMarqueeA.x, s_jhVpMarqueeB.x);
+                            const float ry1 = (std::max)(s_jhVpMarqueeA.y, s_jhVpMarqueeB.y);
+                            const ImVec2 rmin(rx0, ry0);
+                            const ImVec2 rmax(rx1, ry1);
+                            if (!io.KeyShift) {
+                                s_jhViewportPickTokens.clear();
+                            }
+                            for (size_t bi = 0; bi < jhPickBoxes.size() && bi < jhPickTokens.size(); ++bi) {
+                                const LibUI::Tools::AxisAlignedBox3& bx = jhPickBoxes[bi];
+                                if (LibUI::Viewport::ScreenMarqueeIntersectsWorldAabb(projMin, projMax, viewM, projM, bx.minX, bx.minY,
+                                        bx.minZ, bx.maxX, bx.maxY, bx.maxZ, rmin, rmax)) {
+                                    s_jhViewportPickTokens.insert(jhPickTokens[bi]);
+                                }
+                            }
+                            if (!s_jhViewportPickTokens.empty()) {
+                                const LibUI::Viewport::PickToken first = *s_jhViewportPickTokens.begin();
+                                const std::uint16_t fLy = LibUI::Viewport::PickTokenLayer(first);
+                                const std::uint64_t fId = LibUI::Viewport::PickTokenItem(first);
+                                if (fLy == 1) {
+                                    selectedEntity = static_cast<int>(fId);
+                                    authoringLightSel = -1;
+                                } else if (fLy == 2) {
+                                    authoringLightSel = static_cast<int>(fId);
+                                    selectedEntity = -1;
+                                }
+                            }
+                        }
+                        s_jhVpMarqueeActive = false;
+                        s_jhVpMarqueeChord = false;
+                    }
+
+                    if (engineVp.hovered && io.KeyCtrl && io.KeyAlt && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                        s_jhVpMarqueeActive = true;
+                        s_jhVpMarqueeChord = true;
+                        s_jhVpMarqueeA = ImGui::GetMousePos();
+                        s_jhVpMarqueeB = s_jhVpMarqueeA;
+                    }
+                    if (s_jhVpMarqueeActive && ImGui::IsMouseDown(ImGuiMouseButton_Left) && s_jhVpMarqueeChord) {
+                        s_jhVpMarqueeB = ImGui::GetMousePos();
+                        LibUI::Viewport::DrawMarqueeRect(engineVp.draw_list, s_jhVpMarqueeA, s_jhVpMarqueeB,
+                            IM_COL32(120, 180, 255, 55), IM_COL32(220, 240, 255, 200), 1.25f);
+                    }
+
+                    bool rayPickHit = false;
+                    LibUI::Viewport::PickToken hitTok = LibUI::Viewport::kPickTokenNone;
+                    if (engineVp.hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !(io.KeyCtrl && io.KeyAlt)) {
+                        float rox = 0.f, roy = 0.f, roz = 0.f, rdx = 0.f, rdy = 0.f, rdz = 0.f;
+                        float tRay = 0.f;
+                        if (LibUI::Viewport::ScreenToWorldRay(viewM, projM, projMin, projMax, ImGui::GetMousePos(), rox, roy, roz, rdx,
+                                rdy, rdz)
+                            && !jhPickBoxes.empty()
+                            && LibUI::Viewport::PickClosestMergedAlongRay(rox, roy, roz, rdx, rdy, rdz, jhPickBoxes.data(),
+                                jhPickTokens.data(), static_cast<int>(jhPickBoxes.size()), hitTok, tRay)) {
+                            rayPickHit = (hitTok != LibUI::Viewport::kPickTokenNone);
+                            (void)tRay;
+                        }
+                        s_jhVpOrbitSuppress.OnLeftPress(true, rayPickHit);
+                        if (rayPickHit) {
+                            const std::uint16_t ly = LibUI::Viewport::PickTokenLayer(hitTok);
+                            const std::uint64_t id = LibUI::Viewport::PickTokenItem(hitTok);
+                            s_jhVpDragToken = hitTok;
+                            s_jhVpDragPlanePrev = ImGui::GetMousePos();
+                            if (io.KeyCtrl) {
+                                if (s_jhViewportPickTokens.count(hitTok)) {
+                                    s_jhViewportPickTokens.erase(hitTok);
+                                } else {
+                                    s_jhViewportPickTokens.insert(hitTok);
+                                }
+                            } else {
+                                s_jhViewportPickTokens.clear();
+                                s_jhViewportPickTokens.insert(hitTok);
+                            }
+                            if (ly == 1) {
+                                selectedEntity = static_cast<int>(id);
+                                authoringLightSel = -1;
+                            } else if (ly == 2) {
+                                authoringLightSel = static_cast<int>(id);
+                                selectedEntity = -1;
+                            }
+                        } else {
+                            s_jhVpDragToken = 0;
+                        }
+                    }
+
+                    if (s_jhVpOrbitSuppress.ShouldSuppressOrbitLeftDrag() && s_jhVpDragToken != LibUI::Viewport::kPickTokenNone
+                        && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+                        const ImVec2 curM = ImGui::GetMousePos();
+                        if (s_jhTransformTool == LibUI::Viewport::TransformTool::Rotate) {
+                            const float dYaw = LibUI::Viewport::ComputeTransformRotateDeltaDeg(
+                                curM.x - s_jhVpDragPlanePrev.x, io.KeyShift);
+                            if (std::abs(dYaw) > 1e-4f) {
+                                if (!s_jhVpDragUndoPushed) {
+                                    PushMapUndoSnapshot(map);
+                                    s_jhVpDragUndoPushed = true;
+                                }
+                                s_jhVpDragPlanePrev = curM;
+                                auto jhApplyRotate = [&](std::uint16_t dLy, std::uint64_t dId) {
+                                    if (dLy == 1 && dId < map.Entities.size()) {
+                                        SmfEntity& ent = map.Entities[static_cast<size_t>(dId)];
+                                        if (s_jhTransformAxis == LibUI::Viewport::TransformAxis::X) {
+                                            SetEntityPitchDegrees(ent, ReadEntityPitchDegrees(ent) + dYaw);
+                                        } else if (s_jhTransformAxis == LibUI::Viewport::TransformAxis::Z) {
+                                            SetEntityRollDegrees(ent, ReadEntityRollDegrees(ent) + dYaw);
+                                        } else {
+                                            SetEntityYawDegrees(ent, ReadEntityYawDegrees(ent) + dYaw);
+                                        }
+                                        dirty = true;
+                                    } else if (dLy == 2 && dId < map.AuthoringLights.size()) {
+                                        auto& L = map.AuthoringLights[static_cast<size_t>(dId)];
+                                        const float rad = dYaw * 3.14159265358979323846f / 180.0f;
+                                        const float co = std::cos(rad);
+                                        const float si = std::sin(rad);
+                                        if (s_jhTransformAxis == LibUI::Viewport::TransformAxis::X) {
+                                            const float y = L.Direction.y;
+                                            const float z = L.Direction.z;
+                                            L.Direction.y = y * co - z * si;
+                                            L.Direction.z = y * si + z * co;
+                                        } else if (s_jhTransformAxis == LibUI::Viewport::TransformAxis::Z) {
+                                            const float x = L.Direction.x;
+                                            const float y = L.Direction.y;
+                                            L.Direction.x = x * co - y * si;
+                                            L.Direction.y = x * si + y * co;
+                                        } else {
+                                            const float x = L.Direction.x;
+                                            const float z = L.Direction.z;
+                                            L.Direction.x = x * co - z * si;
+                                            L.Direction.z = x * si + z * co;
+                                        }
+                                        dirty = true;
+                                    }
+                                };
+                                if (s_jhViewportPickTokens.size() > 1) {
+                                    for (const std::uint64_t tok : s_jhViewportPickTokens) {
+                                        jhApplyRotate(LibUI::Viewport::PickTokenLayer(tok), LibUI::Viewport::PickTokenItem(tok));
+                                    }
+                                } else {
+                                    jhApplyRotate(LibUI::Viewport::PickTokenLayer(s_jhVpDragToken),
+                                        LibUI::Viewport::PickTokenItem(s_jhVpDragToken));
+                                }
+                            }
+                        } else if (s_jhTransformTool == LibUI::Viewport::TransformTool::Scale) {
+                            const float dS = LibUI::Viewport::ComputeTransformScaleDelta(
+                                curM.x - s_jhVpDragPlanePrev.x, io.KeyShift);
+                            if (std::abs(dS) > 1e-4f) {
+                                if (!s_jhVpDragUndoPushed) {
+                                    PushMapUndoSnapshot(map);
+                                    s_jhVpDragUndoPushed = true;
+                                }
+                                s_jhVpDragPlanePrev = curM;
+                                auto jhApplyScale = [&](std::uint16_t dLy, std::uint64_t dId) {
+                                    if (dLy == 1 && dId < map.Entities.size()) {
+                                        SmfEntity& ent = map.Entities[static_cast<size_t>(dId)];
+                                        if (s_jhTransformAxis == LibUI::Viewport::TransformAxis::None) {
+                                            SetEntityUniformScale(ent, ReadEntityUniformScale(ent) + dS);
+                                        } else {
+                                            SmfVec3 sc = ReadEntityScaleVec3(ent);
+                                            if (s_jhTransformAxis == LibUI::Viewport::TransformAxis::X) {
+                                                sc.x += dS;
+                                            } else if (s_jhTransformAxis == LibUI::Viewport::TransformAxis::Y) {
+                                                sc.y += dS;
+                                            } else {
+                                                sc.z += dS;
+                                            }
+                                            SetEntityScaleVec3(ent, sc);
+                                        }
+                                        dirty = true;
+                                    } else if (dLy == 2 && dId < map.AuthoringLights.size()) {
+                                        auto& L = map.AuthoringLights[static_cast<size_t>(dId)];
+                                        if (s_jhTransformAxis == LibUI::Viewport::TransformAxis::Y) {
+                                            L.Intensity = std::clamp(L.Intensity + dS, 0.0f, 4096.0f);
+                                        } else if (s_jhTransformAxis == LibUI::Viewport::TransformAxis::Z) {
+                                            L.Attenuation = std::clamp(L.Attenuation + dS, 0.0f, 4096.0f);
+                                        } else {
+                                            L.Range = std::clamp(L.Range + dS * 4.0f, 0.0f, 8192.0f);
+                                        }
+                                        dirty = true;
+                                    }
+                                };
+                                if (s_jhViewportPickTokens.size() > 1) {
+                                    for (const std::uint64_t tok : s_jhViewportPickTokens) {
+                                        jhApplyScale(LibUI::Viewport::PickTokenLayer(tok), LibUI::Viewport::PickTokenItem(tok));
+                                    }
+                                } else {
+                                    jhApplyScale(LibUI::Viewport::PickTokenLayer(s_jhVpDragToken),
+                                        LibUI::Viewport::PickTokenItem(s_jhVpDragToken));
+                                }
+                            }
+                        } else {
+                            float dwx = 0.f, dwz = 0.f;
+                            float dwy = 0.f;
+                            const ImVec2 prevM = s_jhVpDragPlanePrev;
+                            if (LibUI::Viewport::WorldDeltaOnHorizontalPlane(
+                                    viewM, projM, projMin, projMax, s_jhVpDragPlanePrev, curM, 0.f, dwx, dwz)) {
+                                if (!s_jhVpDragUndoPushed) {
+                                    PushMapUndoSnapshot(map);
+                                    s_jhVpDragUndoPushed = true;
+                                }
+                                if (s_jhTransformAxis == LibUI::Viewport::TransformAxis::X) {
+                                    dwz = 0.f;
+                                } else if (s_jhTransformAxis == LibUI::Viewport::TransformAxis::Z) {
+                                    dwx = 0.f;
+                                } else if (s_jhTransformAxis == LibUI::Viewport::TransformAxis::Y) {
+                                    dwx = 0.f;
+                                    dwz = 0.f;
+                                    dwy = -(curM.y - prevM.y) * 0.01f;
+                                    if (io.KeyShift) {
+                                        dwy = std::round(dwy / 0.1f) * 0.1f;
+                                    }
+                                }
+                                auto jhApplyDragDelta = [&](std::uint16_t dLy, std::uint64_t dId) {
+                                    if (dLy == 1 && dId < map.Entities.size()) {
+                                        SmfEntity& ent = map.Entities[static_cast<size_t>(dId)];
+                                        const SmfVec3* cur = TryGetEntityOriginVec3(ent);
+                                        if (cur) {
+                                            SetEntityOriginVec3(ent, SmfVec3{cur->x + dwx, cur->y + dwy, cur->z + dwz});
+                                            dirty = true;
+                                        }
+                                    } else if (dLy == 2 && dId < map.AuthoringLights.size()) {
+                                        Solstice::Smf::SmfAuthoringLight& L = map.AuthoringLights[static_cast<size_t>(dId)];
+                                        L.Position.x += dwx;
+                                        L.Position.y += dwy;
+                                        L.Position.z += dwz;
+                                        dirty = true;
+                                    }
+                                };
+                                if (s_jhViewportPickTokens.size() > 1) {
+                                    for (const std::uint64_t tok : s_jhViewportPickTokens) {
+                                        jhApplyDragDelta(LibUI::Viewport::PickTokenLayer(tok), LibUI::Viewport::PickTokenItem(tok));
+                                    }
+                                } else {
+                                    jhApplyDragDelta(LibUI::Viewport::PickTokenLayer(s_jhVpDragToken),
+                                        LibUI::Viewport::PickTokenItem(s_jhVpDragToken));
+                                }
+                                s_jhVpDragPlanePrev = curM;
+                            }
+                        }
+                    }
+
+                    if (selectedEntity >= 0 && static_cast<size_t>(selectedEntity) < map.Entities.size()) {
+                        if (const SmfVec3* o = TryGetEntityOriginVec3(map.Entities[static_cast<size_t>(selectedEntity)])) {
+                            LibUI::Viewport::DrawWorldTransformGizmo(
+                                engineVp.draw_list, projMin, projMax, viewM, projM, o->x, o->y, o->z, s_jhTransformTool, s_jhTransformAxis,
+                                0.9f, 18.0f);
+                        }
+                    } else if (authoringLightSel >= 0 && static_cast<size_t>(authoringLightSel) < map.AuthoringLights.size()) {
+                        const auto& L = map.AuthoringLights[static_cast<size_t>(authoringLightSel)];
+                        LibUI::Viewport::DrawWorldTransformGizmo(engineVp.draw_list, projMin, projMax, viewM, projM, L.Position.x,
+                            L.Position.y, L.Position.z, s_jhTransformTool, s_jhTransformAxis, 0.75f, 17.0f);
+                    }
+
+                    if (LibUI::Viewport::BeginViewportContextPopup("jh_vp_ctx", engineVp.hovered)) {
+                        if (ImGui::MenuItem("Snap primary entity origin to XZ under cursor", nullptr, false,
+                                selectedEntity >= 0 && static_cast<size_t>(selectedEntity) < map.Entities.size())) {
+                            float hitX = 0.f;
+                            float hitZ = 0.f;
+                            if (LibUI::Viewport::ScreenToXZPlane(viewM, projM, projMin, projMax, ImGui::GetMousePos(), 0.f, hitX, hitZ)) {
+                                if (s_placeGridSnap > 1e-6f) {
+                                    hitX = std::round(hitX / s_placeGridSnap) * s_placeGridSnap;
+                                    hitZ = std::round(hitZ / s_placeGridSnap) * s_placeGridSnap;
+                                }
+                                PushMapUndoSnapshot(map);
+                                SmfEntity& ent = map.Entities[static_cast<size_t>(selectedEntity)];
+                                const SmfVec3* cur = TryGetEntityOriginVec3(ent);
+                                const float keepY = cur ? cur->y : 0.f;
+                                SetEntityOriginVec3(ent, SmfVec3{hitX, keepY, hitZ});
+                                dirty = true;
+                            }
+                        }
+                        if (ImGui::MenuItem("Clear viewport selection", nullptr, false, !s_jhViewportPickTokens.empty())) {
+                            s_jhViewportPickTokens.clear();
+                        }
+                        ImGui::Separator();
+                        if (ImGui::MenuItem("Axis lock: free", nullptr, s_jhTransformAxis == LibUI::Viewport::TransformAxis::None)) {
+                            s_jhTransformAxis = LibUI::Viewport::TransformAxis::None;
+                        }
+                        if (ImGui::MenuItem("Axis lock: X", nullptr, s_jhTransformAxis == LibUI::Viewport::TransformAxis::X)) {
+                            s_jhTransformAxis = LibUI::Viewport::TransformAxis::X;
+                        }
+                        if (ImGui::MenuItem("Axis lock: Y", nullptr, s_jhTransformAxis == LibUI::Viewport::TransformAxis::Y)) {
+                            s_jhTransformAxis = LibUI::Viewport::TransformAxis::Y;
+                        }
+                        if (ImGui::MenuItem("Axis lock: Z", nullptr, s_jhTransformAxis == LibUI::Viewport::TransformAxis::Z)) {
+                            s_jhTransformAxis = LibUI::Viewport::TransformAxis::Z;
+                        }
+                        ImGui::EndPopup();
+                    }
+                }
 
                 LibUI::Viewport::OrbitPanZoomParams jhOrbitOverride{};
                 if (s_jhGeoTool == 1 || s_jhGeoTool == 2 || s_jhGeoTool == 3) {
                     jhOrbitOverride.orbit_mouse_button = ImGuiMouseButton_Right; // free LMB for block / measure / terrain
                 }
-                LibUI::Viewport::ApplyOrbitPanZoom(s_engineViewportNav, engineVp, jhOrbitOverride);
+                const bool jhSuppressLmbOrbit = (s_jhGeoTool == 0) && s_jhVpOrbitSuppress.ShouldSuppressOrbitLeftDrag();
+                LibUI::Viewport::ApplyOrbitPanZoom(s_engineViewportNav, engineVp, jhOrbitOverride, jhSuppressLmbOrbit);
                 if (engineVp.hovered && !io.WantTextInput && selectedEntity >= 0 &&
                     static_cast<size_t>(selectedEntity) < map.Entities.size()) {
                     SmfEntity& entN = map.Entities[static_cast<size_t>(selectedEntity)];
@@ -3166,8 +3106,10 @@ int RunApp(int argc, char** argv) {
                 }
                 char navBuf[192]{};
                 std::snprintf(navBuf, sizeof(navBuf),
-                    "%s | yaw %.2f | pitch %.2f | dist %.2f | pan %.1f, %.1f%s",
-                    projName, static_cast<double>(s_engineViewportNav.yaw),
+                    "%s | tool %s axis %s | yaw %.2f | pitch %.2f | dist %.2f | pan %.1f, %.1f%s",
+                    projName, LibUI::Viewport::TransformToolLabel(s_jhTransformTool),
+                    LibUI::Viewport::TransformAxisLabel(s_jhTransformAxis),
+                    static_cast<double>(s_engineViewportNav.yaw),
                     static_cast<double>(s_engineViewportNav.pitch), static_cast<double>(s_engineViewportNav.distance),
                     static_cast<double>(s_engineViewportNav.pan_x), static_cast<double>(s_engineViewportNav.pan_y),
                     engEntsTruncated ? " | mesh preview capped" : "");
@@ -3175,7 +3117,7 @@ int RunApp(int argc, char** argv) {
                 LibUI::Viewport::DrawViewportLabel(engineVp.draw_list, projMin, projMax,
                     s_jhGeoTool == 1
                         ? "Block tool: LMB drag AABB (XZ) | RMB orbit | Alt+LMB/MMB pan | wheel | F focus | arrows nudge"
-                        : "LMB orbit | Alt+LMB/MMB pan | wheel zoom | F focus | Ctrl+LMB place XZ @ y=0 | arrows nudge",
+                        : "W move · R rotate · E resize · X/Y/Z axis lock · Esc free · Shift snap | LMB pick/drag | Ctrl+LMB toggle | Ctrl+Alt+drag marquee | F focus",
                     ImVec2(0.0f, 1.0f));
             }
         }
@@ -5377,28 +5319,14 @@ int RunApp(int argc, char** argv) {
             ImGui::TextDisabled(
                 "Solstice Map Format v1 / TP1 — path strings only; no embedded scripts. Consumed by runtime/tools later.");
             auto editHookPath = [&](const char* label, const char* hint, std::string& dest, const char* browseTitle) {
-                char buf[768]{};
-                std::snprintf(buf, sizeof(buf), "%s", dest.c_str());
                 ImGui::PushID(label);
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 36.f);
-                if (ImGui::InputText(label, buf, sizeof(buf))) {
-                    PushMapUndoSnapshot(map);
-                    dest = buf;
-                    dirty = true;
-                }
-                ImGui::SameLine();
-                if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Import, "##jhhkb")) {
-                    LibUI::FileDialogs::ShowOpenFile(
-                        window, browseTitle, [&](std::optional<std::string> path) {
-                            if (!path || path->empty()) {
-                                return;
-                            }
-                            PushMapUndoSnapshot(map);
-                            dest = ToMapRelativePathIfPossible(*path, currentPath);
-                            dirty = true;
-                        },
-                        kJhHookPathBrowseFilters);
-                }
+                (void)LibUI::Tools::InputPathOpenBrowseRowHintString(36.f, label, hint ? hint : "", dest, 768, window, browseTitle,
+                    "...##jhhkb", kJhHookPathBrowseFilters,
+                    [&](const std::string& path) { return ToMapRelativePathIfPossible(path, currentPath); },
+                    [&]() {
+                        PushMapUndoSnapshot(map);
+                        dirty = true;
+                    });
                 ImGui::PopID();
                 if (hint) {
                     ImGui::TextDisabled("%s", hint);
@@ -5803,6 +5731,144 @@ int RunApp(int argc, char** argv) {
                 }
                 ImGui::TreePop();
             }
+
+            if (ImGui::TreeNodeEx("Soft bodies (PBD cloth)", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::TextDisabled("Authoring records for runtime cloth grids (SMAL extras).");
+                if (ImGui::Button("Add soft body##jhsb")) {
+                    PushMapUndoSnapshot(map);
+                    SmfSoftBodyVolume s;
+                    s.Name = MakeUniqueSoftBodyVolumeName(map, "soft_body");
+                    s.Origin = SmfVec3{0.f, 4.f, 0.f};
+                    map.SoftBodyVolumes.push_back(std::move(s));
+                    softBodySel = static_cast<int>(map.SoftBodyVolumes.size()) - 1;
+                    dirty = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Remove##jhsbrm") && softBodySel >= 0
+                    && softBodySel < static_cast<int>(map.SoftBodyVolumes.size())) {
+                    PushMapUndoSnapshot(map);
+                    map.SoftBodyVolumes.erase(map.SoftBodyVolumes.begin() + softBodySel);
+                    if (map.SoftBodyVolumes.empty()) {
+                        softBodySel = -1;
+                    } else {
+                        softBodySel = std::min(softBodySel, static_cast<int>(map.SoftBodyVolumes.size()) - 1);
+                    }
+                    dirty = true;
+                }
+                if (!map.SoftBodyVolumes.empty()) {
+                    softBodySel = std::clamp(softBodySel, 0, static_cast<int>(map.SoftBodyVolumes.size()) - 1);
+                    ImGui::SliderInt("Selected##jhsbsel", &softBodySel, 0, static_cast<int>(map.SoftBodyVolumes.size()) - 1);
+                    SmfSoftBodyVolume& sv = map.SoftBodyVolumes[static_cast<size_t>(softBodySel)];
+                    char sn[256]{};
+                    std::snprintf(sn, sizeof(sn), "%s", sv.Name.c_str());
+                    if (ImGui::InputText("Name##jhsbnm", sn, sizeof(sn))) {
+                        sv.Name = sn;
+                        dirty = true;
+                    }
+                    if (ImGui::Checkbox("Enabled##jhsben", &sv.Enabled)) {
+                        dirty = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Checkbox("Anchor top row##jhsbanch", &sv.AnchorTopRow)) {
+                        dirty = true;
+                    }
+                    if (ImGui::DragFloat3("Origin##jhsborg", &sv.Origin.x, 0.05f)) {
+                        dirty = true;
+                    }
+                    if (ImGui::DragInt("Grid width##jhsbgw", &sv.GridWidth, 1, Solstice::Smf::kSmfSoftBodyGridMin,
+                            Solstice::Smf::kSmfSoftBodyGridMax)) {
+                        dirty = true;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::DragInt("Grid height##jhsbgh", &sv.GridHeight, 1, Solstice::Smf::kSmfSoftBodyGridMin,
+                            Solstice::Smf::kSmfSoftBodyGridMax)) {
+                        dirty = true;
+                    }
+                    if (ImGui::DragInt("Solver iterations##jhsbiter", &sv.SolverIterations, 1, 1, 64)) {
+                        dirty = true;
+                    }
+                    if (ImGui::DragFloat("Node spacing##jhsbsp", &sv.NodeSpacing, 0.01f, 0.01f, 5.0f)) {
+                        dirty = true;
+                    }
+                    if (ImGui::DragFloat("Node mass##jhsbmass", &sv.NodeMass, 0.01f, 0.001f, 100.0f)) {
+                        dirty = true;
+                    }
+                    if (ImGui::DragFloat("Damping##jhsbdamp", &sv.Damping, 0.005f, 0.0f, 1.0f)) {
+                        dirty = true;
+                    }
+                    if (ImGui::DragFloat("Structural stiffness##jhsbst", &sv.StructuralStiffness, 0.005f, 0.0f, 1.0f)) {
+                        dirty = true;
+                    }
+                    if (ImGui::DragFloat("Shear stiffness##jhsbsh", &sv.ShearStiffness, 0.005f, 0.0f, 1.0f)) {
+                        dirty = true;
+                    }
+                    if (ImGui::DragFloat("Bend stiffness##jhsbbn", &sv.BendStiffness, 0.005f, 0.0f, 1.0f)) {
+                        dirty = true;
+                    }
+                }
+                ImGui::TreePop();
+            }
+
+            if (ImGui::TreeNodeEx("Vehicles (arcade)", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::TextDisabled("Authoring records for runtime vehicle entities.");
+                if (ImGui::Button("Add vehicle##jhveh")) {
+                    PushMapUndoSnapshot(map);
+                    SmfVehicleVolume v;
+                    v.Name = MakeUniqueVehicleVolumeName(map, "vehicle");
+                    v.Origin = SmfVec3{0.f, 1.f, 0.f};
+                    map.VehicleVolumes.push_back(std::move(v));
+                    vehicleSel = static_cast<int>(map.VehicleVolumes.size()) - 1;
+                    dirty = true;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Remove##jhvehrm") && vehicleSel >= 0
+                    && vehicleSel < static_cast<int>(map.VehicleVolumes.size())) {
+                    PushMapUndoSnapshot(map);
+                    map.VehicleVolumes.erase(map.VehicleVolumes.begin() + vehicleSel);
+                    if (map.VehicleVolumes.empty()) {
+                        vehicleSel = -1;
+                    } else {
+                        vehicleSel = std::min(vehicleSel, static_cast<int>(map.VehicleVolumes.size()) - 1);
+                    }
+                    dirty = true;
+                }
+                if (!map.VehicleVolumes.empty()) {
+                    vehicleSel = std::clamp(vehicleSel, 0, static_cast<int>(map.VehicleVolumes.size()) - 1);
+                    ImGui::SliderInt("Selected##jhvehsel", &vehicleSel, 0, static_cast<int>(map.VehicleVolumes.size()) - 1);
+                    SmfVehicleVolume& vv = map.VehicleVolumes[static_cast<size_t>(vehicleSel)];
+                    char vn[256]{};
+                    std::snprintf(vn, sizeof(vn), "%s", vv.Name.c_str());
+                    if (ImGui::InputText("Name##jhvehnm", vn, sizeof(vn))) {
+                        vv.Name = vn;
+                        dirty = true;
+                    }
+                    if (ImGui::Checkbox("Enabled##jhvehen", &vv.Enabled)) {
+                        dirty = true;
+                    }
+                    if (ImGui::DragFloat3("Origin##jhvehorg", &vv.Origin.x, 0.05f)) {
+                        dirty = true;
+                    }
+                    if (ImGui::DragFloat("Wheel base##jhvehwb", &vv.WheelBase, 0.01f, 0.5f, 10.0f)) {
+                        dirty = true;
+                    }
+                    if (ImGui::DragFloat("Track width##jhvehtw", &vv.TrackWidth, 0.01f, 0.5f, 10.0f)) {
+                        dirty = true;
+                    }
+                    if (ImGui::DragFloat("Mass##jhvehm", &vv.Mass, 1.0f, 1.0f, 100000.0f)) {
+                        dirty = true;
+                    }
+                    if (ImGui::DragFloat("Engine force##jhvehef", &vv.EngineForce, 10.0f, 0.0f, 1000000.0f)) {
+                        dirty = true;
+                    }
+                    if (ImGui::DragFloat("Brake force##jhvehbf", &vv.BrakeForce, 10.0f, 0.0f, 1000000.0f)) {
+                        dirty = true;
+                    }
+                    if (ImGui::DragFloat("Max steer radians##jhvehsa", &vv.MaxSteerAngleRadians, 0.005f, 0.01f, 1.5f)) {
+                        dirty = true;
+                    }
+                }
+                ImGui::TreePop();
+            }
         }
 
         ImGui::Separator();
@@ -5931,11 +5997,11 @@ int RunApp(int argc, char** argv) {
                 const bool hasWorldHooks = !map.WorldAuthoringHooks.ScriptPath.empty()
                     || !map.WorldAuthoringHooks.CutscenePath.empty() || !map.WorldAuthoringHooks.WorldSpaceUiPath.empty();
                 ImGui::Text(
-                    "Entities: %zu | Paths: %zu | BSP: %s | Octree: %s | Lights: %zu | Acoustic: %zu | Fluids: %zu | Skybox: %s | "
-                    "Hooks: %s",
+                    "Entities: %zu | Paths: %zu | BSP: %s | Octree: %s | Lights: %zu | Acoustic: %zu | Fluids: %zu | SoftBodies: %zu | Vehicles: %zu | Skybox: %s | Hooks: %s",
                     map.Entities.size(), map.PathTable.size(), map.Bsp.has_value() ? "yes" : "no",
                     map.Octree.has_value() ? "yes" : "no", map.AuthoringLights.size(), map.AcousticZones.size(),
-                    map.FluidVolumes.size(), map.Skybox.has_value() ? (map.Skybox->Enabled ? "on" : "off") : "—",
+                    map.FluidVolumes.size(), map.SoftBodyVolumes.size(), map.VehicleVolumes.size(),
+                    map.Skybox.has_value() ? (map.Skybox->Enabled ? "on" : "off") : "—",
                     hasWorldHooks ? "paths" : "—");
             }
             if (ImGui::CollapsingHeader("Recovery (autosave)##jhbot")) {

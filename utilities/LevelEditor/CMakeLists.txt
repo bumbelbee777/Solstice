@@ -5,6 +5,8 @@ add_executable(LevelEditor
     EarlyCrashDiag.cxx
     Main.cxx
     JackhammerApp.cxx
+    JackhammerEntityHelpers.cxx
+    JackhammerPlugins.cxx
     JackhammerSpatial.cxx
     JackhammerViewportDraw.cxx
     JackhammerTexturePaint.cxx

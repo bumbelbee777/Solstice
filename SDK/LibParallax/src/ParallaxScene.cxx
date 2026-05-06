@@ -62,6 +62,7 @@ static std::vector<SchemaDef> BuildBuiltinSchemaTable() {
                          {"EnableProceduralBlink", AttributeType::Bool},
                          {"EnableProceduralSaccade", AttributeType::Bool}});
     add("AudioSourceElement", {{"AudioAsset", AttributeType::AssetHash},
+                               {"Position", AttributeType::Vec3},
                                {"Volume", AttributeType::Float},
                                {"Pitch", AttributeType::Float}});
     add("MotionGraphicsRootElement", {{"CompositeAlpha", AttributeType::Float},
@@ -86,6 +87,16 @@ static std::vector<SchemaDef> BuildBuiltinSchemaTable() {
                             {"Position", AttributeType::Vec2},
                             {"Size", AttributeType::Vec2},
                             {"Depth", AttributeType::Float},
+                            /// 0 = pure 2D screen-space sprite, 1 = unified world-space proxy card.
+                            {"MGProjectionMode", AttributeType::Int32},
+                            {"WorldPosition", AttributeType::Vec3},
+                            {"WorldScale", AttributeType::Vec3},
+                            {"WorldPitchDeg", AttributeType::Float},
+                            {"WorldYawDeg", AttributeType::Float},
+                            {"WorldRollDeg", AttributeType::Float},
+                            {"AttachToElement", AttributeType::Bool},
+                            {"AttachElementIndex", AttributeType::Int32},
+                            {"CastShadows", AttributeType::Bool},
                             /// Screen-space color tint (vec4) — multiplied with the sampled texel; alpha in [0,1] scales sprite opacity in raster paths.
                             {"Color", AttributeType::ColorRGBA},
                             /// Screen-space Z rotation in radians; used for 2D “billboard”-style presentation and motion smear.
@@ -152,6 +163,28 @@ static std::vector<SchemaDef> BuildBuiltinSchemaTable() {
             {"PressureRelaxationIterations", AttributeType::Int32},
             {"BuoyancyStrength", AttributeType::Float},
             {"Prandtl", AttributeType::Float}});
+    add("SmmSoftBodyElement",
+        {{"Enabled", AttributeType::Bool},
+            {"AnchorTopRow", AttributeType::Bool},
+            {"Origin", AttributeType::Vec3},
+            {"GridWidth", AttributeType::Int32},
+            {"GridHeight", AttributeType::Int32},
+            {"NodeSpacing", AttributeType::Float},
+            {"NodeMass", AttributeType::Float},
+            {"Damping", AttributeType::Float},
+            {"StructuralStiffness", AttributeType::Float},
+            {"ShearStiffness", AttributeType::Float},
+            {"BendStiffness", AttributeType::Float},
+            {"SolverIterations", AttributeType::Int32}});
+    add("SmmVehicleElement",
+        {{"Enabled", AttributeType::Bool},
+            {"Origin", AttributeType::Vec3},
+            {"WheelBase", AttributeType::Float},
+            {"TrackWidth", AttributeType::Float},
+            {"Mass", AttributeType::Float},
+            {"EngineForce", AttributeType::Float},
+            {"BrakeForce", AttributeType::Float},
+            {"MaxSteerAngleRadians", AttributeType::Float}});
     return schemas;
 }
 

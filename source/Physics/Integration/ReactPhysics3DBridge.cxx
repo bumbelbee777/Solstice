@@ -13,8 +13,12 @@
 #include <reactphysics3d/collision/shapes/ConvexMeshShape.h>
 #include <reactphysics3d/collision/PolygonVertexArray.h>
 #include <reactphysics3d/collision/PolyhedronMesh.h>
+#include <reactphysics3d/mathematics/Ray.h>
+#include <reactphysics3d/collision/RaycastInfo.h>
+#include <reactphysics3d/utils/DebugRenderer.h>
 
 #include <cmath>
+#include <algorithm>
 
 namespace Solstice::Physics {
 
@@ -559,6 +563,201 @@ void ReactPhysics3DBridge::SetBodyTransform(ECS::EntityId entityId, const Math::
         WriteSyncCache(c, *solsticeBody);
         m_SyncToCache[entityId] = c;
     }
+}
+
+void ReactPhysics3DBridge::ForcePushRigidBodyToBackend(ECS::EntityId entityId) {
+    if (!m_Registry || !m_PhysicsWorld) return;
+
+    auto it = m_EntityToBody.find(entityId);
+    if (it == m_EntityToBody.end()) return;
+
+    RigidBody* rb = m_Registry->TryGet<RigidBody>(entityId);
+    if (!rb) return;
+
+    UpdateBodyProperties(entityId, it->second, *rb);
+}
+
+void ReactPhysics3DBridge::SetSolverIterations(int velocityIterations, int positionIterations) {
+    if (!m_PhysicsWorld) {
+        return;
+    }
+    if (velocityIterations > 0) {
+        m_PhysicsWorld->setNbIterationsVelocitySolver(static_cast<uint16_t>(velocityIterations));
+    }
+    if (positionIterations > 0) {
+        m_PhysicsWorld->setNbIterationsPositionSolver(static_cast<uint32_t>(positionIterations));
+    }
+}
+
+RaycastHit ReactPhysics3DBridge::RaycastClosest(const RaycastRequest& request) {
+    RaycastHit out{};
+    if (!m_PhysicsWorld) {
+        return out;
+    }
+
+    const Math::Vec3 dir = request.Direction.Normalized();
+    const Math::Vec3 end = request.Origin + (dir * request.MaxDistance);
+    reactphysics3d::Ray ray(ToRP3D(request.Origin), ToRP3D(end));
+
+    struct Callback final : reactphysics3d::RaycastCallback {
+        RaycastHit* Hit{};
+        const std::unordered_map<reactphysics3d::RigidBody*, ECS::EntityId>* Reverse{};
+        float MaxDistance{};
+        reactphysics3d::decimal notifyRaycastHit(const reactphysics3d::RaycastInfo& info) override {
+            Hit->Hit = true;
+            Hit->Point = Math::Vec3(static_cast<float>(info.worldPoint.x), static_cast<float>(info.worldPoint.y), static_cast<float>(info.worldPoint.z));
+            Hit->Normal = Math::Vec3(static_cast<float>(info.worldNormal.x), static_cast<float>(info.worldNormal.y), static_cast<float>(info.worldNormal.z));
+            Hit->Distance = static_cast<float>(info.hitFraction) * MaxDistance;
+            Hit->Entity = 0;
+            if (info.body) {
+                if (const auto* rb = dynamic_cast<const reactphysics3d::RigidBody*>(info.body)) {
+                    // Map keys match non-const pointers from our world; raycast exposes const*.
+                    auto it = Reverse->find(const_cast<reactphysics3d::RigidBody*>(rb));
+                    if (it != Reverse->end()) {
+                        Hit->Entity = it->second;
+                    }
+                }
+            }
+            return reactphysics3d::decimal(0.0);
+        }
+    } callback;
+
+    callback.Hit = &out;
+    callback.Reverse = &m_BodyToEntity;
+    callback.MaxDistance = request.MaxDistance;
+    m_PhysicsWorld->raycast(ray, &callback);
+    return out;
+}
+
+bool ReactPhysics3DBridge::RaycastAny(const RaycastRequest& request) {
+    return RaycastClosest(request).Hit;
+}
+
+std::vector<RaycastAllHit> ReactPhysics3DBridge::RaycastAll(const RaycastRequest& request) {
+    std::vector<RaycastAllHit> hits;
+    if (!m_PhysicsWorld) {
+        return hits;
+    }
+
+    const Math::Vec3 dir = request.Direction.Normalized();
+    const Math::Vec3 end = request.Origin + (dir * request.MaxDistance);
+    reactphysics3d::Ray ray(ToRP3D(request.Origin), ToRP3D(end));
+    struct Callback final : reactphysics3d::RaycastCallback {
+        std::vector<RaycastAllHit>* Hits{};
+        const std::unordered_map<reactphysics3d::RigidBody*, ECS::EntityId>* Reverse{};
+        float MaxDistance{};
+        reactphysics3d::decimal notifyRaycastHit(const reactphysics3d::RaycastInfo& info) override {
+            RaycastAllHit hit{};
+            hit.Point = Math::Vec3(static_cast<float>(info.worldPoint.x), static_cast<float>(info.worldPoint.y), static_cast<float>(info.worldPoint.z));
+            hit.Normal = Math::Vec3(static_cast<float>(info.worldNormal.x), static_cast<float>(info.worldNormal.y), static_cast<float>(info.worldNormal.z));
+            hit.Distance = static_cast<float>(info.hitFraction) * MaxDistance;
+            if (info.body) {
+                if (const auto* rb = dynamic_cast<const reactphysics3d::RigidBody*>(info.body)) {
+                    auto it = Reverse->find(const_cast<reactphysics3d::RigidBody*>(rb));
+                    if (it != Reverse->end()) {
+                        hit.Entity = it->second;
+                    }
+                }
+            }
+            Hits->push_back(hit);
+            return reactphysics3d::decimal(1.0);
+        }
+    } callback;
+
+    callback.Hits = &hits;
+    callback.Reverse = &m_BodyToEntity;
+    callback.MaxDistance = request.MaxDistance;
+    m_PhysicsWorld->raycast(ray, &callback);
+    std::sort(hits.begin(), hits.end(), [](const RaycastAllHit& a, const RaycastAllHit& b) { return a.Distance < b.Distance; });
+    return hits;
+}
+
+std::vector<ECS::EntityId> ReactPhysics3DBridge::OverlapSphere(const Math::Vec3& center, float radius) {
+    std::vector<ECS::EntityId> result;
+    const float radiusSq = radius * radius;
+    for (const auto& [entity, body] : m_EntityToBody) {
+        if (!body) {
+            continue;
+        }
+        const reactphysics3d::Vector3 pos = body->getTransform().getPosition();
+        const Math::Vec3 d(static_cast<float>(pos.x) - center.x, static_cast<float>(pos.y) - center.y, static_cast<float>(pos.z) - center.z);
+        if (d.Dot(d) <= radiusSq) {
+            result.push_back(entity);
+        }
+    }
+    return result;
+}
+
+std::vector<ECS::EntityId> ReactPhysics3DBridge::OverlapAabb(const Math::Vec3& min, const Math::Vec3& max) {
+    std::vector<ECS::EntityId> result;
+    for (const auto& [entity, body] : m_EntityToBody) {
+        if (!body) {
+            continue;
+        }
+        const auto p = body->getTransform().getPosition();
+        const float x = static_cast<float>(p.x);
+        const float y = static_cast<float>(p.y);
+        const float z = static_cast<float>(p.z);
+        if (x >= min.x && x <= max.x && y >= min.y && y <= max.y && z >= min.z && z <= max.z) {
+            result.push_back(entity);
+        }
+    }
+    return result;
+}
+
+PhysicsDebugDrawData ReactPhysics3DBridge::BuildDebugDrawData() {
+    PhysicsDebugDrawData out{};
+    if (!m_PhysicsWorld) {
+        return out;
+    }
+
+    m_PhysicsWorld->setIsDebugRenderingEnabled(true);
+    reactphysics3d::DebugRenderer& debugRenderer = m_PhysicsWorld->getDebugRenderer();
+    debugRenderer.setIsDebugItemDisplayed(reactphysics3d::DebugRenderer::DebugItem::COLLISION_SHAPE, true);
+    debugRenderer.setIsDebugItemDisplayed(reactphysics3d::DebugRenderer::DebugItem::COLLIDER_AABB, true);
+    debugRenderer.setIsDebugItemDisplayed(reactphysics3d::DebugRenderer::DebugItem::CONTACT_POINT, true);
+    debugRenderer.setIsDebugItemDisplayed(reactphysics3d::DebugRenderer::DebugItem::CONTACT_NORMAL, true);
+    debugRenderer.reset();
+    debugRenderer.computeDebugRenderingPrimitives(*m_PhysicsWorld);
+
+    const auto* lines = debugRenderer.getLinesArray();
+    const uint32_t lineCount = debugRenderer.getNbLines();
+    out.Lines.reserve(lineCount);
+    for (uint32_t i = 0; i < lineCount; ++i) {
+        PhysicsDebugLine line{};
+        line.P1 = Math::Vec3(static_cast<float>(lines[i].point1.x), static_cast<float>(lines[i].point1.y), static_cast<float>(lines[i].point1.z));
+        line.P2 = Math::Vec3(static_cast<float>(lines[i].point2.x), static_cast<float>(lines[i].point2.y), static_cast<float>(lines[i].point2.z));
+        line.Color1 = static_cast<uint32_t>(lines[i].color1);
+        line.Color2 = static_cast<uint32_t>(lines[i].color2);
+        out.Lines.push_back(line);
+    }
+
+    const auto* tris = debugRenderer.getTrianglesArray();
+    const uint32_t triCount = debugRenderer.getNbTriangles();
+    out.Triangles.reserve(triCount);
+    for (uint32_t i = 0; i < triCount; ++i) {
+        PhysicsDebugTriangle tri{};
+        tri.P1 = Math::Vec3(static_cast<float>(tris[i].point1.x), static_cast<float>(tris[i].point1.y), static_cast<float>(tris[i].point1.z));
+        tri.P2 = Math::Vec3(static_cast<float>(tris[i].point2.x), static_cast<float>(tris[i].point2.y), static_cast<float>(tris[i].point2.z));
+        tri.P3 = Math::Vec3(static_cast<float>(tris[i].point3.x), static_cast<float>(tris[i].point3.y), static_cast<float>(tris[i].point3.z));
+        tri.Color1 = static_cast<uint32_t>(tris[i].color1);
+        tri.Color2 = static_cast<uint32_t>(tris[i].color2);
+        tri.Color3 = static_cast<uint32_t>(tris[i].color3);
+        out.Triangles.push_back(tri);
+    }
+    return out;
+}
+
+void ReactPhysics3DBridge::CreateVehicleStub(ECS::EntityId entityId, const VehicleConfig& config) {
+    (void)entityId;
+    (void)config;
+    SIMPLE_LOG("Physics vehicle stubs are not implemented yet.");
+}
+
+void ReactPhysics3DBridge::CreateSoftBodyStub(ECS::EntityId entityId, const SoftBodyConfig& config) {
+    (void)entityId;
+    (void)config;
+    SIMPLE_LOG("Physics soft-body stubs are not implemented yet.");
 }
 
 } // namespace Solstice::Physics

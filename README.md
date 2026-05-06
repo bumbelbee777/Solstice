@@ -43,6 +43,7 @@ Rough budgets people aim for in-tree: on the order of tens of thousands of visib
 | [docs/UI.md](docs/UI.md) | UI, ImGui, viewport layers |
 | [docs/MotionGraphics.md](docs/MotionGraphics.md) | Animation and transitions |
 | [docs/Scripting.md](docs/Scripting.md) | Moonwalk VM and bindings |
+| [docs/Audio.md](docs/Audio.md) | Audio runtime, emitters, profiles |
 | [docs/GameLayer.md](docs/GameLayer.md) | Gameplay and menus |
 | [docs/Arzachel.md](docs/Arzachel.md) | Procedural generation |
 | [docs/SolsticeAPI.md](docs/SolsticeAPI.md) | SolsticeEngine C API (V1) |

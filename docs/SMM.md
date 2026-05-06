@@ -21,7 +21,7 @@ SMM is not a full replacement for **Maya** (rigging, nodes, Bifröst, etc.), **H
 | Area | Industry tools (typical) | SMM (Parallax / MovieMaker) |
 | --- | --- | --- |
 | **Time model** | Global timeline, sub-shots, take system | **Scene ticks** + **nested sub-range** (shot-in-shot zoom on the same timeline) + **loop region** in session (see workflow / playback) |
-| **F-curves** | Bezier or stepped tangents, Euler/Quaternion | **Parametric easings** on the **segment into** each key (MinGfx `EasingType` on the *destination* key) plus **outgoing ease** on the *source* key (`0xFF` = inherit the next key’s ease-in for that segment). **Interpolation mode** on the *destination* key: **Eased** (parametric lerp), **Linear**, **Hold/Step** (value stays at the previous key until the destination key’s tick), or **Bezier** (1D value-space cubic on **float** channels, with per-key **tangent in/out** weights). The curve panel samples the same rules as `EvaluateChannel` / `EvaluateMG` (Parallax 1.0 on-disk, **no** separate format version bump is required to use these keyframe fields in current builds). |
+| **F-curves** | Bezier or stepped tangents, Euler/Quaternion | **Parametric easings** on the **segment into** each key (MinGfx `EasingType` on the *destination* key) plus **outgoing ease** on the *source* key (`0xFF` = inherit the next key’s ease-in for that segment). **Interpolation mode** on the *destination* key: **Eased** (parametric lerp), **Linear**, **Hold/Step** (value stays at the previous key until the destination key’s tick), or **Bezier** (1D value-space cubic on **float** channels, with per-key **tangent in/out** weights). The curve panel samples the same rules as `EvaluateChannel` / `EvaluateMG` and serializes with the current breaking Parallax format revision. |
 | **Easing / tangency** | Per-tangent handles (weighted bezier) | **Curve editor:** ease-in, **ease-out (segment leaving this key)**, **interpolation** + **Bez tangents** (sliders, **Load from selected**, **Auto smooth** for a 1/3-style default), **Zoom value to fit** (value axis, with reset), and optional **INI keyframe presets** from **`presets/Keyframe`**. A warning appears when any synced float track has more than **20k** keyframes (UI cost). |
 | **Constraints / rigging** | IK, aim, full constraint stacks | **Graph editor** links (**driver → driven**, scale/offset) with **bake** at the playhead (expression-light workflow) |
 | **Retargeting / skeleton** | HumanIK, retarget manager, control rig | **Arzachel** presets and mesh **`AnimationClip`** on actors are **authoring metadata**; full skeletal solve is an engine/runtime concern |
@@ -35,7 +35,11 @@ SMM is not a full replacement for **Maya** (rigging, nodes, Bifröst, etc.), **H
 The **unified viewport** is the main differentiator for day-to-day authoring:
 
 - **Shared camera**: orbit, pan, zoom, and **projection** (perspective or orthographic top/front/side) persist while you work. **Reset view** snaps the camera back to a sensible default.
-- **MG overlay**: a slider blends the CPU-rasterized **motion-graphics** layer over the 3D capture (0 = 3D only, 1 = full composite). The overlay label summarizes **MG root count**, **sprite** count (nested `MGSpriteElement` nodes), live **particle** preview count, and short flags when **`.smat`** or **particle texture** preview is active.
+- **MG workflow toggle**: the viewer has a global **MG workflow** switch:
+  - **Pure 2D**: legacy screen-space MG workflow (After Effects-like).
+  - **Unified 3D**: `MGSpriteElement` rows with `MGProjectionMode=1` become world-space proxies in the same 3D pass, can be moved with 3D gizmo semantics, and can cast real scene shadows.
+  - In **Pure 2D**, enable **Pure2D: disable 3D** to force an MG-only viewport (no 3D background capture), for a strict After Effects-style editing pass.
+- **MG overlay**: a slider blends the CPU-rasterized **motion-graphics** layer over the 3D capture (0 = 3D only, 1 = full composite). In **Unified 3D** mode, world-space MG sprites are removed from this raster overlay path to avoid double-draw.
 - **MG depth (2D sort)**: each **`MGTextElement`** and **`MGSpriteElement`** can carry a float **`Depth`** (default 0). When the MG layer is rasterized or drawn in **video export**, root MG nodes are composited in **ascending Depth**—**larger values paint on top**. This is **screen-space draw order** (like a z-index), not a depth buffer against the 3D pass: the unified viewport still builds **3D RGB** first, then **alpha-blends the whole MG plane** using the MG overlay slider. Use **Depth** (or keyframe it on a track named `Depth`) to force HUDs, subtitles, or sprites to stack predictably when they overlap.
 - **Schematic 3D** still comes from **`EditorEnginePreview`** (offscreen bgfx + `EvaluateScene`), with gizmos for elements and lights. **Framing guides** (checkbox in the viewer chrome, **Framing guides (unified view)**) draw a **title/action safe** rectangle (10% inset), **rule-of-thirds** lines, and a **center cross** on the **letterboxed** preview—useful for blocking like TV safe areas and composition.
 - **Viewport shortcuts:** **Shift+click** in the unified viewport **picks** the actor/camera (and similar evaluated elements) by ray against the same AABB gizmo size used for drawing; small mouse movement after press still counts as a click. **F** (while the viewport is focused) **frames the orbit** on the **selected** element’s transform when it appears in `EvaluateScene` (cameras/actors). The bottom status line in the viewer summarizes the Parallax **scene** (element/channel counts) and the first **validation** issue (e.g. fluid resolution over budget) when present. **View → Fluid volumes** opens the **fluid** panel; enable **Fluid AABB overlay** in the material/preview block to see authored fluid bounds in the 3D view (authoring only, like Jackhammer’s `FLD1` grid parameters).
@@ -44,9 +48,15 @@ The **unified viewport** is the main differentiator for day-to-day authoring:
 - **Graph editor** (dock): **driver → driven** links (scale/offset) with **Bake at playhead**; the selected link shows a **readout** of the **driver** value and the **scaled+offset** value the bake will **write to the driven** track at the current time.
 - **Particle editor** (dock): CPU **billboard** preview; optional **multi-stop** **color over life** (2–6 RGBA stops along normalized lifetime, with **Sort stops**). **Ribbon trails** (optional) draws a short **line-strip history** per particle in the unified viewport (CPU preview only, not the Parallax sim). **Write emitter to scene** still maps the **first** and **last** stops to Parallax `ColorStart` / `ColorEnd` (the extra stops are for **SMM preview**). Legacy **Color start** / **Color end** apply when the multi-stop mode is off. When the **Particles** panel has focus, **Edit → Undo / Redo** (and **Ctrl+Z** / **Ctrl+Y** / **Ctrl+Shift+Z**) apply to the **particle editor state** instead of the Parallax scene snapshot; scene undo still applies when another panel is focused.
 
+SMM panel migration follows the same utility rule: use `LibUI::Widgets` primitives and LibUI tool elements for app-level forms/menus first, and reserve raw `ImGui::*` calls for custom rendering/editor canvases that currently require direct draw-list access.
+
 ## 2D motion graphics (MG) in SMM
 
-Parallax’s **MG layer** is **screen-space 2D**: text and textured sprites, optional **root** settings for the whole layer, and **MG tracks** on the timeline (same keyframe model as 3D). SMM is a **front end** to that data; **attribute names**, **`EvaluateMG`** rules, per-path rendering caveats, and file-level APIs live in **[MotionGraphics.md](MotionGraphics.md)**—this section is the **MovieMaker–specific** map.
+Parallax’s MG authoring supports both:
+- **screen-space 2D** (`MGProjectionMode=0`, legacy behavior), and
+- **world-space unified sprites** (`MGProjectionMode=1`, MovieMaker unified viewport workflow).
+
+SMM is a **front end** to that data; **attribute names**, **`EvaluateMG`** rules, per-path rendering caveats, and file-level APIs live in **[MotionGraphics.md](MotionGraphics.md)**—this section is the **MovieMaker–specific** map.
 
 **Where you work**
 - **Timeline + Curve editor:** Add or select **MG** rows and keyframe properties by name (e.g. `Position`, `Size`, `Depth`, `RotationZ`, root `GradeExposure`, …). MG tracks use the same curve tools and **INI presets** as 3D ([Presets.md](Presets.md)).
@@ -83,10 +93,71 @@ Sprite **bytes** are brought into the session via **`DevSessionAssetResolver::Im
 
 - **File → Save Project** / **Ctrl+S** opens a native save dialog until a `.smm.json` project path is chosen, then saves to that path on later saves.
 - Project files use `.smm.json` and currently write schema **`version` 1** for path/session metadata (Technology Preview 1; values evolve without bumping the number while we iterate). The project may also store **`recoveryIntervalSec`** (10–600), the interval for background **recovery** writes (see below).
-- **PARALLAX** export writes `.prlx` through `LibParallax::SaveScene`, creates parent folders, updates recent paths, and supports optional **ZSTD** compression (uncompressed header, compressed tail—see format notes in utilities docs).
+- **PARALLAX** export writes `.prlx` through `LibParallax::SaveScene`, creates parent folders, updates recent paths, and supports optional **ZSTD** compression (uncompressed header, compressed tail—see format notes in utilities docs). Current exports package resolver-backed media directly into the `.prlx` asset payload section (mesh/audio/texture and other referenced `AssetHash` bytes).
 - **File → Export…** opens the export window directly (`.prlx` path, compression, video section).
 - **Video export** uses the **ffmpeg CLI** (MP4/MOV, dimensions, FPS, tick range). The export window includes **presets** for common **16:9**, **9:16 (vertical)**, **1:1**, **4:3**, a **2.39:1** frame, and **nominal 2D comp** size (same numbers as the MG 2D Properties tools). You can still type any **Width** / **Height** in range. ffmpeg is optional at build time; the UI indicates whether encoding is available. Export and the **render queue** wrap failures in **try/catch** so a bad encode should not terminate the app; on failure the log shows a **detailed report** (time, paths, resolution, ticks). Use **Copy video export log** or **Copy failure report (full detail)** to put text on the clipboard for bug reports.
 - **Render queue:** in **Export**, configure a video job (output path, resolution, fps, tick range, container), then **Add current settings to render queue**. You can queue several jobs (e.g. alternate paths or ranges) and **Run render queue (sequential)** to encode them one after another without re-entering settings.
+
+## Export performance, KPIs, and regression guardrails
+
+Video export is built on a staged producer/consumer pipeline (`evaluate -> capture -> raster -> composite -> post -> encode`) with a decoupled async ffmpeg writer thread. Persistent per-export buffers and a bounded `FrameArena` for transient scratch keep allocator pressure off the hot path. Each frame records per-stage microsecond timings into `IncrementalVideoExportSession::Stats`; on successful completion the export emits a single one-line summary to **DiagLog** (`[VideoExport] done frames=… total_ms=… eval_ms=… cap_ms=… mg_ms=… comp_ms=… post_ms=… write_ms=… wait_ms=… enc_bytes=… max_q=…`).
+
+**Tracked KPIs** (from the DiagLog summary):
+- `total_ms / frames` — end-to-end wallclock per frame (the ratio is the effective export FPS).
+- `eval_ms`, `cap_ms`, `mg_ms`, `comp_ms`, `post_ms`, `write_ms` — time spent in each stage, summed across the export.
+- `wait_ms` — encoder backpressure (time the producer waited for the writer queue or for `fwrite`).
+- `max_q` — peak depth of the bounded SPSC queue (`<= 8`); a value pinned at the cap signals encoder backpressure, while `0–1` indicates render-bound.
+- `enc_bytes` — total bytes written to the ffmpeg pipe (sanity check against expected `frames * width * height * 4`).
+
+**Recommended benchmark scenarios** (run each at the listed profiles and record the KPIs):
+- *Long talking-head* — 5 minutes of one actor + lipsync, light MG. Stresses evaluation hot path and audio mixdown.
+- *Dense scene* — `> 8` actors, many lights, multiple `MGSpriteElement`s with FX. Stresses capture and composite.
+- *High-motion* — fast camera moves with particle ribbons + chromatic aberration + grade. Stresses post and write stages.
+- *Heavy MG* — full-frame motion graphics with smear/UV scroll + multi-stop particle color. Stresses raster + composite.
+
+**Target profiles**: `1080p60`, `1440p60`, `4K30`, `4K60`. `8K30` is best-effort (high-end rigs only).
+
+**Regression guardrails**:
+- `tests/SmmExportPipelineTest.cxx` (ctest label `quick`) validates the underlying primitives (lock-free SPSC queue, frame arena, SIMD blend equivalence, tile-equality SIMD/scalar fallback) and asserts a generous wallclock ceiling on a single 1080p `BlendOverRGBA` and `TileEqual` pass so a regression in the SIMD paths is caught even on shared CI runners. The test prints the active SIMD feature set (`scalar`, `sse2`, or `avx2`) for diagnostic context.
+- The `[VideoExport] start ... simd=…` line is emitted when an export begins so per-run SIMD provenance is traceable in DiagLog.
+- For release branches, run a representative scene at each target profile and compare `total_ms / frames` and `max_q` against the previous baseline; large `wait_ms` increases without an `enc_bytes` change indicate encoder regressions, while `eval_ms` regressions indicate scene/evaluation hot-path regressions.
+
+## Frame cache (LZX-compressed, mmap-backed)
+
+When `VideoExportParams::enableFrameCache` is set, the export pipeline keeps a persistent disk cache of rendered frames keyed by content. On a subsequent export of the same scene/range/profile, the renderer is **bypassed** for any cached frame and the bytes are decompressed straight into the encoder buffer.
+
+**Storage layout** (under `frameCachePath`, default `<temp>/Solstice/SmmFrameCache/<projectFingerprintHex>/`):
+- `index.bin` — manifest with a stable header and a flat array of fixed-size entry records (per-key blob offset, sizes, content checksum, created/last-access epochs, access count, delta flag, base key).
+- `blob.dat` — append-only compressed payloads. Read paths use `Core::MmapFile` for zero-copy where possible; writes fall back to a normal file append.
+
+**Key derivation:** `BuildFrameKey(projectFingerprint, tick, width, height, fps, postProcessFingerprint)`. The renderer is a pure function of the scene state at `tick` plus the export resolution/fps, so the same key implies a bit-for-bit reusable result. Pass `VideoExportParams::projectFingerprint` for cache hits across runs (e.g. an FNV-1a hash of the `.prlx` bytes); when zero, only the in-session cache helps.
+
+**Compression:** Solstice's in-house `LZX` block compressor (`source/Core/System/LZX.cxx`) is used for all payloads. Random/noisy frames stay close to source size; static or near-static frames compress dramatically. Both the full-frame and the **delta** path use the same compressor.
+
+**Delta frames:** when inserting frame N, the cache attempts an XOR encoding against frame N-1's full payload. If the LZX-compressed delta beats the LZX-compressed full frame by at least `DeltaWinThreshold` (default 5 %), the entry is stored as a delta with `BaseKeyHash` pointing at frame N-1. On lookup the base is decompressed first, then XORed with the delta — both are content-checksummed (FNV-1a 64) so a bit-flip on disk surfaces as a miss rather than a corrupt frame. Delta resolution is bounded to **one level**: if the base is itself a delta, the entry is rejected at insert time so lookups never traverse a chain.
+
+**TTL + eviction:** `TtlSeconds` (default 7 days) drops stale entries on `Open()` and on every `Prune()`. When inserts would push the **live** compressed-byte total over `BudgetBytes` (default 4 GiB), the cache evicts entries by **weighted LRU/LFU score**:
+
+```
+score = WLru * recency + WLfu * log2(1 + AccessCount)
+```
+
+where `recency ∈ [0, 1]` (1 = just touched, 0 = at TTL or 1 day if TTL=0). Defaults bias toward recency (`WLru=0.6`, `WLfu=0.4`) so re-exporting the most recent timeline keeps its frames warm while a long-cold sweep is the first to go. Deltas score 15 % below their numeric weight so a base-frame that's about to be evicted takes its dependents with it (avoiding orphaned deltas).
+
+**Diagnostics:** the existing `[VideoExport] done …` DiagLog summary is extended with cache counters when the cache is on:
+
+```
+cache_lookups=N cache_hits=H(D delta) cache_inserts=I(D delta) cache_evicted=E
+cache_bytes_stored=B cache_bytes_saved_delta=S
+```
+
+`cache_bytes_saved_delta` is the cumulative `(full_compressed - delta_compressed)` for entries that took the delta path — useful for spotting when delta encoding is paying for itself.
+
+**When the cache is not used:** insert is skipped while capture is in warmup or has been disabled by repeated capture failures, so a degraded run cannot poison the cache for a future clean export.
+
+**Maintenance:** `FrameCache::Compact()` rewrites the blob with only live entries (relocating offsets atomically via tmp + rename) and is the only operation that reclaims on-disk bytes left behind by index-level eviction; useful after long sessions with many evictions. The cache is fully released on session destruction (`unique_ptr` in `IncrementalVideoExportSession`), and `Flush()` is called on the export's done summary so a hard shutdown afterwards loses at most the in-flight insert.
+
+**Validation:** `tests/SmmFrameCacheTest.cxx` (ctest label `quick`) covers round-trip, delta, persistence-across-open, TTL eviction, budget eviction, corrupt-index recovery, and post-compaction lookups.
 
 ## Autosave recovery
 
@@ -98,7 +169,7 @@ Sprite **bytes** are brought into the session via **`DevSessionAssetResolver::Im
 
 - Generic asset import uses the **dev-session asset resolver** (in-memory **hash → bytes** for the current session).
 - **Raster images** can be imported for **MG sprites** (`MGSpriteElement` **Texture** attribute); common formats include PNG, JPEG, BMP, TGA, WebP, and others supported by the shared image decode path. **`Depth`** on sprites/text controls **2D stacking** within the MG layer (see **MG depth** above).
-- **Audio** can be imported for **`AudioSourceElement`** rows (session-backed **AudioAsset**). In **Properties** (with an `AudioSourceElement` selected), you see the **`AudioAsset` hash** when assigned, a short **runtime** note, and **Volume** / **Pitch** with **undo** (scene snapshot) on change. The **waveform** strip supports **click to seek** and **drag to scrub** with **real-time** preview audio; while you **drag**, the **vertical playhead** tracks the **cursor** so scrubbing stays visually locked to the pointer. Use **File** or **Assets → Import audio** to bind bytes; export writes raw session **AudioAsset** bytes.
+- **Audio** can be imported for **`AudioSourceElement`** rows (session-backed **AudioAsset**). In **Properties** (with an `AudioSourceElement` selected), you see the **`AudioAsset` hash** when assigned, a short **runtime** note, and **Volume** / **Pitch** with **undo** (scene snapshot) on change. The **waveform** strip supports **click to seek** and **drag to scrub** with **real-time** preview audio; while you **drag**, the **vertical playhead** tracks the **cursor** so scrubbing stays visually locked to the pointer. Use **File** or **Assets → Import audio** to bind bytes; export embeds resolver-backed **AudioAsset** payload bytes in `.prlx`.
 - **Video import:** **File → Import video to session…** reads the chosen file into the **dev-session asset resolver** (hash + bytes), the same way other media imports work. SMM does not embed a full clip editor; the import is for **reference**, compositing hooks, or tooling that resolves **session** assets. Decoding/trimming is expected to be handled by external **ffmpeg** workflows or future Parallax features.
 - **glTF / glb** follows a **selected-Actor** workflow: add or select an **`ActorElement`**, then import to assign **`MeshAsset`**; export writes the current mesh asset back to `.gltf` / `.glb` when the bytes are in the resolver session.
 

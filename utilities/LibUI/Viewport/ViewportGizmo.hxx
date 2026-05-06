@@ -1,6 +1,7 @@
 #pragma once
 
 #include "LibUI/Core/Core.hxx"
+#include "LibUI/Viewport/ViewportInteraction.hxx"
 #include "LibUI/Viewport/ViewportMath.hxx"
 #include <imgui.h>
 
@@ -27,5 +28,14 @@ inline void DrawWorldAxisAlignedBoxWireframeUniformImGui(ImDrawList* drawList, c
 LIBUI_API void DrawWorldAxisAlignedBoxSelectionOutlineUniformImGui(ImDrawList* drawList, const ImVec2& panel_min,
     const ImVec2& panel_max, const Mat4Col& view, const Mat4Col& proj, float cx, float cy, float cz, float halfExtent, ImU32 innerColor,
     float innerThickness, float outerPad, ImU32 outerColor, float outerThickness);
+
+/// Standard screen-space transform gizmo (`W/E/R` affordance): axis lines + center + optional rotate ring.
+LIBUI_API void DrawScreenTransformGizmo(ImDrawList* drawList, const ImVec2& center, TransformTool activeTool,
+    TransformAxis activeAxis = TransformAxis::None, float axisLengthPx = 34.0f, float rotateRingRadiusPx = 22.0f);
+
+/// World-space variant projected to the viewport panel. X axis = red, Y = green, Z = blue.
+LIBUI_API void DrawWorldTransformGizmo(ImDrawList* drawList, const ImVec2& panel_min, const ImVec2& panel_max,
+    const Mat4Col& view, const Mat4Col& proj, float wx, float wy, float wz, TransformTool activeTool,
+    TransformAxis activeAxis = TransformAxis::None, float axisLengthWorld = 0.7f, float rotateRingRadiusPx = 18.0f);
 
 } // namespace LibUI::Viewport

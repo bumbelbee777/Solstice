@@ -21,7 +21,7 @@ LIBUI_API void Win32InitCrashDiagnostics();
 LIBUI_API void Win32CrashDiagEnterShutdownMode();
 
 /// Async-safe enough for a top-level SEH filter: uses stack buffers, `WriteFile` + `OutputDebugStringA` only.
-/// Does not call `DiagLogLine`. Optional full minidump when env `SOLSTICE_FULL_DUMP` is truthy.
+/// Does not call `DiagLogLine`. Optional full minidump controlled by `LibUI::Core::RuntimeConfig::FullDumpEnvVar`.
 LIBUI_API void Win32LogExceptionStack(struct _EXCEPTION_POINTERS* ep);
 
 #else

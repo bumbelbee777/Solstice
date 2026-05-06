@@ -147,7 +147,8 @@ bool ScreenToLetterboxUv(const ImVec2& screen_pos, const ImVec2& panel_min, cons
     return true;
 }
 
-void ApplyOrbitPanZoom(OrbitPanZoomState& state, const Frame& frame, const OrbitPanZoomParams& params) {
+void ApplyOrbitPanZoom(OrbitPanZoomState& state, const Frame& frame, const OrbitPanZoomParams& params,
+    bool suppressLmbOrbitRotation) {
     if (!frame.hovered) {
         return;
     }
@@ -165,7 +166,8 @@ void ApplyOrbitPanZoom(OrbitPanZoomState& state, const Frame& frame, const Orbit
     const bool alt = io.KeyAlt;
 
     const bool persp = state.projection == OrbitProjectionMode::Perspective;
-    if (persp && orbit_drag && !alt && !io.KeyCtrl) {
+    const bool blockLmbOrbit = suppressLmbOrbitRotation && orbitBtn == ImGuiMouseButton_Left;
+    if (persp && orbit_drag && !alt && !io.KeyCtrl && !blockLmbOrbit) {
         state.yaw += frame.mouse_delta.x * params.rotate_speed;
         state.pitch += frame.mouse_delta.y * params.rotate_speed;
         state.pitch = std::clamp(state.pitch, params.min_pitch, params.max_pitch);

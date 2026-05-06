@@ -5,6 +5,9 @@
 #include "../Math/Quaternion.hxx"
 #include "../Physics/Lighting/LightSource.hxx"
 #include <Physics/Fluid/Fluid.hxx>
+#include <Physics/Dynamics/SoftBody.hxx>
+#include <Physics/Dynamics/RigidBody.hxx>
+#include <Physics/Dynamics/Vehicle.hxx>
 #include <Physics/Integration/PhysicsSystem.hxx>
 #include "../Core/Audio/Audio.hxx"
 #include <Core/AuthoringSkyboxBus.hxx>
@@ -21,7 +24,11 @@
 
 static std::vector<Solstice::Physics::LightSource> g_AuthoringLightsFromLastSmfApply;
 static std::vector<std::unique_ptr<Solstice::Physics::FluidSimulation>> g_MapAuthoredFluids;
+static std::vector<Solstice::ECS::EntityId> g_MapAuthoredSoftBodies;
+static std::vector<Solstice::ECS::EntityId> g_MapAuthoredVehicles;
 static uint64_t g_LastFluidFingerprint = 0xFFFFFFFFFFFFFFFFull;
+static uint64_t g_LastSoftBodyFingerprint = 0xFFFFFFFFFFFFFFFFull;
+static uint64_t g_LastVehicleFingerprint = 0xFFFFFFFFFFFFFFFFull;
 
 namespace Solstice::Arzachel {
 
@@ -71,6 +78,48 @@ uint64_t HashFluidAuthoring(const Solstice::Smf::SmfMap& map) {
         h = MixU64(h, f.EnableMacCormack ? 1ull : 0ull);
         h = MixU64(h, f.EnableBoussinesq ? 1ull : 0ull);
         h = MixU64(h, f.VolumeVisualizationClip ? 1ull : 0ull);
+    }
+    return h;
+}
+
+uint64_t HashSoftBodyAuthoring(const Solstice::Smf::SmfMap& map) {
+    uint64_t h = 1469598103934665603ull;
+    h = MixU64(h, static_cast<uint64_t>(map.SoftBodyVolumes.size()));
+    for (const auto& s : map.SoftBodyVolumes) {
+        h = MixU64(h, s.Enabled ? 1ull : 0ull);
+        h = MixU64(h, s.AnchorTopRow ? 1ull : 0ull);
+        h = MixU64(h, static_cast<uint64_t>(std::hash<std::string>{}(s.Name)));
+        h = MixU64(h, FloatBits(s.Origin.x));
+        h = MixU64(h, FloatBits(s.Origin.y));
+        h = MixU64(h, FloatBits(s.Origin.z));
+        h = MixU64(h, static_cast<uint64_t>(static_cast<uint32_t>(s.GridWidth)));
+        h = MixU64(h, static_cast<uint64_t>(static_cast<uint32_t>(s.GridHeight)));
+        h = MixU64(h, FloatBits(s.NodeSpacing));
+        h = MixU64(h, FloatBits(s.NodeMass));
+        h = MixU64(h, FloatBits(s.Damping));
+        h = MixU64(h, FloatBits(s.StructuralStiffness));
+        h = MixU64(h, FloatBits(s.ShearStiffness));
+        h = MixU64(h, FloatBits(s.BendStiffness));
+        h = MixU64(h, static_cast<uint64_t>(static_cast<uint32_t>(s.SolverIterations)));
+    }
+    return h;
+}
+
+uint64_t HashVehicleAuthoring(const Solstice::Smf::SmfMap& map) {
+    uint64_t h = 1469598103934665603ull;
+    h = MixU64(h, static_cast<uint64_t>(map.VehicleVolumes.size()));
+    for (const auto& v : map.VehicleVolumes) {
+        h = MixU64(h, v.Enabled ? 1ull : 0ull);
+        h = MixU64(h, static_cast<uint64_t>(std::hash<std::string>{}(v.Name)));
+        h = MixU64(h, FloatBits(v.Origin.x));
+        h = MixU64(h, FloatBits(v.Origin.y));
+        h = MixU64(h, FloatBits(v.Origin.z));
+        h = MixU64(h, FloatBits(v.WheelBase));
+        h = MixU64(h, FloatBits(v.TrackWidth));
+        h = MixU64(h, FloatBits(v.Mass));
+        h = MixU64(h, FloatBits(v.EngineForce));
+        h = MixU64(h, FloatBits(v.BrakeForce));
+        h = MixU64(h, FloatBits(v.MaxSteerAngleRadians));
     }
     return h;
 }
@@ -157,6 +206,80 @@ void RebuildMapFluidsFromSmf(const Solstice::Smf::SmfMap& map) {
         }
         ps.RegisterFluidSimulation(sim.get());
         g_MapAuthoredFluids.push_back(std::move(sim));
+    }
+}
+
+void RebuildMapSoftBodiesFromSmf(const Solstice::Smf::SmfMap& map) {
+    Solstice::Physics::PhysicsSystem& ps = Solstice::Physics::PhysicsSystem::Instance();
+    Solstice::ECS::Registry* registry = ps.GetRegistry();
+    if (!registry) {
+        return;
+    }
+
+    for (const Solstice::ECS::EntityId e : g_MapAuthoredSoftBodies) {
+        if (registry->Valid(e)) {
+            registry->Destroy(e);
+        }
+    }
+    g_MapAuthoredSoftBodies.clear();
+
+    for (const auto& src : map.SoftBodyVolumes) {
+        if (!src.Enabled) {
+            continue;
+        }
+        Solstice::Physics::SoftBodyConfig cfg{};
+        cfg.GridWidth = static_cast<uint32_t>(std::clamp(src.GridWidth, Solstice::Smf::kSmfSoftBodyGridMin, Solstice::Smf::kSmfSoftBodyGridMax));
+        cfg.GridHeight = static_cast<uint32_t>(std::clamp(src.GridHeight, Solstice::Smf::kSmfSoftBodyGridMin, Solstice::Smf::kSmfSoftBodyGridMax));
+        cfg.NodeSpacing = std::max(0.01f, src.NodeSpacing);
+        cfg.NodeMass = std::max(0.001f, src.NodeMass);
+        cfg.Damping = std::clamp(src.Damping, 0.0f, 1.0f);
+        cfg.StructuralStiffness = std::clamp(src.StructuralStiffness, 0.0f, 1.0f);
+        cfg.ShearStiffness = std::clamp(src.ShearStiffness, 0.0f, 1.0f);
+        cfg.BendStiffness = std::clamp(src.BendStiffness, 0.0f, 1.0f);
+        cfg.SolverIterations = std::max(1, src.SolverIterations);
+        cfg.AnchorTopRow = src.AnchorTopRow;
+
+        const Solstice::ECS::EntityId e = registry->Create();
+        Solstice::Physics::SoftBody sb{};
+        sb.BuildRectCloth(Solstice::Math::Vec3(src.Origin.x, src.Origin.y, src.Origin.z), cfg);
+        registry->Add<Solstice::Physics::SoftBody>(e, sb);
+        g_MapAuthoredSoftBodies.push_back(e);
+    }
+}
+
+void RebuildMapVehiclesFromSmf(const Solstice::Smf::SmfMap& map) {
+    Solstice::Physics::PhysicsSystem& ps = Solstice::Physics::PhysicsSystem::Instance();
+    Solstice::ECS::Registry* registry = ps.GetRegistry();
+    if (!registry) {
+        return;
+    }
+    for (const Solstice::ECS::EntityId e : g_MapAuthoredVehicles) {
+        if (registry->Valid(e)) {
+            registry->Destroy(e);
+        }
+    }
+    g_MapAuthoredVehicles.clear();
+
+    for (const auto& src : map.VehicleVolumes) {
+        if (!src.Enabled) {
+            continue;
+        }
+        Solstice::Physics::VehicleConfig cfg{};
+        cfg.WheelBase = std::max(0.5f, src.WheelBase);
+        cfg.TrackWidth = std::max(0.5f, src.TrackWidth);
+        cfg.Mass = std::max(1.0f, src.Mass);
+        cfg.EngineForce = std::max(0.0f, src.EngineForce);
+        cfg.BrakeForce = std::max(0.0f, src.BrakeForce);
+        cfg.MaxSteerAngleRadians = std::max(0.01f, src.MaxSteerAngleRadians);
+        const Solstice::ECS::EntityId e = registry->Create();
+        Solstice::Physics::RigidBody rb{};
+        rb.Type = Solstice::Physics::ColliderType::Box;
+        rb.Position = Solstice::Math::Vec3(src.Origin.x, src.Origin.y, src.Origin.z);
+        rb.HalfExtents = Solstice::Math::Vec3(cfg.TrackWidth * 0.55f, 0.5f, cfg.WheelBase * 0.55f);
+        rb.SetMass(cfg.Mass);
+        registry->Add<Solstice::Physics::RigidBody>(e, rb);
+        ps.CreateVehicleStub(e, cfg);
+        g_MapAuthoredVehicles.push_back(e);
     }
 }
 
@@ -562,6 +685,16 @@ void MapSerializer::ApplyGameplayFromSmfMap(const Solstice::Smf::SmfMap& Map) {
     if (fluidFp != g_LastFluidFingerprint) {
         g_LastFluidFingerprint = fluidFp;
         RebuildMapFluidsFromSmf(Map);
+    }
+    const uint64_t softFp = HashSoftBodyAuthoring(Map);
+    if (softFp != g_LastSoftBodyFingerprint) {
+        g_LastSoftBodyFingerprint = softFp;
+        RebuildMapSoftBodiesFromSmf(Map);
+    }
+    const uint64_t vehFp = HashVehicleAuthoring(Map);
+    if (vehFp != g_LastVehicleFingerprint) {
+        g_LastVehicleFingerprint = vehFp;
+        RebuildMapVehiclesFromSmf(Map);
     }
 
     if (Map.Skybox.has_value()) {

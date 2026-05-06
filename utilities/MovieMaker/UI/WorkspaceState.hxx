@@ -7,7 +7,16 @@
 #include "LibUI/Timeline/TimelineModel.hxx"
 #include "LibUI/Viewport/Viewport.hxx"
 
+#include <Math/Vector.hxx>
+
+#include <unordered_set>
+
 namespace Smm::UI {
+
+enum class UnifiedMgWorkflowMode : int {
+    Pure2D = 0,
+    Unified3D = 1,
+};
 
 struct WorkspaceState {
     bool showLegacyWorkspace{true};
@@ -31,6 +40,10 @@ struct WorkspaceState {
     bool show3DViewportPanel{true};
     bool show2DMGPreviewPanel{true}; ///< Legacy: unified viewport supersedes split MG tab.
     bool showUnifiedViewportPanel{true};
+    /// Global MG authoring workflow for the unified viewport.
+    UnifiedMgWorkflowMode unifiedMgWorkflowMode{UnifiedMgWorkflowMode::Pure2D};
+    /// In Pure2D workflow, skip the 3D preview capture and show MG-only viewport output.
+    bool pure2DDisable3DBackground{true};
     float mgOverlayAlpha{1.0f};
     /// Shared camera for unified viewport (persists across frames; reset from Viewer chrome).
     LibUI::Viewport::OrbitPanZoomState unifiedViewportCamera{};
@@ -62,6 +75,12 @@ struct WorkspaceState {
     char enginePreviewLastError[512]{};
     /// When true, unified viewport skips bgfx `CaptureOrbitRgb` (MG/CPU-only) after repeated GPU failures.
     bool enginePreviewSessionDisabled{false};
+
+    /// Unified viewport: manual particle preview origin (when `manualParticleEmitterWorld` is true).
+    bool manualParticleEmitterWorld{false};
+    Solstice::Math::Vec3 manualParticleEmitterWorldVec{0.f, 1.2f, 0.f};
+    /// Parallax element indices selected in the unified viewport (multi-select). Primary UI uses `elementSelected` in Main.
+    std::unordered_set<int> viewportSelectedElements{};
 
     Smm::Editing::KeyframeEditUiState keyframeEditState{};
 };

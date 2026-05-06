@@ -17,6 +17,7 @@
 #include "LibUI/Icons/Icons.hxx"
 #include "LibUI/Shell/DropFile.hxx"
 #include "LibUI/Shell/GlWindow.hxx"
+#include "LibUI/Widgets/Widgets.hxx"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -402,25 +403,8 @@ int RunRefulgentGui(int, char**, const std::optional<std::string>& initialRelic)
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                 ImGui::SetTooltip("The Deps column is the number of listed dependency hashes for each manifest row.");
             }
-            ImGui::InputText("##filter", filterBuf, sizeof(filterBuf));
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Clear filter")) {
-                filterBuf[0] = '\0';
-            }
-
             const float tableH = ImGui::GetContentRegionAvail().y - 100.0f;
-            if (ImGui::BeginTable("entries", 8,
-                ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY,
-                ImVec2(0, std::max(120.0f, tableH)))) {
-            ImGui::TableSetupColumn("Hash");
-            ImGui::TableSetupColumn("Type");
-            ImGui::TableSetupColumn("Comp");
-            ImGui::TableSetupColumn("csize");
-            ImGui::TableSetupColumn("usize");
-            ImGui::TableSetupColumn("Cluster");
-            ImGui::TableSetupColumn("Deps");
-            ImGui::TableSetupColumn("Logical path");
-            ImGui::TableHeadersRow();
+            std::vector<int> filteredRows;
             if (container) {
                 for (int ri = 0; ri < static_cast<int>(container->Manifest.size()); ++ri) {
                     const auto& e = container->Manifest[static_cast<size_t>(ri)];
@@ -434,6 +418,37 @@ int RunRefulgentGui(int, char**, const std::optional<std::string>& initialRelic)
                     if (!rowMatchesFilter(hbuf, logStr)) {
                         continue;
                     }
+                    filteredRows.push_back(ri);
+                }
+            }
+            LibUI::Widgets::FilterableVirtualTableOptions manifestTable{};
+            manifestTable.FilterInputId = "##filter";
+            manifestTable.FilterHint = "Filter by hash or logical path";
+            manifestTable.ClearButtonLabel = "Clear filter";
+            manifestTable.TableId = "entries";
+            manifestTable.ColumnCount = 8;
+            manifestTable.TableFlags = ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_Borders | ImGuiTableFlags_ScrollY;
+            manifestTable.TableSize = ImVec2(0, std::max(120.0f, tableH));
+            LibUI::Widgets::DrawFilterableVirtualTable(
+                filterBuf, sizeof(filterBuf), manifestTable,
+                []() {
+                    ImGui::TableSetupColumn("Hash");
+                    ImGui::TableSetupColumn("Type");
+                    ImGui::TableSetupColumn("Comp");
+                    ImGui::TableSetupColumn("csize");
+                    ImGui::TableSetupColumn("usize");
+                    ImGui::TableSetupColumn("Cluster");
+                    ImGui::TableSetupColumn("Deps");
+                    ImGui::TableSetupColumn("Logical path");
+                    ImGui::TableHeadersRow();
+                },
+                static_cast<int>(filteredRows.size()),
+                [&](int filteredIndex) {
+                    const int ri = filteredRows[static_cast<size_t>(filteredIndex)];
+                    const auto& e = container->Manifest[static_cast<size_t>(ri)];
+                    char hbuf[32];
+                    std::snprintf(hbuf, sizeof(hbuf), "%016llX", static_cast<unsigned long long>(e.AssetHash));
+                    auto it = hashToPath.find(e.AssetHash);
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
                     if (ImGui::Selectable(hbuf, selectedRow == ri)) {
@@ -459,10 +474,7 @@ int RunRefulgentGui(int, char**, const std::optional<std::string>& initialRelic)
                     }
                     ImGui::TableSetColumnIndex(7);
                     ImGui::TextUnformatted(it != hashToPath.end() ? it->second.c_str() : "—");
-                }
-            }
-            ImGui::EndTable();
-            }
+                });
             if (container && selectedRow >= 0 && !manifestRowMatchesFilter(selectedRow)) {
                 selectedRow = -1;
                 hashCopyBuf[0] = '\0';

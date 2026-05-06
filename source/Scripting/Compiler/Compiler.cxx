@@ -1,5 +1,6 @@
 #include "Compiler.hxx"
 #include "Parser.hxx"
+#include "../Analysis/Diagnostics.hxx"
 #include "../Analysis/MemoryAnalysis.hxx"
 #include "../Analysis/StaticTypes.hxx"
 #include <fstream>
@@ -9,27 +10,52 @@
 namespace Solstice::Scripting {
 
 Program Compiler::Compile(const std::string& source) {
-    Program prog = ParseProgramSource(source);
+    return Compile(source, "<memory>");
+}
+
+Program Compiler::Compile(const std::string& source, const std::string& sourceName) {
+    Program prog = ParseProgramSourceWithName(source, sourceName);
 
     prog = Compiler::OptimizeProgram(prog);
 
     std::vector<MemoryIssue> issues = MemoryAnalyzer::AnalyzeProgram(prog);
     if (!issues.empty()) {
         const MemoryIssue& issue = issues.front();
-        std::string kindStr =
-            (issue.kind == MemoryIssue::Kind::UseAfterFree) ? "Use-after-free" : "Double-free";
-        std::string msg = "Memory analysis error (" + kindStr + ") at instruction " +
-                          std::to_string(issue.instructionIndex);
-        if (!issue.functionName.empty()) {
-            msg += " in " + issue.functionName;
+        std::string kindStr;
+        switch (issue.kind) {
+            case MemoryIssue::Kind::UseAfterFree:
+                kindStr = "Use-after-free";
+                break;
+            case MemoryIssue::Kind::DoubleFree:
+                kindStr = "Double-free";
+                break;
+            case MemoryIssue::Kind::InvalidDeref:
+                kindStr = "Invalid dereference (unknown pointer state)";
+                break;
+            case MemoryIssue::Kind::InvalidReset:
+                kindStr = "Invalid reset (unknown pointer state)";
+                break;
         }
+        std::string detail = issue.functionName.empty()
+            ? "Pointer lifetime proof failed."
+            : ("Function: " + issue.functionName);
+        std::string msg = Diagnostics::FormatInstructionDiagnostic(
+            prog,
+            issue.instructionIndex,
+            "Memory analysis error (" + kindStr + ")",
+            detail);
         throw std::runtime_error(msg);
     }
 
     std::vector<TypeIssue> typeIssues = StaticTypeChecker::CheckProgram(prog);
     if (!typeIssues.empty()) {
         const TypeIssue& t = typeIssues.front();
-        throw std::runtime_error("Type check: " + t.message);
+        std::string msg = Diagnostics::FormatInstructionDiagnostic(
+            prog,
+            t.instructionIndex,
+            "Type check error",
+            t.message);
+        throw std::runtime_error(msg);
     }
 
     return prog;
@@ -90,7 +116,7 @@ std::unordered_map<std::string, Program> Compiler::BatchCompile(const std::files
                 }
                 std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
                 try {
-                    Program prog = Compile(content);
+                    Program prog = Compile(content, entry.path().string());
                     programs[moduleName] = prog;
 
                     std::vector<uint8_t> buffer;

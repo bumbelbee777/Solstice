@@ -4,6 +4,7 @@
 #include <SDL3/SDL.h>
 #include <atomic>
 #include <mutex>
+#include <string>
 
 // LIBUI_API: static LibUI (default) has no import/export; shared LibUI uses declspec when LIBUI_STATIC is unset.
 #if defined(LIBUI_STATIC)
@@ -19,6 +20,21 @@
 #endif
 
 namespace LibUI::Core {
+
+struct LIBUI_API RuntimeConfig {
+    std::string AppDisplayName{"Solstice"};
+    std::string StateDirectory{};
+    std::string ImGuiIniFilename{"solstice_tools_imgui.ini"};
+    std::string RecentPathsFilename{"solstice_tools_recent.txt"};
+    std::string UiFontEnvVar{"SOLSTICE_UI_FONT"};
+    std::string EnableIconFontEnvVar{"SOLSTICE_ENABLE_ICON_FONT"};
+    std::string IconFontEnvVar{"SOLSTICE_ICON_FONT"};
+    std::string DiagLogEnvVar{"SOLSTICE_DIAG_LOG"};
+    std::string DiagLogFilename{"SolsticeTools_diag.txt"};
+    std::string FullDumpEnvVar{"SOLSTICE_FULL_DUMP"};
+    std::string CrashLogFilename{"SolsticeCrash.log"};
+    std::string CrashDumpPrefix{"Solstice"};
+};
 
 // Context manager for LibUI - singleton pattern
 class LIBUI_API Context {
@@ -71,6 +87,8 @@ private:
 
 // Convenience functions
 LIBUI_API bool Initialize(SDL_Window* window);
+LIBUI_API void ConfigureRuntime(const RuntimeConfig& config);
+LIBUI_API RuntimeConfig GetRuntimeConfig();
 LIBUI_API void Shutdown();
 LIBUI_API void NewFrame();
 LIBUI_API void SetFramebufferPixelFallback(int width, int height);
@@ -79,8 +97,8 @@ LIBUI_API void ProcessEvent(const SDL_Event* event);
 LIBUI_API ImGuiContext* GetContext();
 LIBUI_API bool IsInitialized();
 
-// ImGui state is saved under the SDL base path (next to the executable) as `solstice_tools_imgui.ini`.
-// Recent paths (newline-separated file `solstice_tools_recent.txt`, max 16): index 0 is most recent.
+// ImGui state and recent-path storage use RuntimeConfig paths/filenames.
+// Recent paths are newline-separated (max 16): index 0 is most recent.
 LIBUI_API void RecentPathPush(const char* path);
 LIBUI_API int RecentPathGetCount();
 /** Valid until the next RecentPathPush or Shutdown; null if index out of range. */

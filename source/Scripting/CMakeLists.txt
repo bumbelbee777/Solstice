@@ -6,6 +6,7 @@ add_library(Scripting STATIC
     VM/ProgramSerialize.cxx
     VM/VMError.cxx
     Runtime/PtrRuntime.cxx
+    Analysis/Diagnostics.cxx
     Analysis/MemoryAnalysis.cxx
     Analysis/StaticTypes.cxx
     Compiler/Compiler.cxx

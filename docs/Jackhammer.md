@@ -21,6 +21,12 @@ Jackhammer is the Solstice **`.smf`** authoring tool (CMake target **`LevelEdito
 | [JackhammerParticles.hxx](../utilities/LevelEditor/JackhammerParticles.hxx) | Particle-emitter class name / helpers. |
 
 Larger UI remains in **`JackhammerApp.cxx`** by design; new tools are factored out when they need testing or shared math.
+Current migration direction is to route app-level UI through **`LibUI::Widgets`** primitives and keep direct `ImGui::*` usage localized to LibUI implementation and low-level custom draw code.
+Recent quick-win adoption in `JackhammerApp.cxx` uses shared `LibUI` primitives for:
+
+- **Inline alerts** (`LibUI::Widgets::DrawInlineAlert`) for error/warning banners.
+- **Virtualized list tables** (`LibUI::Widgets::DrawFilterableVirtualTable`) for large manifest/entity-style lists.
+- **Workspace shell sizing** (`LibUI::Layout::BeginThreePaneWorkspace`) for the left/center/right authoring surface.
 
 ## Map & I/O
 
@@ -30,8 +36,10 @@ Larger UI remains in **`JackhammerApp.cxx`** by design; new tools are factored o
 
 ## Engine viewport (general)
 
-- **Orbit** camera; **Top / Front / Side / Persp**; **Focus**; **place snap**; **grid**; **Ctrl+LMB** (when **no** geometry tool) places selected entity on **Y = current origin** at XZ hit.
-- **Orbit** uses **LMB** by default. **Block**, **Measure**, and **Terrain** tools rebind **orbit to RMB** so **LMB** is free for the tool.
+- **Orbit** camera; **Top / Front / Side / Persp**; **Focus**; **place snap**; **grid**.
+- **Pick / drag (no geometry tool):** **LMB** ray-picks entities with origins and **authoring lights** (LibUI viewport interaction). Drag moves selection on the **XZ plane**; **Ctrl+LMB** toggles **multi-select**. **Ctrl+Alt+LMB** drag = **box (marquee)** select in screen space.
+- **Context menu** (RMB): **Snap primary entity origin to XZ under cursor** (replaces legacy **Ctrl+LMB click** placement). **Clear viewport selection**.
+- **Orbit** uses **LMB** by default; picking suppresses **LMB orbit rotation** only (wheel zoom / Alt+LMB pan unchanged). **Block**, **Measure**, and **Terrain** tools rebind **orbit to RMB** so **LMB** is free for the tool.
 - **Arrow keys** nudge the selected **entity** origin on XZ when the viewport is hovered (uses place snap or grid).
 - **Overlays:** BSP, octree, lights, particles, “all” entity markers, selection highlight.
 
@@ -39,7 +47,7 @@ Larger UI remains in **`JackhammerApp.cxx`** by design; new tools are factored o
 
 Combo **Active tool:**
 
-1. **None** — default; **Ctrl+LMB** = place selected entity; **LMB** = orbit.
+1. **None** — default; **LMB** picks/drags and suppresses **LMB orbit** as above; **RMB** context menu for snap-to-plane.
 2. **Block** — **LMB drag** on the **XZ plane** at **Block base Y** draws a **box**; if a BSP exists, sets the **selected node’s slab**; if not, **fills the mesh workshop** with that AABB.
 3. **Measure** — successive **LMB** clicks on the XZ plane at **Block base Y**: first **A**, second **B**; third click **moves A** and **clears B**. Shows **screen-space** line + **world distance** and **ΔX/ΔY/ΔZ** when both points exist. **Reset** in the panel clears A/B. Snapping uses **place snap** when set.
 4. **Terrain sculpt** — **LMB+drag** on XZ: within **Brush radius (world)**, all **mesh workshop** vertices with XZ inside the circle get **Y += Raise / frame** (per frame while held). **Negative** “raise” lowers. Normals are recalculated. **Requires** a heightfield (or any mesh) in the workshop. **RMB** = orbit.

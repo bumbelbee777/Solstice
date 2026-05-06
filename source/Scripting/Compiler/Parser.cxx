@@ -5,16 +5,19 @@
 #include <iostream>
 #include <map>
 #include <set>
+#include <algorithm>
 #include <cctype>
 #include <stdexcept>
 #include <fstream>
 #include <filesystem>
+#include <sstream>
 
 namespace Solstice::Scripting {
 namespace {
 class Parser {
 public:
-    Parser(const std::string& src) : m_Lexer(src) {
+    Parser(const std::string& src, const std::string& sourceName) : m_Lexer(src), m_Source(src), m_SourceName(sourceName) {
+        BuildLineStarts();
         Advance();
     }
 
@@ -77,6 +80,10 @@ private:
     Lexer m_Lexer;
     Token m_Current;
     Program m_Program;
+    std::string m_Source;
+    std::string m_SourceName;
+    std::vector<size_t> m_LineStarts;
+    size_t m_CurrentTokenOffset = 0;
 
     std::string m_ModuleName;
     std::vector<std::string> m_Imports;
@@ -106,19 +113,82 @@ private:
 
     void Advance() {
         m_Current = m_Lexer.Next();
+        m_CurrentTokenOffset = m_Lexer.LastTokenStart();
+        size_t line = 0;
+        size_t column = 0;
+        ResolveLineColumn(m_CurrentTokenOffset, line, column);
+        m_Program.SetCurrentSourceContext(line, column, GetLineText(line), m_SourceName);
+    }
+
+    void BuildLineStarts() {
+        m_LineStarts.clear();
+        m_LineStarts.push_back(0);
+        for (size_t i = 0; i < m_Source.size(); ++i) {
+            if (m_Source[i] == '\n') {
+                m_LineStarts.push_back(i + 1);
+            }
+        }
+    }
+
+    void ResolveLineColumn(size_t offset, size_t& outLine, size_t& outColumn) const {
+        if (m_LineStarts.empty()) {
+            outLine = 1;
+            outColumn = 1;
+            return;
+        }
+        auto it = std::upper_bound(m_LineStarts.begin(), m_LineStarts.end(), offset);
+        size_t lineIndex = 0;
+        if (it == m_LineStarts.begin()) {
+            lineIndex = 0;
+        } else {
+            lineIndex = static_cast<size_t>(std::distance(m_LineStarts.begin(), it - 1));
+        }
+        outLine = lineIndex + 1;
+        size_t lineStart = m_LineStarts[lineIndex];
+        outColumn = (offset >= lineStart) ? (offset - lineStart + 1) : 1;
+    }
+
+    std::string GetLineText(size_t oneBasedLine) const {
+        if (oneBasedLine == 0 || oneBasedLine > m_LineStarts.size()) {
+            return {};
+        }
+        const size_t lineIndex = oneBasedLine - 1;
+        const size_t start = m_LineStarts[lineIndex];
+        const size_t end = (lineIndex + 1 < m_LineStarts.size()) ? (m_LineStarts[lineIndex + 1] - 1) : m_Source.size();
+        if (end <= start || start >= m_Source.size()) {
+            return {};
+        }
+        return m_Source.substr(start, end - start);
     }
 
     void Consume(TokenType type, const std::string& err) {
-        if (m_Current.Type == type) Advance();
-        else {
-            std::string tokenDesc = "END";
-            if (m_Current.Type != END) {
-                tokenDesc = m_Current.Text.empty() ?
-                    ("token type " + std::to_string((int)m_Current.Type)) :
-                    ("'" + m_Current.Text + "'");
-            }
-            throw std::runtime_error(err + " Got: " + tokenDesc);
+        if (m_Current.Type == type) {
+            Advance();
+            return;
         }
+
+        std::string tokenDesc = "END";
+        if (m_Current.Type != END) {
+            tokenDesc = m_Current.Text.empty() ?
+                ("token type " + std::to_string((int)m_Current.Type)) :
+                ("'" + m_Current.Text + "'");
+        }
+
+        std::ostringstream oss;
+        oss << "Parse error: " << err << " Got: " << tokenDesc;
+        const Program::InstructionSourceInfo& src = m_Program.CurrentSourceContext;
+        if (src.Line != 0) {
+            oss << "\nLocation: " << m_SourceName << ":" << src.Line << ":" << src.Column;
+        }
+        if (!src.SourceLine.empty()) {
+            oss << "\nCode: " << src.SourceLine;
+            oss << "\n      ";
+            for (size_t i = 1; i < src.Column; ++i) {
+                oss << ' ';
+            }
+            oss << '^';
+        }
+        throw std::runtime_error(oss.str());
     }
 
     Token PeekNext() {
@@ -1440,7 +1510,12 @@ private:
 } // namespace
 
 Program ParseProgramSource(const std::string& source) {
-    Parser parser(source);
+    Parser parser(source, "<memory>");
+    return parser.Parse();
+}
+
+Program ParseProgramSourceWithName(const std::string& source, const std::string& sourceName) {
+    Parser parser(source, sourceName);
     return parser.Parse();
 }
 

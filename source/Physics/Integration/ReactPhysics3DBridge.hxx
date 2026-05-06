@@ -4,6 +4,7 @@
 #include <Entity/Registry.hxx>
 #include <Physics/Collision/Narrowphase/ConvexHull.hxx>  // Must be included before RigidBody.hxx for full ConvexHull definition
 #include <Physics/Dynamics/RigidBody.hxx>
+#include <Physics/Integration/PhysicsBackend.hxx>
 #include <reactphysics3d/engine/PhysicsCommon.h>
 #include <reactphysics3d/engine/PhysicsWorld.h>
 #include <reactphysics3d/body/RigidBody.h>
@@ -37,7 +38,7 @@ struct Rp3dSyncCache {
  * Bridge class that manages ReactPhysics3D physics world and synchronizes
  * it with Solstice's RigidBody components.
  */
-class SOLSTICE_API ReactPhysics3DBridge {
+class SOLSTICE_API ReactPhysics3DBridge : public IPhysicsBackend {
 public:
     ReactPhysics3DBridge();
     ~ReactPhysics3DBridge();
@@ -69,7 +70,7 @@ public:
     /**
      * Update the physics world (call ReactPhysics3D's update)
      */
-    void Update(float dt);
+    void Update(float dt) override;
 
     /**
      * Create a ReactPhysics3D body for a RigidBody component
@@ -84,13 +85,25 @@ public:
     /**
      * Get the ReactPhysics3D physics world
      */
-    reactphysics3d::PhysicsWorld* GetPhysicsWorld() const { return m_PhysicsWorld; }
-
-    /**
-     * Directly set position and rotation for a body (bypasses physics integration)
-     * Used for grabbed objects to ensure smooth, frame-rate independent movement
-     */
     void SetBodyTransform(ECS::EntityId entityId, const Math::Vec3& position, const Math::Quaternion& rotation);
+
+    /// Push current \c RigidBody pose/velocity into ReactPhysics3D (e.g. after portal topology warp).
+    void ForcePushRigidBodyToBackend(ECS::EntityId entityId);
+
+    // IPhysicsBackend implementation
+    void SyncToBackend() override { SyncToReactPhysics3D(); }
+    void SyncFromBackend() override { SyncFromReactPhysics3D(); }
+    void SetSolverIterations(int velocityIterations, int positionIterations) override;
+    RaycastHit RaycastClosest(const RaycastRequest& request) override;
+    bool RaycastAny(const RaycastRequest& request) override;
+    std::vector<RaycastAllHit> RaycastAll(const RaycastRequest& request) override;
+    std::vector<ECS::EntityId> OverlapSphere(const Math::Vec3& center, float radius) override;
+    std::vector<ECS::EntityId> OverlapAabb(const Math::Vec3& min, const Math::Vec3& max) override;
+    PhysicsDebugDrawData BuildDebugDrawData() override;
+    bool SupportsVehicles() const override { return false; }
+    bool SupportsSoftBodies() const override { return false; }
+    void CreateVehicleStub(ECS::EntityId entityId, const VehicleConfig& config) override;
+    void CreateSoftBodyStub(ECS::EntityId entityId, const SoftBodyConfig& config) override;
 
 private:
     /**

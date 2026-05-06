@@ -27,6 +27,7 @@ add_library(Game STATIC
     UI/LevelSelector.cxx
     UI/DialoguePresenter.cxx
     Gameplay/ComponentFactory.cxx
+    Gameplay/PortalFactory.cxx
     Gameplay/Health.cxx
     Gameplay/Inventory.cxx
     Gameplay/Enemy.cxx
@@ -34,6 +35,9 @@ add_library(Game STATIC
     Gameplay/SFXManager.cxx
     Gameplay/NPC.cxx
     Gameplay/Stamina.cxx
+    Systems/AudioSystem.cxx
+    Systems/PortalSystem.cxx
+    Systems/FacialSystem.cxx
     AI/AIBrain.cxx
     World/ProceduralTextureManager.cxx
     World/SceneBuilder.cxx
@@ -46,6 +50,7 @@ add_library(Game STATIC
     Progression/AchievementState.cxx
     Progression/ScoreMultiplierState.cxx
     Integration/ScriptManager.cxx
+    Integration/NavMeshPortalLinks.cxx
     Dialogue/DialogueTree.cxx
     Dialogue/NarrativeRuntime.cxx
     Dialogue/NarrativeDocument.cxx

@@ -21,11 +21,11 @@
 #include <bgfx/bgfx.h>
 #include <bgfx/platform.h>
 #include <fstream>
+#include <Render/Portal/PortalDebugDraw.hxx>
+#include <Render/Portal/PortalLightPropagation.hxx>
 #include <Render/PhysicsBridge.hxx>
 #include <Physics/Integration/PhysicsSystem.hxx>
 #include <Plugin/SubsystemHooks.hxx>
-#include <reactphysics3d/engine/PhysicsWorld.h>
-#include <reactphysics3d/utils/DebugRenderer.h>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -38,6 +38,15 @@ namespace Math = Solstice::Math;
 static std::atomic<int> s_RendererInstanceCount{0};
 
 namespace {
+Math::Vec3 PrimaryDirectionalOrDefault(const std::vector<Physics::LightSource>& Lights) {
+    for (const auto& L : Lights) {
+        if (L.Type == Physics::LightSource::LightType::Directional) {
+            return L.Position.Normalized();
+        }
+    }
+    return Math::Vec3(0.5f, 1.0f, -0.5f).Normalized();
+}
+
 std::mutex g_FrameCaptureMutex;
 std::vector<std::byte> g_FrameCaptureRgba;
 int g_FrameCaptureW = 0;
@@ -709,6 +718,7 @@ void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam) {
 
     m_SceneRenderer->RenderScene(SceneGraph, Cam, m_MeshLibrary,
                                 SceneGraph.GetMaterialLibrary(), TotalTriangles);
+        RenderPortalDebug(Cam);
     }
 
     m_Stats.TrianglesSubmitted = TotalTriangles;
@@ -1019,6 +1029,84 @@ void SoftwareRenderer::SubmitTileRasterJob(int TileX, int TileY, const std::vect
     m_RenderJobs.push_back(std::move(future));
 }
 
+void SoftwareRenderer::RenderPortalDebug(const Camera& Cam) {
+    if (!m_ShowPortalDebug || !m_Initialized || !m_PostProcessing) return;
+
+    PortalDebugDrawBuffer& Buf = PortalDebugDrawBuffer::Instance();
+    if (!Buf.HasLines()) return;
+
+    if (!bgfx::isValid(m_DebugProgram)) {
+        bgfx::ShaderHandle vsh = LoadShader("vs_debug.bin");
+        bgfx::ShaderHandle fsh = LoadShader("fs_debug.bin");
+        if (bgfx::isValid(vsh) && bgfx::isValid(fsh)) {
+            m_DebugProgram = bgfx::createProgram(vsh, fsh, true);
+            m_DebugLayout
+                .begin(bgfx::getRendererType())
+                .add(bgfx::Attrib::Position, 3, bgfx::AttribType::Float)
+                .add(bgfx::Attrib::Color0, 4, bgfx::AttribType::Uint8, true)
+                .end();
+        }
+    }
+    if (!bgfx::isValid(m_DebugProgram)) return;
+
+    Math::Matrix4 View = Cam.GetViewMatrix();
+    float aspectRatio = static_cast<float>(m_Width) / std::max(1.0f, static_cast<float>(m_Height));
+    Math::Matrix4 Proj = Cam.GetProjectionMatrix(aspectRatio, 0.1f, 2000.0f);
+    Math::Matrix4 ViewT = View.Transposed();
+    Math::Matrix4 ProjT = Proj.Transposed();
+
+    if (!m_Viewports.empty() && m_ActiveViewport < m_Viewports.size()) {
+        const auto& vp = m_Viewports[m_ActiveViewport];
+        if (vp.Active) {
+            bgfx::setViewRect(PostProcessing::VIEW_SCENE,
+                            static_cast<uint16_t>(vp.X),
+                            static_cast<uint16_t>(vp.Y),
+                            static_cast<uint16_t>(vp.Width),
+                            static_cast<uint16_t>(vp.Height));
+        }
+    }
+    bgfx::setViewFrameBuffer(PostProcessing::VIEW_SCENE, m_PostProcessing->GetSceneFramebuffer());
+    bgfx::setViewTransform(PostProcessing::VIEW_SCENE, &ViewT.M[0][0], &ProjT.M[0][0]);
+
+    struct DebugVertex {
+        float x, y, z;
+        uint8_t r, g, b, a;
+    };
+    const auto& lines = Buf.GetLines();
+    std::vector<DebugVertex> vertices;
+    vertices.reserve(lines.size() * 2);
+
+    for (const auto& line : lines) {
+        vertices.push_back({
+            line.P1.x, line.P1.y, line.P1.z,
+            static_cast<uint8_t>((line.Color1 >> 16) & 0xFF),
+            static_cast<uint8_t>((line.Color1 >> 8) & 0xFF),
+            static_cast<uint8_t>(line.Color1 & 0xFF),
+            255,
+        });
+        vertices.push_back({
+            line.P2.x, line.P2.y, line.P2.z,
+            static_cast<uint8_t>((line.Color2 >> 16) & 0xFF),
+            static_cast<uint8_t>((line.Color2 >> 8) & 0xFF),
+            static_cast<uint8_t>(line.Color2 & 0xFF),
+            255,
+        });
+    }
+
+    bgfx::TransientVertexBuffer tvb;
+    bgfx::allocTransientVertexBuffer(&tvb, static_cast<uint32_t>(vertices.size()), m_DebugLayout);
+    if (tvb.data != nullptr && !vertices.empty()) {
+        std::memcpy(tvb.data, vertices.data(), vertices.size() * sizeof(DebugVertex));
+        bgfx::setVertexBuffer(0, &tvb);
+        const uint64_t state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_DEPTH_TEST_LESS | BGFX_STATE_BLEND_ALPHA |
+            BGFX_STATE_PT_LINES;
+        bgfx::setState(state);
+        bgfx::submit(PostProcessing::VIEW_SCENE, m_DebugProgram);
+    }
+
+    Buf.BeginFrame();
+}
+
 void SoftwareRenderer::RenderPhysicsDebug(const void* PhysicsSystemPtr) {
     if (!m_ShowPhysicsDebug || !PhysicsSystemPtr) return;
 
@@ -1026,26 +1114,7 @@ void SoftwareRenderer::RenderPhysicsDebug(const void* PhysicsSystemPtr) {
     const Physics::PhysicsSystem* physicsSystem = static_cast<const Physics::PhysicsSystem*>(PhysicsSystemPtr);
     if (!physicsSystem) return;
 
-    // Get ReactPhysics3D bridge and physics world
-    Physics::ReactPhysics3DBridge& bridge = const_cast<Physics::PhysicsSystem*>(physicsSystem)->GetBridge();
-    reactphysics3d::PhysicsWorld* physicsWorld = bridge.GetPhysicsWorld();
-    if (!physicsWorld) return;
-
-    // Enable debug rendering
-    physicsWorld->setIsDebugRenderingEnabled(true);
-
-    // Get debug renderer
-    reactphysics3d::DebugRenderer& debugRenderer = physicsWorld->getDebugRenderer();
-
-    // Configure debug items
-    debugRenderer.setIsDebugItemDisplayed(reactphysics3d::DebugRenderer::DebugItem::COLLISION_SHAPE, true);
-    debugRenderer.setIsDebugItemDisplayed(reactphysics3d::DebugRenderer::DebugItem::COLLIDER_AABB, true);
-    debugRenderer.setIsDebugItemDisplayed(reactphysics3d::DebugRenderer::DebugItem::CONTACT_POINT, true);
-    debugRenderer.setIsDebugItemDisplayed(reactphysics3d::DebugRenderer::DebugItem::CONTACT_NORMAL, true);
-
-    // Compute debug rendering primitives
-    debugRenderer.reset();
-    debugRenderer.computeDebugRenderingPrimitives(*physicsWorld);
+    Physics::PhysicsDebugDrawData debugData = const_cast<Physics::PhysicsSystem*>(physicsSystem)->GetDebugDrawData();
 
     // Initialize debug shader if not already done
     if (!bgfx::isValid(m_DebugProgram)) {
@@ -1067,32 +1136,28 @@ void SoftwareRenderer::RenderPhysicsDebug(const void* PhysicsSystemPtr) {
     if (!bgfx::isValid(m_DebugProgram)) return;
 
     // Render lines
-    const uint32_t nbLines = debugRenderer.getNbLines();
-    if (nbLines > 0) {
-        const reactphysics3d::DebugRenderer::DebugLine* lines = debugRenderer.getLinesArray();
-
+    if (!debugData.Lines.empty()) {
         struct DebugVertex {
             float x, y, z;
             uint8_t r, g, b, a;
         };
 
         std::vector<DebugVertex> vertices;
-        vertices.reserve(nbLines * 2);
+        vertices.reserve(debugData.Lines.size() * 2);
 
-        for (uint32_t i = 0; i < nbLines; ++i) {
-            const auto& line = lines[i];
+        for (const auto& line : debugData.Lines) {
             vertices.push_back({
-                line.point1.x, line.point1.y, line.point1.z,
-                static_cast<uint8_t>((line.color1 >> 16) & 0xFF),
-                static_cast<uint8_t>((line.color1 >> 8) & 0xFF),
-                static_cast<uint8_t>(line.color1 & 0xFF),
+                line.P1.x, line.P1.y, line.P1.z,
+                static_cast<uint8_t>((line.Color1 >> 16) & 0xFF),
+                static_cast<uint8_t>((line.Color1 >> 8) & 0xFF),
+                static_cast<uint8_t>(line.Color1 & 0xFF),
                 255
             });
             vertices.push_back({
-                line.point2.x, line.point2.y, line.point2.z,
-                static_cast<uint8_t>((line.color2 >> 16) & 0xFF),
-                static_cast<uint8_t>((line.color2 >> 8) & 0xFF),
-                static_cast<uint8_t>(line.color2 & 0xFF),
+                line.P2.x, line.P2.y, line.P2.z,
+                static_cast<uint8_t>((line.Color2 >> 16) & 0xFF),
+                static_cast<uint8_t>((line.Color2 >> 8) & 0xFF),
+                static_cast<uint8_t>(line.Color2 & 0xFF),
                 255
             });
         }
@@ -1108,39 +1173,35 @@ void SoftwareRenderer::RenderPhysicsDebug(const void* PhysicsSystemPtr) {
     }
 
     // Render triangles
-    const uint32_t nbTriangles = debugRenderer.getNbTriangles();
-    if (nbTriangles > 0) {
-        const reactphysics3d::DebugRenderer::DebugTriangle* triangles = debugRenderer.getTrianglesArray();
-
+    if (!debugData.Triangles.empty()) {
         struct DebugVertex {
             float x, y, z;
             uint8_t r, g, b, a;
         };
 
         std::vector<DebugVertex> vertices;
-        vertices.reserve(nbTriangles * 3);
+        vertices.reserve(debugData.Triangles.size() * 3);
 
-        for (uint32_t i = 0; i < nbTriangles; ++i) {
-            const auto& tri = triangles[i];
+        for (const auto& tri : debugData.Triangles) {
             vertices.push_back({
-                tri.point1.x, tri.point1.y, tri.point1.z,
-                static_cast<uint8_t>((tri.color1 >> 16) & 0xFF),
-                static_cast<uint8_t>((tri.color1 >> 8) & 0xFF),
-                static_cast<uint8_t>(tri.color1 & 0xFF),
+                tri.P1.x, tri.P1.y, tri.P1.z,
+                static_cast<uint8_t>((tri.Color1 >> 16) & 0xFF),
+                static_cast<uint8_t>((tri.Color1 >> 8) & 0xFF),
+                static_cast<uint8_t>(tri.Color1 & 0xFF),
                 255
             });
             vertices.push_back({
-                tri.point2.x, tri.point2.y, tri.point2.z,
-                static_cast<uint8_t>((tri.color2 >> 16) & 0xFF),
-                static_cast<uint8_t>((tri.color2 >> 8) & 0xFF),
-                static_cast<uint8_t>(tri.color2 & 0xFF),
+                tri.P2.x, tri.P2.y, tri.P2.z,
+                static_cast<uint8_t>((tri.Color2 >> 16) & 0xFF),
+                static_cast<uint8_t>((tri.Color2 >> 8) & 0xFF),
+                static_cast<uint8_t>(tri.Color2 & 0xFF),
                 255
             });
             vertices.push_back({
-                tri.point3.x, tri.point3.y, tri.point3.z,
-                static_cast<uint8_t>((tri.color3 >> 16) & 0xFF),
-                static_cast<uint8_t>((tri.color3 >> 8) & 0xFF),
-                static_cast<uint8_t>(tri.color3 & 0xFF),
+                tri.P3.x, tri.P3.y, tri.P3.z,
+                static_cast<uint8_t>((tri.Color3 >> 16) & 0xFF),
+                static_cast<uint8_t>((tri.Color3 >> 8) & 0xFF),
+                static_cast<uint8_t>(tri.Color3 & 0xFF),
                 255
             });
         }
@@ -1213,18 +1274,26 @@ void SoftwareRenderer::SetShowDebugOverlay(bool Enable) {
     }
 }
 
+void SoftwareRenderer::SetSceneLightingTune(const SceneLightingTune& tune) {
+    if (m_SceneRenderer) {
+        m_SceneRenderer->SetSceneLightingTune(tune);
+    }
+}
+
 void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam, const std::vector<Physics::LightSource>& Lights) {
     if (!m_Initialized) return;
 
+    const std::vector<Physics::LightSource> lightsWithPortalPropagation =
+        PortalLightPropagation::PrepareLights(Lights);
+
     // Extract primary light direction and pass to PostProcessing and SceneRenderer
-    if (!Lights.empty()) {
-        const auto& primaryLight = Lights[0];
-        Math::Vec3 lightDir = primaryLight.Position.Normalized();
+    if (!lightsWithPortalPropagation.empty()) {
+        const Math::Vec3 lightDir = PrimaryDirectionalOrDefault(lightsWithPortalPropagation);
         if (m_PostProcessing) {
             m_PostProcessing->SetLightDirection(lightDir);
         }
         if (m_SceneRenderer) {
-            m_SceneRenderer->SetLightSources(Lights);
+            m_SceneRenderer->SetLightSources(lightsWithPortalPropagation);
         }
     } else {
         // Fallback to default sun light
@@ -1264,7 +1333,7 @@ void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam, const s
         }
 
         // Use provided lights, or fallback to default sun light
-        std::vector<Physics::LightSource> lightsToUse = Lights;
+        std::vector<Physics::LightSource> lightsToUse = lightsWithPortalPropagation;
         if (lightsToUse.empty()) {
             // Fallback to default sun light
             Physics::LightSource sunLight(
@@ -1295,7 +1364,7 @@ void SoftwareRenderer::RenderScene(Scene& SceneGraph, const Camera& Cam, const s
     }
 
     // Store lights for volumetric lighting (will be used in RenderScene)
-    m_VolumetricLights = Lights;
+    m_VolumetricLights = lightsWithPortalPropagation;
 
     // Render the scene normally
     RenderScene(SceneGraph, Cam);

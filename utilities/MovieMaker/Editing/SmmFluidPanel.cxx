@@ -1,6 +1,7 @@
 #include "SmmFluidPanel.hxx"
 
 #include "../SmmFileOps.hxx"
+#include "LibUI/Widgets/Widgets.hxx"
 
 #include <Parallax/ParallaxScene.hxx>
 #include <Parallax/ParallaxTypes.hxx>
@@ -12,8 +13,6 @@
 #include <cstdio>
 #include <string>
 #include <vector>
-
-#include <imgui.h>
 
 namespace Smm::Editing {
 
@@ -45,6 +44,24 @@ void CollectFluidVolumeElementIndices(const Solstice::Parallax::ParallaxScene& s
     }
 }
 
+void CollectSoftBodyElementIndices(const Solstice::Parallax::ParallaxScene& scene, std::vector<Solstice::Parallax::ElementIndex>& out) {
+    out.clear();
+    for (Solstice::Parallax::ElementIndex i = 0; i < scene.GetElements().size(); ++i) {
+        if (Solstice::Parallax::GetElementSchema(scene, i) == "SmmSoftBodyElement") {
+            out.push_back(i);
+        }
+    }
+}
+
+void CollectVehicleElementIndices(const Solstice::Parallax::ParallaxScene& scene, std::vector<Solstice::Parallax::ElementIndex>& out) {
+    out.clear();
+    for (Solstice::Parallax::ElementIndex i = 0; i < scene.GetElements().size(); ++i) {
+        if (Solstice::Parallax::GetElementSchema(scene, i) == "SmmVehicleElement") {
+            out.push_back(i);
+        }
+    }
+}
+
 void ApplyDefaultFluidAttributes(Solstice::Parallax::ParallaxScene& scene, Solstice::Parallax::ElementIndex e) {
     using namespace Solstice::Parallax;
     SetAttribute(scene, e, "Enabled", AttributeValue{true});
@@ -64,6 +81,34 @@ void ApplyDefaultFluidAttributes(Solstice::Parallax::ParallaxScene& scene, Solst
     SetAttribute(scene, e, "Prandtl", AttributeValue{0.71f});
 }
 
+void ApplyDefaultSoftBodyAttributes(Solstice::Parallax::ParallaxScene& scene, Solstice::Parallax::ElementIndex e) {
+    using namespace Solstice::Parallax;
+    SetAttribute(scene, e, "Enabled", AttributeValue{true});
+    SetAttribute(scene, e, "AnchorTopRow", AttributeValue{true});
+    SetAttribute(scene, e, "Origin", AttributeValue{Solstice::Math::Vec3{0.f, 4.f, 0.f}});
+    SetAttribute(scene, e, "GridWidth", AttributeValue{int32_t{12}});
+    SetAttribute(scene, e, "GridHeight", AttributeValue{int32_t{12}});
+    SetAttribute(scene, e, "NodeSpacing", AttributeValue{0.25f});
+    SetAttribute(scene, e, "NodeMass", AttributeValue{1.0f});
+    SetAttribute(scene, e, "Damping", AttributeValue{0.05f});
+    SetAttribute(scene, e, "StructuralStiffness", AttributeValue{0.95f});
+    SetAttribute(scene, e, "ShearStiffness", AttributeValue{0.85f});
+    SetAttribute(scene, e, "BendStiffness", AttributeValue{0.60f});
+    SetAttribute(scene, e, "SolverIterations", AttributeValue{int32_t{8}});
+}
+
+void ApplyDefaultVehicleAttributes(Solstice::Parallax::ParallaxScene& scene, Solstice::Parallax::ElementIndex e) {
+    using namespace Solstice::Parallax;
+    SetAttribute(scene, e, "Enabled", AttributeValue{true});
+    SetAttribute(scene, e, "Origin", AttributeValue{Solstice::Math::Vec3{0.f, 1.f, 0.f}});
+    SetAttribute(scene, e, "WheelBase", AttributeValue{2.5f});
+    SetAttribute(scene, e, "TrackWidth", AttributeValue{1.6f});
+    SetAttribute(scene, e, "Mass", AttributeValue{1200.0f});
+    SetAttribute(scene, e, "EngineForce", AttributeValue{9000.0f});
+    SetAttribute(scene, e, "BrakeForce", AttributeValue{6000.0f});
+    SetAttribute(scene, e, "MaxSteerAngleRadians", AttributeValue{0.55f});
+}
+
 } // namespace
 
 void DrawFluidVolumesPanel(const char* windowId, bool* pOpen, Solstice::Parallax::ParallaxScene& scene, uint64_t timeTicks,
@@ -71,14 +116,14 @@ void DrawFluidVolumesPanel(const char* windowId, bool* pOpen, Solstice::Parallax
     if (!pOpen || !*pOpen) {
         return;
     }
-    if (ImGui::Begin(windowId, pOpen)) {
+    if (LibUI::Widgets::BeginWindow(windowId, pOpen)) {
         std::vector<Solstice::Parallax::ElementIndex> fluidIdx;
         CollectFluidVolumeElementIndices(scene, fluidIdx);
         if (selectedFluidElementIndex >= 0
             && static_cast<size_t>(selectedFluidElementIndex) >= fluidIdx.size()) {
             selectedFluidElementIndex = fluidIdx.empty() ? -1 : static_cast<int>(fluidIdx.size()) - 1;
         }
-        if (ImGui::Button("Add fluid volume")) {
+        if (LibUI::Widgets::Button("Add fluid volume")) {
             Smm::PushSceneUndoSnapshot(scene, compressPrlx);
             const std::string nm = MakeUniqueFluidElementName(scene, "FluidVolume");
             const Solstice::Parallax::ElementIndex ne =
@@ -95,8 +140,8 @@ void DrawFluidVolumesPanel(const char* windowId, bool* pOpen, Solstice::Parallax
                 sceneDirty = true;
             }
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Duplicate selected") && selectedFluidElementIndex >= 0
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Duplicate selected") && selectedFluidElementIndex >= 0
             && static_cast<size_t>(selectedFluidElementIndex) < fluidIdx.size()) {
             Smm::PushSceneUndoSnapshot(scene, compressPrlx);
             const Solstice::Parallax::ElementIndex src = fluidIdx[static_cast<size_t>(selectedFluidElementIndex)];
@@ -119,8 +164,8 @@ void DrawFluidVolumesPanel(const char* windowId, bool* pOpen, Solstice::Parallax
                 sceneDirty = true;
             }
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Fit bounds to actor/camera origins")) {
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Fit bounds to actor/camera origins")) {
             if (selectedFluidElementIndex >= 0 && static_cast<size_t>(selectedFluidElementIndex) < fluidIdx.size()) {
                 Solstice::Parallax::SceneEvaluationResult ev{};
                 Solstice::Parallax::EvaluateScene(scene, timeTicks, ev);
@@ -152,11 +197,11 @@ void DrawFluidVolumesPanel(const char* windowId, bool* pOpen, Solstice::Parallax
         }
 
         if (fluidIdx.empty()) {
-            ImGui::TextUnformatted("No fluid volumes. Add one to author NS-style volumes (saved in .prlx).");
+            LibUI::Widgets::Text("No fluid volumes. Add one to author NS-style volumes (saved in .prlx).");
         } else {
             int sel = (std::max)(0, selectedFluidElementIndex);
             sel = (std::min)(sel, static_cast<int>(fluidIdx.size()) - 1);
-            if (ImGui::SliderInt("Selected##smmfluid", &sel, 0, static_cast<int>(fluidIdx.size()) - 1)) {
+            if (LibUI::Widgets::SliderInt("Selected##smmfluid", &sel, 0, static_cast<int>(fluidIdx.size()) - 1)) {
                 selectedFluidElementIndex = sel;
             }
             const Solstice::Parallax::ElementIndex e = fluidIdx[static_cast<size_t>(sel)];
@@ -168,7 +213,7 @@ void DrawFluidVolumesPanel(const char* windowId, bool* pOpen, Solstice::Parallax
                 if (const auto* b = std::get_if<bool>(&av)) {
                     v = *b;
                 }
-                if (ImGui::Checkbox(label, &v)) {
+                if (LibUI::Widgets::Checkbox(label, &v)) {
                     Smm::PushSceneUndoSnapshot(scene, compressPrlx);
                     Solstice::Parallax::SetAttribute(scene, e, key, Solstice::Parallax::AttributeValue{v});
                     sceneDirty = true;
@@ -181,7 +226,7 @@ void DrawFluidVolumesPanel(const char* windowId, bool* pOpen, Solstice::Parallax
                     v = *f;
                 }
                 const float speed = (std::max)(std::abs(v) * 0.01f, 1e-6f);
-                if (ImGui::DragFloat(label, &v, speed, 0.f, 1e9f, "%.6f")) {
+                if (LibUI::Widgets::DragFloat(label, &v, speed, 0.f, 1e9f, "%.6f")) {
                     Smm::PushSceneUndoSnapshot(scene, compressPrlx);
                     Solstice::Parallax::SetAttribute(scene, e, key, Solstice::Parallax::AttributeValue{v});
                     sceneDirty = true;
@@ -194,7 +239,7 @@ void DrawFluidVolumesPanel(const char* windowId, bool* pOpen, Solstice::Parallax
                     v = *in;
                 }
                 int vi = static_cast<int>(v);
-                if (ImGui::DragInt(label, &vi, 1, lo, hi)) {
+                if (LibUI::Widgets::DragInt(label, &vi, 1, lo, hi)) {
                     Smm::PushSceneUndoSnapshot(scene, compressPrlx);
                     Solstice::Parallax::SetAttribute(
                         scene, e, key, Solstice::Parallax::AttributeValue{static_cast<int32_t>(vi)});
@@ -208,7 +253,7 @@ void DrawFluidVolumesPanel(const char* windowId, bool* pOpen, Solstice::Parallax
                     v = *p;
                 }
                 float b[3] = {v.x, v.y, v.z};
-                if (ImGui::DragFloat3(label, b, 0.05f)) {
+                if (LibUI::Widgets::DragFloat3(label, b, 0.05f)) {
                     Smm::PushSceneUndoSnapshot(scene, compressPrlx);
                     Solstice::Parallax::SetAttribute(scene, e, key,
                         Solstice::Parallax::AttributeValue{Solstice::Math::Vec3{b[0], b[1], b[2]}});
@@ -261,8 +306,157 @@ void DrawFluidVolumesPanel(const char* windowId, bool* pOpen, Solstice::Parallax
             editFloat("Buoyancy strength", "BuoyancyStrength");
             editFloat("Prandtl", "Prandtl");
         }
+
+        LibUI::Widgets::Separator();
+        LibUI::Widgets::Text("Soft bodies (PBD cloth)");
+        std::vector<Solstice::Parallax::ElementIndex> softIdx;
+        CollectSoftBodyElementIndices(scene, softIdx);
+        if (LibUI::Widgets::Button("Add soft body")) {
+            Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+            const std::string nm = MakeUniqueFluidElementName(scene, "SoftBody");
+            const Solstice::Parallax::ElementIndex ne = Solstice::Parallax::AddElement(scene, "SmmSoftBodyElement", nm, 0);
+            if (ne != Solstice::Parallax::PARALLAX_INVALID_INDEX) {
+                ApplyDefaultSoftBodyAttributes(scene, ne);
+                sceneDirty = true;
+            }
+        }
+        if (!softIdx.empty()) {
+            static int s_softSel = 0;
+            s_softSel = std::clamp(s_softSel, 0, static_cast<int>(softIdx.size()) - 1);
+            LibUI::Widgets::SliderInt("Selected soft body##smmsoft", &s_softSel, 0, static_cast<int>(softIdx.size()) - 1);
+            const Solstice::Parallax::ElementIndex e = softIdx[static_cast<size_t>(s_softSel)];
+            ImGui::LabelText("Soft element", "%s (index %u)", scene.GetElements()[e].Name.c_str(), static_cast<unsigned>(e));
+            auto editSoftBool = [&](const char* label, const char* key) {
+                bool v = false;
+                const Solstice::Parallax::AttributeValue av = Solstice::Parallax::GetAttribute(scene, e, key);
+                if (const auto* b = std::get_if<bool>(&av)) {
+                    v = *b;
+                }
+                if (LibUI::Widgets::Checkbox(label, &v)) {
+                    Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                    Solstice::Parallax::SetAttribute(scene, e, key, Solstice::Parallax::AttributeValue{v});
+                    sceneDirty = true;
+                }
+            };
+            auto editSoftInt = [&](const char* label, const char* key, int lo, int hi) {
+                int32_t v = 0;
+                const Solstice::Parallax::AttributeValue av = Solstice::Parallax::GetAttribute(scene, e, key);
+                if (const auto* in = std::get_if<int32_t>(&av)) {
+                    v = *in;
+                }
+                int vi = static_cast<int>(v);
+                if (LibUI::Widgets::DragInt(label, &vi, 1, lo, hi)) {
+                    Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                    Solstice::Parallax::SetAttribute(scene, e, key, Solstice::Parallax::AttributeValue{static_cast<int32_t>(vi)});
+                    sceneDirty = true;
+                }
+            };
+            auto editSoftFloat = [&](const char* label, const char* key, float speed, float lo, float hi) {
+                float v = 0.f;
+                const Solstice::Parallax::AttributeValue av = Solstice::Parallax::GetAttribute(scene, e, key);
+                if (const auto* f = std::get_if<float>(&av)) {
+                    v = *f;
+                }
+                if (LibUI::Widgets::DragFloat(label, &v, speed, lo, hi)) {
+                    Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                    Solstice::Parallax::SetAttribute(scene, e, key, Solstice::Parallax::AttributeValue{v});
+                    sceneDirty = true;
+                }
+            };
+            auto editSoftVec3 = [&](const char* label, const char* key) {
+                Solstice::Math::Vec3 v{};
+                const Solstice::Parallax::AttributeValue av = Solstice::Parallax::GetAttribute(scene, e, key);
+                if (const auto* p = std::get_if<Solstice::Math::Vec3>(&av)) {
+                    v = *p;
+                }
+                float b[3] = {v.x, v.y, v.z};
+                if (LibUI::Widgets::DragFloat3(label, b, 0.05f)) {
+                    Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                    Solstice::Parallax::SetAttribute(scene, e, key, Solstice::Parallax::AttributeValue{Solstice::Math::Vec3{b[0], b[1], b[2]}});
+                    sceneDirty = true;
+                }
+            };
+            editSoftBool("Enabled##smmsb", "Enabled");
+            editSoftBool("Anchor top row##smmsb", "AnchorTopRow");
+            editSoftVec3("Origin##smmsb", "Origin");
+            editSoftInt("Grid width##smmsb", "GridWidth", 2, 256);
+            editSoftInt("Grid height##smmsb", "GridHeight", 2, 256);
+            editSoftInt("Solver iterations##smmsb", "SolverIterations", 1, 64);
+            editSoftFloat("Node spacing##smmsb", "NodeSpacing", 0.01f, 0.01f, 5.0f);
+            editSoftFloat("Node mass##smmsb", "NodeMass", 0.01f, 0.001f, 100.0f);
+            editSoftFloat("Damping##smmsb", "Damping", 0.005f, 0.0f, 1.0f);
+            editSoftFloat("Structural stiffness##smmsb", "StructuralStiffness", 0.005f, 0.0f, 1.0f);
+            editSoftFloat("Shear stiffness##smmsb", "ShearStiffness", 0.005f, 0.0f, 1.0f);
+            editSoftFloat("Bend stiffness##smmsb", "BendStiffness", 0.005f, 0.0f, 1.0f);
+        }
+
+        LibUI::Widgets::Separator();
+        LibUI::Widgets::Text("Vehicles (arcade)");
+        std::vector<Solstice::Parallax::ElementIndex> vehicleIdx;
+        CollectVehicleElementIndices(scene, vehicleIdx);
+        if (LibUI::Widgets::Button("Add vehicle")) {
+            Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+            const std::string nm = MakeUniqueFluidElementName(scene, "Vehicle");
+            const Solstice::Parallax::ElementIndex ne = Solstice::Parallax::AddElement(scene, "SmmVehicleElement", nm, 0);
+            if (ne != Solstice::Parallax::PARALLAX_INVALID_INDEX) {
+                ApplyDefaultVehicleAttributes(scene, ne);
+                sceneDirty = true;
+            }
+        }
+        if (!vehicleIdx.empty()) {
+            static int s_vehicleSel = 0;
+            s_vehicleSel = std::clamp(s_vehicleSel, 0, static_cast<int>(vehicleIdx.size()) - 1);
+            LibUI::Widgets::SliderInt("Selected vehicle##smmveh", &s_vehicleSel, 0, static_cast<int>(vehicleIdx.size()) - 1);
+            const Solstice::Parallax::ElementIndex e = vehicleIdx[static_cast<size_t>(s_vehicleSel)];
+            ImGui::LabelText("Vehicle element", "%s (index %u)", scene.GetElements()[e].Name.c_str(), static_cast<unsigned>(e));
+            auto editVehicleBool = [&](const char* label, const char* key) {
+                bool v = false;
+                const Solstice::Parallax::AttributeValue av = Solstice::Parallax::GetAttribute(scene, e, key);
+                if (const auto* b = std::get_if<bool>(&av)) {
+                    v = *b;
+                }
+                if (LibUI::Widgets::Checkbox(label, &v)) {
+                    Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                    Solstice::Parallax::SetAttribute(scene, e, key, Solstice::Parallax::AttributeValue{v});
+                    sceneDirty = true;
+                }
+            };
+            auto editVehicleFloat = [&](const char* label, const char* key, float speed, float lo, float hi) {
+                float v = 0.f;
+                const Solstice::Parallax::AttributeValue av = Solstice::Parallax::GetAttribute(scene, e, key);
+                if (const auto* f = std::get_if<float>(&av)) {
+                    v = *f;
+                }
+                if (LibUI::Widgets::DragFloat(label, &v, speed, lo, hi)) {
+                    Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                    Solstice::Parallax::SetAttribute(scene, e, key, Solstice::Parallax::AttributeValue{v});
+                    sceneDirty = true;
+                }
+            };
+            auto editVehicleVec3 = [&](const char* label, const char* key) {
+                Solstice::Math::Vec3 v{};
+                const Solstice::Parallax::AttributeValue av = Solstice::Parallax::GetAttribute(scene, e, key);
+                if (const auto* p = std::get_if<Solstice::Math::Vec3>(&av)) {
+                    v = *p;
+                }
+                float b[3] = {v.x, v.y, v.z};
+                if (LibUI::Widgets::DragFloat3(label, b, 0.05f)) {
+                    Smm::PushSceneUndoSnapshot(scene, compressPrlx);
+                    Solstice::Parallax::SetAttribute(scene, e, key, Solstice::Parallax::AttributeValue{Solstice::Math::Vec3{b[0], b[1], b[2]}});
+                    sceneDirty = true;
+                }
+            };
+            editVehicleBool("Enabled##smmveh", "Enabled");
+            editVehicleVec3("Origin##smmveh", "Origin");
+            editVehicleFloat("Wheel base##smmveh", "WheelBase", 0.01f, 0.5f, 10.0f);
+            editVehicleFloat("Track width##smmveh", "TrackWidth", 0.01f, 0.5f, 10.0f);
+            editVehicleFloat("Mass##smmveh", "Mass", 1.0f, 1.0f, 100000.0f);
+            editVehicleFloat("Engine force##smmveh", "EngineForce", 10.0f, 0.0f, 1000000.0f);
+            editVehicleFloat("Brake force##smmveh", "BrakeForce", 10.0f, 0.0f, 1000000.0f);
+            editVehicleFloat("Max steer radians##smmveh", "MaxSteerAngleRadians", 0.005f, 0.01f, 1.5f);
+        }
     }
-    ImGui::End();
+    LibUI::Widgets::EndWindow();
 }
 
 } // namespace Smm::Editing

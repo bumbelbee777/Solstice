@@ -167,6 +167,13 @@ namespace Solstice::Scripting {
     };
 
     struct Program {
+        struct InstructionSourceInfo {
+            size_t Line = 0;
+            size_t Column = 0;
+            std::string SourceLine;
+            std::string SourceFile;
+        };
+
         std::vector<Instruction> Instructions;
         std::unordered_map<std::string, size_t> Exports;
         
@@ -191,14 +198,33 @@ namespace Solstice::Scripting {
         std::unordered_map<uint8_t, std::string> RegisterTypes;
         // Ptr.* lowered ops: instruction index -> register that supplied the pointer (best-effort)
         std::unordered_map<size_t, uint8_t> PtrOperandRegs;
+        // Source mapping metadata: instruction index -> source location/slice.
+        std::unordered_map<size_t, InstructionSourceInfo> InstructionSourceMap;
+        // Parser-populated current source context used by Add/AddReg.
+        InstructionSourceInfo CurrentSourceContext;
+
+        void SetCurrentSourceContext(size_t line, size_t column, const std::string& sourceLine, const std::string& sourceFile) {
+            CurrentSourceContext.Line = line;
+            CurrentSourceContext.Column = column;
+            CurrentSourceContext.SourceLine = sourceLine;
+            CurrentSourceContext.SourceFile = sourceFile;
+        }
 
         // Helper to add instruction
         void Add(OpCode op, Value operand = 0) {
             Instructions.push_back({op, 0, operand});
+            const size_t index = Instructions.size() - 1;
+            if (CurrentSourceContext.Line != 0 || !CurrentSourceContext.SourceLine.empty()) {
+                InstructionSourceMap[index] = CurrentSourceContext;
+            }
         }
 
         void AddReg(OpCode op, uint8_t reg) {
             Instructions.push_back({op, reg, 0});
+            const size_t index = Instructions.size() - 1;
+            if (CurrentSourceContext.Line != 0 || !CurrentSourceContext.SourceLine.empty()) {
+                InstructionSourceMap[index] = CurrentSourceContext;
+            }
         }
 
         void Serialize(std::vector<uint8_t>& out) const;
@@ -286,6 +312,9 @@ namespace Solstice::Scripting {
         // Event/callback system: register script handlers and emit from script or C++
         void RegisterEventHandler(const std::string& eventName, ScriptFunc handler);
         void EmitEvent(const std::string& eventName, const std::vector<Value>& args);
+        size_t GetEventHandlerCount(const std::string& eventName) const;
+        void ClearEventHandlers(const std::string& eventName);
+        void ClearAllEventHandlers();
 
         // Run condition function in given program context; returns true if result is truthy. Used by WaitUntil.
         bool RunCondition(const Program& program, ScriptFunc condition);

@@ -7,6 +7,7 @@
 #include "../../Entity/Kind.hxx"
 #include "../../Entity/PlayerTag.hxx"
 #include "../../Entity/MatchGameplay.hxx"
+#include "../../Entity/Components/PortalComponents.hxx"
 #include "../../Physics/Dynamics/RigidBody.hxx"
 #include "../../Math/Vector.hxx"
 #include "../../Math/Quaternion.hxx"
@@ -49,6 +50,10 @@ public:
     static ECS::EntityId CreateDynamicSphere(ECS::Registry& Registry, const Math::Vec3& Position,
                                             float Radius, float Mass = 1.0f,
                                             const std::string& Name = "DynamicSphere");
+
+    /// ECS portal authoring helper; set \c Portal::Partner (both sides typically point at each other). Transform at \p Position.
+    static ECS::EntityId CreatePortalEntity(ECS::Registry& Registry, const Math::Vec3& Position,
+                                            const ECS::Portal& Spec = ECS::Portal{}, const std::string& Name = "Portal");
 };
 
 } // namespace Solstice::Game

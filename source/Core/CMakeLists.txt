@@ -4,6 +4,13 @@ add_library(Core STATIC
     AuthoringSkyboxBus.cxx
     Debug/Debug.cxx
     Audio/Audio.cxx
+    Audio/HRTF/HRTFDatabase.cxx
+    Audio/HRTF/HRTFRenderer.cxx
+    Audio/Ambisonics/AmbisonicCodec.cxx
+    Audio/WaveTracing/WaveTracer.cxx
+    Audio/PortalAudio/PortalAudio.cxx
+    Audio/FluidCoupling/FluidAudioCoupling.cxx
+    Audio/MLSpatialization/MLSpatialization.cxx
     ML/MLP.cxx
     ML/CNN.cxx
     Spatial/NavMesh.cxx

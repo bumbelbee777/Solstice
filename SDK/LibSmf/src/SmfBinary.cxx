@@ -37,6 +37,10 @@ constexpr uint32_t kGameplayLegacy4 = 4u;
 /// Optional **SMAL v1** tail: authored **`SmfFluidVolume`** list for **`NSSolver`** (magic `FLD1`).
 constexpr uint32_t kSmalFluidMagic = 0x31444446u; // 'F'|'L'<<8|'D'<<16|'1'<<24
 constexpr uint32_t kSmalFluidChunkVersion = 1u;
+constexpr uint32_t kSmalSoftBodyMagic = 0x31444253u; // 'S'|'B'<<8|'D'<<16|'1'<<24
+constexpr uint32_t kSmalSoftBodyChunkVersion = 1u;
+constexpr uint32_t kSmalVehicleMagic = 0x31484556u; // 'V'|'E'<<8|'H'<<16|'1'<<24
+constexpr uint32_t kSmalVehicleChunkVersion = 1u;
 
 constexpr size_t kSmfHeaderV12Bytes = offsetof(Solstice::Smf::SmfFileHeader, ExtrasOffset);
 static_assert(kSmfHeaderV12Bytes == 88u, "SMF v1.2 header ends before ExtrasOffset");
@@ -392,6 +396,44 @@ std::vector<std::byte> BuildGameplayExtrasBlob(const Solstice::Smf::SmfMap& map,
             AppendF32(blob, f.Prandtl);
         }
     }
+    if (!map.SoftBodyVolumes.empty()) {
+        AppendU32(blob, kSmalSoftBodyMagic);
+        AppendU32(blob, kSmalSoftBodyChunkVersion);
+        AppendU32(blob, static_cast<uint32_t>(map.SoftBodyVolumes.size()));
+        for (const auto& s : map.SoftBodyVolumes) {
+            uint32_t flags = 0u;
+            if (s.Enabled) flags |= 1u;
+            if (s.AnchorTopRow) flags |= 2u;
+            AppendU32(blob, intern(s.Name));
+            AppendU32(blob, flags);
+            AppendVec3(blob, s.Origin);
+            AppendI32(blob, s.GridWidth);
+            AppendI32(blob, s.GridHeight);
+            AppendF32(blob, s.NodeSpacing);
+            AppendF32(blob, s.NodeMass);
+            AppendF32(blob, s.Damping);
+            AppendF32(blob, s.StructuralStiffness);
+            AppendF32(blob, s.ShearStiffness);
+            AppendF32(blob, s.BendStiffness);
+            AppendI32(blob, s.SolverIterations);
+        }
+    }
+    if (!map.VehicleVolumes.empty()) {
+        AppendU32(blob, kSmalVehicleMagic);
+        AppendU32(blob, kSmalVehicleChunkVersion);
+        AppendU32(blob, static_cast<uint32_t>(map.VehicleVolumes.size()));
+        for (const auto& v : map.VehicleVolumes) {
+            AppendU32(blob, intern(v.Name));
+            AppendU32(blob, v.Enabled ? 1u : 0u);
+            AppendVec3(blob, v.Origin);
+            AppendF32(blob, v.WheelBase);
+            AppendF32(blob, v.TrackWidth);
+            AppendF32(blob, v.Mass);
+            AppendF32(blob, v.EngineForce);
+            AppendF32(blob, v.BrakeForce);
+            AppendF32(blob, v.MaxSteerAngleRadians);
+        }
+    }
     return blob;
 }
 
@@ -565,54 +607,114 @@ bool ParseGameplayExtrasBlob(std::span<const std::byte> data, Solstice::Smf::Smf
             map.BakedLightmapPath = strAt(bkmPathOff);
         }
     }
-    if (p == end) {
-        return true;
-    }
-    if (!need(8)) {
-        return false;
-    }
-    if (ReadU32(p) != kSmalFluidMagic) {
-        return false;
-    }
-    p += 4;
-    const uint32_t fluidChunkVer = ReadU32(p);
-    p += 4;
-    if (fluidChunkVer != kSmalFluidChunkVersion) {
-        return false;
-    }
-    if (!need(4)) {
-        return false;
-    }
-    const uint32_t nFluid = ReadU32(p);
-    p += 4;
     map.FluidVolumes.clear();
-    map.FluidVolumes.reserve(nFluid);
-    for (uint32_t fi = 0; fi < nFluid; ++fi) {
-        if (!need(4u + 4u + 12u + 12u + 12u + 12u + 4u + 8u)) {
+    map.SoftBodyVolumes.clear();
+    map.VehicleVolumes.clear();
+    while (p < end) {
+        if (!need(8)) {
             return false;
         }
-        const uint32_t nameOff = ReadU32(p);
+        const uint32_t chunkMagic = ReadU32(p);
         p += 4;
-        const uint32_t fl = ReadU32(p);
+        const uint32_t chunkVer = ReadU32(p);
         p += 4;
-        Solstice::Smf::SmfFluidVolume fv{};
-        fv.Name = strAt(nameOff);
-        fv.Enabled = (fl & 1u) != 0;
-        fv.EnableMacCormack = (fl & 2u) != 0;
-        fv.EnableBoussinesq = (fl & 4u) != 0;
-        fv.VolumeVisualizationClip = (fl & 8u) != 0;
-        ReadVec3(p, end, fv.BoundsMin);
-        ReadVec3(p, end, fv.BoundsMax);
-        fv.ResolutionX = ReadI32(p, end);
-        fv.ResolutionY = ReadI32(p, end);
-        fv.ResolutionZ = ReadI32(p, end);
-        fv.Diffusion = ReadF32(p, end);
-        fv.Viscosity = ReadF32(p, end);
-        fv.ReferenceDensity = ReadF32(p, end);
-        fv.PressureRelaxationIterations = ReadI32(p, end);
-        fv.BuoyancyStrength = ReadF32(p, end);
-        fv.Prandtl = ReadF32(p, end);
-        map.FluidVolumes.push_back(std::move(fv));
+        if (chunkMagic == kSmalFluidMagic) {
+            if (chunkVer != kSmalFluidChunkVersion || !need(4)) {
+                return false;
+            }
+            const uint32_t nFluid = ReadU32(p);
+            p += 4;
+            map.FluidVolumes.reserve(map.FluidVolumes.size() + nFluid);
+            for (uint32_t fi = 0; fi < nFluid; ++fi) {
+                if (!need(4u + 4u + 12u + 12u + 12u + 12u + 4u + 8u)) {
+                    return false;
+                }
+                const uint32_t nameOff = ReadU32(p);
+                p += 4;
+                const uint32_t fl = ReadU32(p);
+                p += 4;
+                Solstice::Smf::SmfFluidVolume fv{};
+                fv.Name = strAt(nameOff);
+                fv.Enabled = (fl & 1u) != 0;
+                fv.EnableMacCormack = (fl & 2u) != 0;
+                fv.EnableBoussinesq = (fl & 4u) != 0;
+                fv.VolumeVisualizationClip = (fl & 8u) != 0;
+                ReadVec3(p, end, fv.BoundsMin);
+                ReadVec3(p, end, fv.BoundsMax);
+                fv.ResolutionX = ReadI32(p, end);
+                fv.ResolutionY = ReadI32(p, end);
+                fv.ResolutionZ = ReadI32(p, end);
+                fv.Diffusion = ReadF32(p, end);
+                fv.Viscosity = ReadF32(p, end);
+                fv.ReferenceDensity = ReadF32(p, end);
+                fv.PressureRelaxationIterations = ReadI32(p, end);
+                fv.BuoyancyStrength = ReadF32(p, end);
+                fv.Prandtl = ReadF32(p, end);
+                map.FluidVolumes.push_back(std::move(fv));
+            }
+            continue;
+        }
+        if (chunkMagic == kSmalSoftBodyMagic) {
+            if (chunkVer != kSmalSoftBodyChunkVersion || !need(4)) {
+                return false;
+            }
+            const uint32_t nSoft = ReadU32(p);
+            p += 4;
+            map.SoftBodyVolumes.reserve(map.SoftBodyVolumes.size() + nSoft);
+            for (uint32_t si = 0; si < nSoft; ++si) {
+                if (!need(4u + 4u + 12u + 4u + 4u + 4u + 4u + 4u + 4u + 4u + 4u + 4u)) {
+                    return false;
+                }
+                const uint32_t nameOff = ReadU32(p);
+                p += 4;
+                const uint32_t flags = ReadU32(p);
+                p += 4;
+                Solstice::Smf::SmfSoftBodyVolume sb{};
+                sb.Name = strAt(nameOff);
+                sb.Enabled = (flags & 1u) != 0;
+                sb.AnchorTopRow = (flags & 2u) != 0;
+                ReadVec3(p, end, sb.Origin);
+                sb.GridWidth = ReadI32(p, end);
+                sb.GridHeight = ReadI32(p, end);
+                sb.NodeSpacing = ReadF32(p, end);
+                sb.NodeMass = ReadF32(p, end);
+                sb.Damping = ReadF32(p, end);
+                sb.StructuralStiffness = ReadF32(p, end);
+                sb.ShearStiffness = ReadF32(p, end);
+                sb.BendStiffness = ReadF32(p, end);
+                sb.SolverIterations = ReadI32(p, end);
+                map.SoftBodyVolumes.push_back(std::move(sb));
+            }
+            continue;
+        }
+        if (chunkMagic == kSmalVehicleMagic) {
+            if (chunkVer != kSmalVehicleChunkVersion || !need(4)) {
+                return false;
+            }
+            const uint32_t nVeh = ReadU32(p);
+            p += 4;
+            map.VehicleVolumes.reserve(map.VehicleVolumes.size() + nVeh);
+            for (uint32_t vi = 0; vi < nVeh; ++vi) {
+                if (!need(4u + 4u + 12u + 4u * 6u)) {
+                    return false;
+                }
+                Solstice::Smf::SmfVehicleVolume vv{};
+                vv.Name = strAt(ReadU32(p));
+                p += 4;
+                vv.Enabled = (ReadU32(p) & 1u) != 0;
+                p += 4;
+                ReadVec3(p, end, vv.Origin);
+                vv.WheelBase = ReadF32(p, end);
+                vv.TrackWidth = ReadF32(p, end);
+                vv.Mass = ReadF32(p, end);
+                vv.EngineForce = ReadF32(p, end);
+                vv.BrakeForce = ReadF32(p, end);
+                vv.MaxSteerAngleRadians = ReadF32(p, end);
+                map.VehicleVolumes.push_back(std::move(vv));
+            }
+            continue;
+        }
+        return false;
     }
     return p == end;
 }
@@ -693,6 +795,12 @@ bool SaveSmfToBytes(const SmfMap& map, std::vector<std::byte>& out, SmfError* er
     intern(map.BakedLightmapPath);
     for (const auto& f : map.FluidVolumes) {
         intern(f.Name);
+    }
+    for (const auto& s : map.SoftBodyVolumes) {
+        intern(s.Name);
+    }
+    for (const auto& v : map.VehicleVolumes) {
+        intern(v.Name);
     }
 
     std::vector<std::byte> stringTable;

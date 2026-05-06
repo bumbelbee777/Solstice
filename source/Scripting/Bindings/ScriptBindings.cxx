@@ -7,15 +7,15 @@
 #include "../../Entity/Transform.hxx"
 #include "../../Entity/Name.hxx"
 #include "../../Entity/Kind.hxx"
+#include "../../Entity/Components/FacialComponents.hxx"
 #include "../../Physics/Integration/PhysicsSystem.hxx"
 #include "../../Physics/Dynamics/RigidBody.hxx"
-#include "../../Physics/Integration/ReactPhysics3DBridge.hxx"
-#include <reactphysics3d/collision/RaycastInfo.h>
-#include <reactphysics3d/collision/OverlapCallback.h>
-#include <reactphysics3d/mathematics/Ray.h>
-#include <reactphysics3d/collision/shapes/AABB.h>
+#include "../../Physics/Dynamics/Vehicle.hxx"
+#include "../../Physics/Dynamics/SoftBody.hxx"
 #include "../../Arzachel/AnimationClip.hxx"
 #include "../../Arzachel/Generator.hxx"
+#include "../../Arzachel/FacialAnimation.hxx"
+#include "../../Arzachel/TextLipSync.hxx"
 #include "../../UI/Motion/MotionGraphics.hxx"
 #include "../../Core/Audio/Audio.hxx"
 #include "../../Core/Profiling/Profiler.hxx"
@@ -32,6 +32,13 @@
 namespace Solstice::Scripting {
 
     using namespace Solstice::Math;
+    namespace {
+        ScriptInputHooks g_InputHooks{};
+    }
+
+    SOLSTICE_API void SetScriptInputHooks(const ScriptInputHooks& hooks) {
+        g_InputHooks = hooks;
+    }
 
     // Helper to extract float from Value
     float GetFloat(const Value& v) {
@@ -766,46 +773,61 @@ namespace Solstice::Scripting {
             vm.EmitEvent(name, payload);
             return (int64_t)0;
         });
+        vm.RegisterNative("Events.HandlerCount", [&vm](const std::vector<Value>& args) -> Value {
+            if (args.empty() || !std::holds_alternative<std::string>(args[0])) {
+                return (int64_t)0;
+            }
+            return static_cast<int64_t>(vm.GetEventHandlerCount(std::get<std::string>(args[0])));
+        });
+        vm.RegisterNative("Events.Clear", [&vm](const std::vector<Value>& args) -> Value {
+            if (!args.empty() && std::holds_alternative<std::string>(args[0])) {
+                vm.ClearEventHandlers(std::get<std::string>(args[0]));
+            }
+            return (int64_t)0;
+        });
+        vm.RegisterNative("Events.ClearAll", [&vm](const std::vector<Value>& args) -> Value {
+            (void)args;
+            vm.ClearAllEventHandlers();
+            return (int64_t)0;
+        });
 
         // ========== Input Functions ==========
-        // Note: Input bindings require InputManager to be passed to RegisterScriptBindings
-        // For now, these are placeholders that return 0
-        // To enable: Add InputManager* parameter to RegisterScriptBindings and implement
         vm.RegisterNative("Input.IsKeyPressed", [](const std::vector<Value>& args) -> Value {
-            // Would need InputManager* parameter
-            // if (inputManager && args.size() > 0) {
-            //     return (int64_t)(inputManager->IsKeyPressed(GetInt(args[0])) ? 1 : 0);
-            // }
-            return (int64_t)0;
+            if (args.empty() || !g_InputHooks.IsKeyPressed) {
+                return (int64_t)0;
+            }
+            return static_cast<int64_t>(g_InputHooks.IsKeyPressed(static_cast<int>(GetInt(args[0]))) ? 1 : 0);
         });
         
         vm.RegisterNative("Input.IsKeyJustPressed", [](const std::vector<Value>& args) -> Value {
-            // Would need InputManager* parameter
-            return (int64_t)0;
+            if (args.empty() || !g_InputHooks.IsKeyJustPressed) {
+                return (int64_t)0;
+            }
+            return static_cast<int64_t>(g_InputHooks.IsKeyJustPressed(static_cast<int>(GetInt(args[0]))) ? 1 : 0);
         });
         
         vm.RegisterNative("Input.IsKeyJustReleased", [](const std::vector<Value>& args) -> Value {
-            // Would need InputManager* parameter
-            return (int64_t)0;
+            if (args.empty() || !g_InputHooks.IsKeyJustReleased) {
+                return (int64_t)0;
+            }
+            return static_cast<int64_t>(g_InputHooks.IsKeyJustReleased(static_cast<int>(GetInt(args[0]))) ? 1 : 0);
         });
         
         vm.RegisterNative("Input.IsMouseButtonPressed", [](const std::vector<Value>& args) -> Value {
-            // Would need InputManager* parameter
-            return (int64_t)0;
+            if (args.empty() || !g_InputHooks.IsMouseButtonPressed) {
+                return (int64_t)0;
+            }
+            return static_cast<int64_t>(g_InputHooks.IsMouseButtonPressed(static_cast<int>(GetInt(args[0]))) ? 1 : 0);
         });
         
         vm.RegisterNative("Input.GetMousePosition", [](const std::vector<Value>& args) -> Value {
-            // Would need InputManager* parameter
-            // if (inputManager) {
-            //     auto [x, y] = inputManager->GetMousePosition();
-            //     return Vec2(x, y);
-            // }
-            return Vec2();
+            (void)args;
+            return g_InputHooks.GetMousePosition ? g_InputHooks.GetMousePosition() : Vec2();
         });
         
         vm.RegisterNative("Input.GetMouseDelta", [](const std::vector<Value>& args) -> Value {
-            // Would need InputManager* parameter
-            return Vec2();
+            (void)args;
+            return g_InputHooks.GetMouseDelta ? g_InputHooks.GetMouseDelta() : Vec2();
         });
 
         // ========== UI Functions ==========
@@ -980,6 +1002,95 @@ namespace Solstice::Scripting {
                     }
 
                     registry->Add<Physics::RigidBody>(id, rb);
+                }
+                return (int64_t)0;
+            });
+
+            vm.RegisterNative("Physics.CreateSoftBodyCloth", [registry, physicsSystem](const std::vector<Value>& args) -> Value {
+                if (!registry || !physicsSystem || args.size() < 7) {
+                    return (int64_t)0;
+                }
+
+                const ECS::EntityId id = (ECS::EntityId)GetInt(args[0]);
+                const Math::Vec3 origin(GetFloat(args[1]), GetFloat(args[2]), GetFloat(args[3]));
+
+                Physics::SoftBodyConfig cfg{};
+                cfg.GridWidth = static_cast<uint32_t>(std::max<int64_t>(2, GetInt(args[4])));
+                cfg.GridHeight = static_cast<uint32_t>(std::max<int64_t>(2, GetInt(args[5])));
+                cfg.NodeSpacing = std::max(0.01f, GetFloat(args[6]));
+                cfg.NodeMass = args.size() > 7 ? std::max(0.001f, GetFloat(args[7])) : 1.0f;
+                cfg.SolverIterations = args.size() > 8 ? std::max(1, (int)GetInt(args[8])) : 8;
+                cfg.Damping = args.size() > 9 ? std::clamp(GetFloat(args[9]), 0.0f, 1.0f) : 0.05f;
+                cfg.AnchorTopRow = args.size() > 10 ? (GetInt(args[10]) != 0) : true;
+
+                physicsSystem->CreateSoftBodyStub(id, cfg);
+                if (auto* sb = registry->TryGet<Physics::SoftBody>(id)) {
+                    sb->BuildRectCloth(origin, cfg);
+                }
+                return (int64_t)1;
+            });
+
+            vm.RegisterNative("Physics.CreateVehicle", [registry, physicsSystem](const std::vector<Value>& args) -> Value {
+                if (!registry || !physicsSystem || args.size() < 4) {
+                    return (int64_t)0;
+                }
+                const ECS::EntityId id = (ECS::EntityId)GetInt(args[0]);
+                Physics::VehicleConfig cfg{};
+                cfg.WheelBase = std::max(0.5f, GetFloat(args[1]));
+                cfg.TrackWidth = std::max(0.5f, GetFloat(args[2]));
+                cfg.Mass = std::max(1.0f, GetFloat(args[3]));
+                physicsSystem->CreateVehicleStub(id, cfg);
+                return (int64_t)1;
+            });
+
+            vm.RegisterNative("Physics.SetVehicleInput", [registry](const std::vector<Value>& args) -> Value {
+                if (!registry || args.size() < 4) {
+                    return (int64_t)0;
+                }
+                const ECS::EntityId id = (ECS::EntityId)GetInt(args[0]);
+                if (auto* v = registry->TryGet<Physics::Vehicle>(id)) {
+                    v->ThrottleInput = std::clamp(GetFloat(args[1]), -1.0f, 1.0f);
+                    v->SteeringInput = std::clamp(GetFloat(args[2]), -1.0f, 1.0f);
+                    v->BrakeInput = std::clamp(GetFloat(args[3]), 0.0f, 1.0f);
+                    if (args.size() > 4) {
+                        v->Handbrake = GetInt(args[4]) != 0;
+                    }
+                }
+                return (int64_t)0;
+            });
+
+            vm.RegisterNative("Physics.GetSoftBodyNodeCount", [registry](const std::vector<Value>& args) -> Value {
+                if (!registry || args.empty()) {
+                    return (int64_t)0;
+                }
+                const ECS::EntityId id = (ECS::EntityId)GetInt(args[0]);
+                if (const auto* sb = registry->TryGet<Physics::SoftBody>(id)) {
+                    return (int64_t)sb->Nodes.size();
+                }
+                return (int64_t)0;
+            });
+
+            vm.RegisterNative("Physics.GetSoftBodyNodePosition", [registry](const std::vector<Value>& args) -> Value {
+                if (!registry || args.size() < 2) {
+                    return Vec3();
+                }
+                const ECS::EntityId id = (ECS::EntityId)GetInt(args[0]);
+                const size_t index = static_cast<size_t>(std::max<int64_t>(0, GetInt(args[1])));
+                if (const auto* sb = registry->TryGet<Physics::SoftBody>(id)) {
+                    if (index < sb->Nodes.size()) {
+                        return sb->Nodes[index].Position;
+                    }
+                }
+                return Vec3();
+            });
+
+            vm.RegisterNative("Physics.SetSoftBodyWind", [registry](const std::vector<Value>& args) -> Value {
+                if (!registry || args.size() < 4) {
+                    return (int64_t)0;
+                }
+                const ECS::EntityId id = (ECS::EntityId)GetInt(args[0]);
+                if (auto* sb = registry->TryGet<Physics::SoftBody>(id)) {
+                    sb->WindForce = Vec3(GetFloat(args[1]), GetFloat(args[2]), GetFloat(args[3]));
                 }
                 return (int64_t)0;
             });
@@ -1579,6 +1690,130 @@ namespace Solstice::Scripting {
             return (int64_t)0;
         });
 
+        vm.RegisterNative("Arzachel.Facial.PatternWeight", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 3) return (double)1.0;
+            const int pattern = (int)GetInt(args[0]);
+            const float period = GetFloat(args[1]);
+            const float time = GetFloat(args[2]);
+            const uint64_t seed = args.size() > 3 ? (uint64_t)GetInt(args[3]) : 1ull;
+            const auto p = static_cast<Arzachel::ExpressionPattern>(
+                std::clamp(pattern, (int)Arzachel::ExpressionPattern::Static, (int)Arzachel::ExpressionPattern::Sequence));
+            return (double)Arzachel::PatternWeight(p, period, time, Arzachel::Seed(seed));
+        });
+
+        vm.RegisterNative("Arzachel.Facial.Blink", [](const std::vector<Value>& args) -> Value {
+            if (args.empty()) return (double)0.0;
+            const float time = GetFloat(args[0]);
+            const uint64_t seed = args.size() > 1 ? (uint64_t)GetInt(args[1]) : 1ull;
+            return (double)Arzachel::BlinkClosedAmount(time, Arzachel::Seed(seed));
+        });
+
+        vm.RegisterNative("Arzachel.Facial.SaccadeX", [](const std::vector<Value>& args) -> Value {
+            if (args.empty()) return (double)0.0;
+            const float time = GetFloat(args[0]);
+            const uint64_t seed = args.size() > 1 ? (uint64_t)GetInt(args[1]) : 1ull;
+            return (double)Arzachel::SaccadeOffset(time, Arzachel::Seed(seed)).x;
+        });
+
+        vm.RegisterNative("Arzachel.Facial.SaccadeY", [](const std::vector<Value>& args) -> Value {
+            if (args.empty()) return (double)0.0;
+            const float time = GetFloat(args[0]);
+            const uint64_t seed = args.size() > 1 ? (uint64_t)GetInt(args[1]) : 1ull;
+            return (double)Arzachel::SaccadeOffset(time, Arzachel::Seed(seed)).y;
+        });
+
+        vm.RegisterNative("Arzachel.LipSync.CountVisemes", [](const std::vector<Value>& args) -> Value {
+            if (args.empty()) return (int64_t)0;
+            const auto samples = Arzachel::TextToVisemeStrengthSamples(GetString(args[0]));
+            return (int64_t)samples.size();
+        });
+
+        vm.RegisterNative("Arzachel.LipSync.MakeKeyframes", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 5) return (int64_t)0;
+            std::vector<Arzachel::VisemeKeyframeTick> keys;
+            std::string warn;
+            Arzachel::LipSyncTextConfig cfg{};
+            if (args.size() > 5) cfg.Coarticulation = std::clamp(GetFloat(args[5]), 0.0f, 1.0f);
+            Arzachel::BuildVisemeKeyframesFromEnglishTextEx(
+                GetString(args[0]),
+                (uint32_t)GetInt(args[1]),
+                (uint64_t)GetInt(args[2]),
+                (uint64_t)GetInt(args[3]),
+                (uint32_t)GetInt(args[4]),
+                cfg,
+                keys,
+                warn
+            );
+            return (int64_t)keys.size();
+        });
+
+        vm.RegisterNative("Arzachel.Facial.EnvelopeWeight", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 4) return (double)0.0;
+            Arzachel::ExpressionEnvelope env{};
+            env.AttackSec = std::max(0.001f, GetFloat(args[1]));
+            env.HoldSec = std::max(0.0f, GetFloat(args[2]));
+            env.ReleaseSec = std::max(0.001f, GetFloat(args[3]));
+            env.Shape = args.size() > 4 ? std::max(0.2f, GetFloat(args[4])) : 1.0f;
+            return (double)Arzachel::EvaluateEnvelopeWeight(GetFloat(args[0]), env);
+        });
+
+        vm.RegisterNative("Arzachel.LipSync.SampleBlend", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 6) return (double)0.0;
+            std::vector<Arzachel::VisemeKeyframeTick> keys;
+            keys.push_back(Arzachel::VisemeKeyframeTick{(uint64_t)GetInt(args[0]), GetString(args[1]), GetFloat(args[2])});
+            keys.push_back(Arzachel::VisemeKeyframeTick{(uint64_t)GetInt(args[3]), GetString(args[4]), GetFloat(args[5])});
+            std::string cur, next;
+            float blend = 0.0f;
+            float strength = 0.0f;
+            const uint64_t tick = args.size() > 6 ? (uint64_t)GetInt(args[6]) : (uint64_t)GetInt(args[0]);
+            Arzachel::SampleVisemeAtTick(keys, tick, cur, next, blend, strength);
+            return (double)blend;
+        });
+
+        vm.RegisterNative("Arzachel.FacialState.Set", [registry](const std::vector<Value>& args) -> Value {
+            if (!registry || args.size() < 2) return (int64_t)0;
+            const ECS::EntityId e = static_cast<ECS::EntityId>(GetInt(args[0]));
+            if (!registry->Valid(e)) return (int64_t)0;
+            auto* f = registry->TryGet<ECS::FacialStateMachine>(e);
+            if (!f) return (int64_t)0;
+            const int state = std::clamp((int)GetInt(args[1]), 0, 3);
+            f->State = static_cast<ECS::FacialIntentState>(state);
+            return (int64_t)1;
+        });
+
+        vm.RegisterNative("Arzachel.FacialState.SetMood", [registry](const std::vector<Value>& args) -> Value {
+            if (!registry || args.size() < 2) return (int64_t)0;
+            const ECS::EntityId e = static_cast<ECS::EntityId>(GetInt(args[0]));
+            if (!registry->Valid(e)) return (int64_t)0;
+            auto* f = registry->TryGet<ECS::FacialStateMachine>(e);
+            if (!f) return (int64_t)0;
+            f->MoodName = GetString(args[1]);
+            return (int64_t)1;
+        });
+
+        vm.RegisterNative("Arzachel.FacialState.SetEmote", [registry](const std::vector<Value>& args) -> Value {
+            if (!registry || args.size() < 2) return (int64_t)0;
+            const ECS::EntityId e = static_cast<ECS::EntityId>(GetInt(args[0]));
+            if (!registry->Valid(e)) return (int64_t)0;
+            auto* f = registry->TryGet<ECS::FacialStateMachine>(e);
+            if (!f) return (int64_t)0;
+            f->EmoteName = GetString(args[1]);
+            return (int64_t)1;
+        });
+
+        vm.RegisterNative("Arzachel.FacialState.SetDialogue", [registry](const std::vector<Value>& args) -> Value {
+            if (!registry || args.size() < 2) return (int64_t)0;
+            const ECS::EntityId e = static_cast<ECS::EntityId>(GetInt(args[0]));
+            if (!registry->Valid(e)) return (int64_t)0;
+            auto* f = registry->TryGet<ECS::FacialStateMachine>(e);
+            if (!f) return (int64_t)0;
+            f->DialogueText = GetString(args[1]);
+            f->DialogueDirty = true;
+            if (args.size() > 2) f->DialogueStartTick = static_cast<uint64_t>(GetInt(args[2]));
+            if (args.size() > 3) f->DialogueEndTick = static_cast<uint64_t>(GetInt(args[3]));
+            return (int64_t)1;
+        });
+
         // ========== Audio Functions ==========
         vm.RegisterNative("Audio.PlayMusic", [](const std::vector<Value>& args) -> Value {
             if (args.size() >= 1) {
@@ -1675,6 +1910,297 @@ namespace Solstice::Scripting {
             }
         });
 
+        vm.RegisterNative("Audio.SetEmitterRolloff", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 5) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                float minDistance = GetFloat(args[1]);
+                float maxDistance = GetFloat(args[2]);
+                float rolloff = GetFloat(args[3]);
+                int modelInt = static_cast<int>(GetInt(args[4]));
+                Core::Audio::DistanceModel model = Core::Audio::DistanceModel::Inverse;
+                if (modelInt >= static_cast<int>(Core::Audio::DistanceModel::Linear)
+                    && modelInt <= static_cast<int>(Core::Audio::DistanceModel::Exponential)) {
+                    model = static_cast<Core::Audio::DistanceModel>(modelInt);
+                }
+                bool ok = Core::Audio::AudioManager::Instance().SetEmitterRolloff(handle, minDistance, maxDistance, rolloff, model);
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.SetEmitterDirection", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 4) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                Math::Vec3 dir(GetFloat(args[1]), GetFloat(args[2]), GetFloat(args[3]));
+                bool ok = Core::Audio::AudioManager::Instance().SetEmitterDirection(handle, dir);
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.SetEmitterCone", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 4) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                bool ok = Core::Audio::AudioManager::Instance().SetEmitterCone(
+                    handle,
+                    GetFloat(args[1]),
+                    GetFloat(args[2]),
+                    GetFloat(args[3])
+                );
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.SetEmitterDoppler", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 3) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                bool ok = Core::Audio::AudioManager::Instance().SetEmitterDoppler(
+                    handle,
+                    GetFloat(args[1]),
+                    GetFloat(args[2])
+                );
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.SetEmitterVelocity", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 4) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                Math::Vec3 velocity(GetFloat(args[1]), GetFloat(args[2]), GetFloat(args[3]));
+                bool manual = args.size() > 4 ? (GetInt(args[4]) != 0) : true;
+                bool ok = Core::Audio::AudioManager::Instance().SetEmitterVelocity(handle, velocity, manual);
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.ClearEmitterVelocity", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 1) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                bool ok = Core::Audio::AudioManager::Instance().ClearEmitterVelocity(handle);
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.SetEmitterFocus", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 4) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                bool ok = Core::Audio::AudioManager::Instance().SetEmitterFocus(
+                    handle,
+                    GetFloat(args[1]),
+                    GetFloat(args[2]),
+                    GetFloat(args[3])
+                );
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.SetEmitterImmersion", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 4) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                bool ok = Core::Audio::AudioManager::Instance().SetEmitterImmersion(
+                    handle,
+                    GetFloat(args[1]),
+                    GetFloat(args[2]),
+                    GetFloat(args[3])
+                );
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.SetEmitterDiffraction", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 3) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                bool ok = Core::Audio::AudioManager::Instance().SetEmitterDiffraction(
+                    handle,
+                    GetFloat(args[1]),
+                    GetFloat(args[2])
+                );
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.SetEmitterMotionAdaptation", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 2) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                bool ok = Core::Audio::AudioManager::Instance().SetEmitterMotionAdaptation(handle, GetFloat(args[1]));
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.SetEmitterAirAbsorption", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 2) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                bool ok = Core::Audio::AudioManager::Instance().SetEmitterAirAbsorption(handle, GetFloat(args[1]));
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.SetEmitterPitchVariance", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 2) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                bool ok = Core::Audio::AudioManager::Instance().SetEmitterPitchVariance(handle, GetFloat(args[1]));
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.SetEmitterFlags", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 4) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                const bool isDialogue = GetInt(args[1]) != 0;
+                const bool isCriticalCue = GetInt(args[2]) != 0;
+                const int priority = static_cast<int>(GetInt(args[3]));
+                bool ok = Core::Audio::AudioManager::Instance().SetEmitterFlags(handle, isDialogue, isCriticalCue, priority);
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
+        vm.RegisterNative("Audio.ApplySpatialProfile", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 2) {
+                return (int64_t)0;
+            }
+            try {
+                auto handle = static_cast<Core::Audio::AudioEmitterHandle>(GetInt(args[0]));
+                const int profile = static_cast<int>(GetInt(args[1]));
+                auto& audio = Core::Audio::AudioManager::Instance();
+                bool ok = true;
+                switch (profile) {
+                    case 1: // AmbientBed
+                        ok = audio.SetEmitterFocus(handle, 0.05f, 0.03f, 0.95f) && ok;
+                        ok = audio.SetEmitterImmersion(handle, 0.75f, 0.65f, 0.45f) && ok;
+                        ok = audio.SetEmitterDiffraction(handle, 0.65f, 0.20f) && ok;
+                        ok = audio.SetEmitterMotionAdaptation(handle, 0.90f) && ok;
+                        ok = audio.SetEmitterRolloff(handle, 2.0f, 160.0f, 0.4f, Core::Audio::DistanceModel::Linear) && ok;
+                        ok = audio.SetEmitterAirAbsorption(handle, 0.12f) && ok;
+                        ok = audio.SetEmitterDoppler(handle, 0.15f, 343.3f) && ok;
+                        ok = audio.SetEmitterCone(handle, 360.0f, 360.0f, 1.0f) && ok;
+                        break;
+                    case 2: // Footstep
+                        ok = audio.SetEmitterFocus(handle, 0.30f, 0.07f, 1.0f) && ok;
+                        ok = audio.SetEmitterImmersion(handle, 0.45f, 0.30f, 0.18f) && ok;
+                        ok = audio.SetEmitterDiffraction(handle, 0.35f, 0.10f) && ok;
+                        ok = audio.SetEmitterMotionAdaptation(handle, 0.35f) && ok;
+                        ok = audio.SetEmitterRolloff(handle, 0.7f, 24.0f, 1.2f, Core::Audio::DistanceModel::Inverse) && ok;
+                        ok = audio.SetEmitterPitchVariance(handle, 0.05f) && ok;
+                        ok = audio.SetEmitterAirAbsorption(handle, 0.45f) && ok;
+                        ok = audio.SetEmitterDoppler(handle, 0.7f, 343.3f) && ok;
+                        ok = audio.SetEmitterCone(handle, 300.0f, 360.0f, 0.9f) && ok;
+                        break;
+                    case 3: // Weapon
+                        ok = audio.SetEmitterFocus(handle, 0.55f, 0.10f, 1.05f) && ok;
+                        ok = audio.SetEmitterImmersion(handle, 0.60f, 0.50f, 0.28f) && ok;
+                        ok = audio.SetEmitterDiffraction(handle, 0.55f, 0.16f) && ok;
+                        ok = audio.SetEmitterMotionAdaptation(handle, 0.40f) && ok;
+                        ok = audio.SetEmitterRolloff(handle, 1.2f, 180.0f, 1.0f, Core::Audio::DistanceModel::Inverse) && ok;
+                        ok = audio.SetEmitterPitchVariance(handle, 0.02f) && ok;
+                        ok = audio.SetEmitterAirAbsorption(handle, 0.28f) && ok;
+                        ok = audio.SetEmitterDoppler(handle, 1.0f, 343.3f) && ok;
+                        ok = audio.SetEmitterCone(handle, 85.0f, 180.0f, 0.45f) && ok;
+                        break;
+                    case 4: // Voice
+                        ok = audio.SetEmitterFocus(handle, 0.85f, 0.12f, 1.1f) && ok;
+                        ok = audio.SetEmitterImmersion(handle, 0.70f, 0.42f, 0.35f) && ok;
+                        ok = audio.SetEmitterDiffraction(handle, 0.50f, 0.22f) && ok;
+                        ok = audio.SetEmitterMotionAdaptation(handle, 0.30f) && ok;
+                        ok = audio.SetEmitterRolloff(handle, 0.8f, 42.0f, 1.35f, Core::Audio::DistanceModel::Inverse) && ok;
+                        ok = audio.SetEmitterPitchVariance(handle, 0.01f) && ok;
+                        ok = audio.SetEmitterAirAbsorption(handle, 0.33f) && ok;
+                        ok = audio.SetEmitterDoppler(handle, 0.85f, 343.3f) && ok;
+                        ok = audio.SetEmitterCone(handle, 60.0f, 140.0f, 0.35f) && ok;
+                        ok = audio.SetEmitterFlags(handle, true, false, 2) && ok;
+                        break;
+                    case 5: // Vehicle
+                        ok = audio.SetEmitterFocus(handle, 0.35f, 0.08f, 1.05f) && ok;
+                        ok = audio.SetEmitterImmersion(handle, 0.85f, 0.58f, 0.42f) && ok;
+                        ok = audio.SetEmitterDiffraction(handle, 0.70f, 0.18f) && ok;
+                        ok = audio.SetEmitterMotionAdaptation(handle, 0.75f) && ok;
+                        ok = audio.SetEmitterRolloff(handle, 2.5f, 260.0f, 0.9f, Core::Audio::DistanceModel::Exponential) && ok;
+                        ok = audio.SetEmitterPitchVariance(handle, 0.015f) && ok;
+                        ok = audio.SetEmitterAirAbsorption(handle, 0.22f) && ok;
+                        ok = audio.SetEmitterDoppler(handle, 1.2f, 343.3f) && ok;
+                        ok = audio.SetEmitterCone(handle, 100.0f, 220.0f, 0.5f) && ok;
+                        break;
+                    case 0: // Default
+                    default:
+                        ok = audio.SetEmitterFocus(handle, 0.15f, 0.05f, 1.0f) && ok;
+                        ok = audio.SetEmitterImmersion(handle, 0.35f, 0.40f, 0.25f) && ok;
+                        ok = audio.SetEmitterDiffraction(handle, 0.35f, 0.12f) && ok;
+                        ok = audio.SetEmitterMotionAdaptation(handle, 0.20f) && ok;
+                        ok = audio.SetEmitterRolloff(handle, 1.0f, 50.0f, 1.0f, Core::Audio::DistanceModel::Inverse) && ok;
+                        ok = audio.SetEmitterPitchVariance(handle, 0.03f) && ok;
+                        ok = audio.SetEmitterAirAbsorption(handle, 0.25f) && ok;
+                        ok = audio.SetEmitterDoppler(handle, 1.0f, 343.3f) && ok;
+                        ok = audio.SetEmitterCone(handle, 360.0f, 360.0f, 1.0f) && ok;
+                        break;
+                }
+                return static_cast<int64_t>(ok ? 1 : 0);
+            } catch (...) {
+                return (int64_t)0;
+            }
+        });
+
         vm.RegisterNative("Audio.DestroyEmitter", [](const std::vector<Value>& args) -> Value {
             if (args.empty()) {
                 return (int64_t)0;
@@ -1721,6 +2247,89 @@ namespace Solstice::Scripting {
                 Core::Audio::AudioManager::Instance().SetMasterVolume(vol);
             }
             return (int64_t)0;
+        });
+
+        vm.RegisterNative("Audio.HRTF.Enable", [](const std::vector<Value>& args) -> Value {
+            const bool enabled = args.size() > 0 ? (GetInt(args[0]) != 0) : true;
+            Core::Audio::AudioManager::Instance().SetHRTFEnabled(enabled);
+            return (int64_t)1;
+        });
+        vm.RegisterNative("Audio.HRTF.LoadDatabase", [](const std::vector<Value>& args) -> Value {
+            if (args.empty()) return (int64_t)0;
+            const bool ok = Core::Audio::AudioManager::Instance().LoadHRTFDatabase(GetString(args[0]).c_str());
+            return (int64_t)(ok ? 1 : 0);
+        });
+        vm.RegisterNative("Audio.HRTF.SetHeadRadius", [](const std::vector<Value>& args) -> Value {
+            if (args.empty()) return (int64_t)0;
+            Core::Audio::AudioManager::Instance().SetHeadRadius(GetFloat(args[0]));
+            return (int64_t)1;
+        });
+
+        vm.RegisterNative("Audio.WaveTracing.Enable", [](const std::vector<Value>& args) -> Value {
+            const bool enabled = args.size() > 0 ? (GetInt(args[0]) != 0) : true;
+            Core::Audio::AudioManager::Instance().SetWaveTracingEnabled(enabled);
+            return (int64_t)1;
+        });
+        vm.RegisterNative("Audio.WaveTracing.SetMaxRays", [](const std::vector<Value>& args) -> Value {
+            if (args.empty()) return (int64_t)0;
+            Core::Audio::AudioManager::Instance().SetWaveTracingMaxRays((int)GetInt(args[0]));
+            return (int64_t)1;
+        });
+        vm.RegisterNative("Audio.WaveTracing.SetMaxBounces", [](const std::vector<Value>& args) -> Value {
+            if (args.empty()) return (int64_t)0;
+            Core::Audio::AudioManager::Instance().SetWaveTracingMaxBounces((int)GetInt(args[0]));
+            return (int64_t)1;
+        });
+
+        vm.RegisterNative("Audio.Ambisonics.SetOrder", [](const std::vector<Value>& args) -> Value {
+            if (args.empty()) return (int64_t)0;
+            Core::Audio::AudioManager::Instance().SetAmbisonicOrder((int)GetInt(args[0]));
+            return (int64_t)1;
+        });
+        vm.RegisterNative("Audio.Ambisonics.GetOrder", [](const std::vector<Value>&) -> Value {
+            return (int64_t)Core::Audio::AudioManager::Instance().GetAmbisonicOrder();
+        });
+
+        vm.RegisterNative("Audio.FluidCoupling.Enable", [](const std::vector<Value>& args) -> Value {
+            const bool enabled = args.size() > 0 ? (GetInt(args[0]) != 0) : true;
+            Core::Audio::AudioManager::Instance().SetFluidCouplingEnabled(enabled);
+            return (int64_t)1;
+        });
+
+        vm.RegisterNative("Audio.Portal.SetTransform", [](const std::vector<Value>& args) -> Value {
+            if (args.size() < 16) return (int64_t)0;
+            Math::Matrix4 m = Math::Matrix4::Identity();
+            int k = 0;
+            for (int row = 0; row < 4; ++row) {
+                for (int col = 0; col < 4; ++col) {
+                    m.M[row][col] = GetFloat(args[static_cast<size_t>(k++)]);
+                }
+            }
+            const bool enabled = args.size() > 16 ? (GetInt(args[16]) != 0) : true;
+            Core::Audio::AudioManager::Instance().SetPortalTransform(m, enabled);
+            return (int64_t)1;
+        });
+        vm.RegisterNative("Audio.Portal.ClearTransform", [](const std::vector<Value>&) -> Value {
+            Core::Audio::AudioManager::Instance().ClearPortalTransform();
+            return (int64_t)1;
+        });
+
+        vm.RegisterNative("Audio.MLSpatialization.Enable", [](const std::vector<Value>& args) -> Value {
+            const bool enabled = args.size() > 0 ? (GetInt(args[0]) != 0) : true;
+            Core::Audio::AudioManager::Instance().SetMLSpatializationEnabled(enabled);
+            return (int64_t)1;
+        });
+        vm.RegisterNative("Audio.MLSpatialization.Train", [](const std::vector<Value>&) -> Value {
+            Core::Audio::AudioManager::Instance().TrainMLModel();
+            return (int64_t)1;
+        });
+        vm.RegisterNative("Audio.MLSpatialization.SaveWeights", [](const std::vector<Value>& args) -> Value {
+            if (args.empty()) return (int64_t)0;
+            return (int64_t)(Core::Audio::AudioManager::Instance().SaveMLWeights(GetString(args[0]).c_str()) ? 1 : 0);
+        });
+        vm.RegisterNative("Audio.MLSpatialization.LoadWeights", [](const std::vector<Value>& args) -> Value {
+            if (args.empty()) return (int64_t)0;
+            return (int64_t)(Core::Audio::AudioManager::Instance().LoadMLWeights(GetString(args[0]).c_str()) ? 1 : 0);
         });
 
         // ========== Motion Graphics ==========
@@ -1916,68 +2525,19 @@ namespace Solstice::Scripting {
                 float maxDistance = dirArgStart + (std::holds_alternative<Vec3>(args[dirArgStart]) ? 1 : 3) < args.size() 
                     ? GetFloat(args[dirArgStart + (std::holds_alternative<Vec3>(args[dirArgStart]) ? 1 : 3)]) : 1000.0f;
                 
-                // Normalize direction
-                direction = direction.Normalized();
-                Vec3 endPoint = origin + direction * maxDistance;
-                
-                // Use ReactPhysics3D bridge
-                auto& bridge = physicsSystem->GetBridge();
-                auto* world = bridge.GetPhysicsWorld();
-                if (!world) {
-                    return noHit;
-                }
-                
-                // Create ray
-                reactphysics3d::Vector3 rp3dStart(origin.x, origin.y, origin.z);
-                reactphysics3d::Vector3 rp3dEnd(endPoint.x, endPoint.y, endPoint.z);
-                reactphysics3d::Ray ray(rp3dStart, rp3dEnd);
-                
-                // Raycast callback to get first hit
-                struct RaycastCallback : public reactphysics3d::RaycastCallback {
-                    reactphysics3d::Vector3 worldPoint;
-                    reactphysics3d::Vector3 worldNormal;
-                    reactphysics3d::decimal hitFraction;
-                    int triangleIndex;
-                    reactphysics3d::CollisionBody* body;
-                    reactphysics3d::Collider* collider;
-                    bool hasHit = false;
-                    reactphysics3d::decimal notifyRaycastHit(const reactphysics3d::RaycastInfo& info) override {
-                        if (!hasHit) {
-                            // Manually copy fields since RaycastInfo has deleted copy assignment
-                            worldPoint = info.worldPoint;
-                            worldNormal = info.worldNormal;
-                            hitFraction = info.hitFraction;
-                            triangleIndex = info.triangleIndex;
-                            body = info.body;
-                            collider = info.collider;
-                            hasHit = true;
-                        }
-                        return reactphysics3d::decimal(0.0); // Stop after first hit
-                    }
-                } callback;
-                
-                world->raycast(ray, &callback);
-                
-                if (callback.hasHit) {
-                    // Return hit information as Dictionary
+                Physics::RaycastRequest rq{};
+                rq.Origin = origin;
+                rq.Direction = direction.Normalized();
+                rq.MaxDistance = maxDistance;
+                Physics::RaycastHit hit = physicsSystem->RaycastClosest(rq);
+
+                if (hit.Hit) {
                     auto hitData = std::make_shared<Dictionary>();
-                    // Find entity ID from body
-                    ECS::EntityId hitEntity = 0;
-                    // Note: Would need reverse mapping from ReactPhysics3D body to entity
-                    // For now, return hit position and normal
                     hitData->Set("hit", (int64_t)1);
-                    hitData->Set("position", Vec3(
-                        callback.worldPoint.x,
-                        callback.worldPoint.y,
-                        callback.worldPoint.z
-                    ));
-                    hitData->Set("normal", Vec3(
-                        callback.worldNormal.x,
-                        callback.worldNormal.y,
-                        callback.worldNormal.z
-                    ));
-                    hitData->Set("distance", (double)(callback.hitFraction * maxDistance));
-                    hitData->Set("entityId", (int64_t)hitEntity);
+                    hitData->Set("position", hit.Point);
+                    hitData->Set("normal", hit.Normal);
+                    hitData->Set("distance", (double)hit.Distance);
+                    hitData->Set("entityId", (int64_t)hit.Entity);
                     return hitData;
                 }
                 
@@ -2000,55 +2560,9 @@ namespace Solstice::Scripting {
                 
                 auto result = std::make_shared<Array>();
                 
-                // Use ReactPhysics3D bridge
-                auto& bridge = physicsSystem->GetBridge();
-                auto* world = bridge.GetPhysicsWorld();
-                if (!world) return result;
-                
-                // Create a test body with sphere shape for overlap testing
-                // Note: ReactPhysics3D requires a body for overlap tests
-                // For now, we'll use testOverlap on all bodies and check sphere distance
-                // This is a simplified implementation
-                struct SphereOverlapCallback : public reactphysics3d::OverlapCallback {
-                    std::vector<reactphysics3d::CollisionBody*> overlappingBodies;
-                    reactphysics3d::Vector3 sphereCenter;
-                    reactphysics3d::decimal sphereRadius;
-                    
-                    SphereOverlapCallback(const reactphysics3d::Vector3& center, reactphysics3d::decimal radius)
-                        : sphereCenter(center), sphereRadius(radius) {}
-                    
-                    void onOverlap(reactphysics3d::OverlapCallback::CallbackData& callbackData) override {
-                        // Check each overlapping pair
-                        reactphysics3d::uint32 numPairs = callbackData.getNbOverlappingPairs();
-                        for (reactphysics3d::uint32 i = 0; i < numPairs; ++i) {
-                            auto pair = callbackData.getOverlappingPair(i);
-                            // Get bodies from pair and check distance to sphere center
-                            // Simplified: add all overlapping bodies
-                            if (pair.getBody1()) {
-                                auto pos = pair.getBody1()->getTransform().getPosition();
-                                reactphysics3d::decimal dist = (pos - sphereCenter).length();
-                                if (dist <= sphereRadius) {
-                                    overlappingBodies.push_back(pair.getBody1());
-                                }
-                            }
-                            if (pair.getBody2()) {
-                                auto pos = pair.getBody2()->getTransform().getPosition();
-                                reactphysics3d::decimal dist = (pos - sphereCenter).length();
-                                if (dist <= sphereRadius) {
-                                    overlappingBodies.push_back(pair.getBody2());
-                                }
-                            }
-                        }
-                    }
-                } callback(reactphysics3d::Vector3(center.x, center.y, center.z), reactphysics3d::decimal(radius));
-                
-                // Test overlap with all bodies in world
-                world->testOverlap(callback);
-                
-                // Convert bodies to entity IDs (would need reverse mapping from bridge)
-                // For now, return count
-                for (size_t i = 0; i < callback.overlappingBodies.size(); ++i) {
-                    result->Push((int64_t)0); // Placeholder entity ID
+                const auto entities = physicsSystem->OverlapSphere(center, radius);
+                for (const auto entityId : entities) {
+                    result->Push((int64_t)entityId);
                 }
                 
                 return result;
@@ -2077,66 +2591,11 @@ namespace Solstice::Scripting {
                 
                 auto result = std::make_shared<Array>();
                 
-                auto& bridge = physicsSystem->GetBridge();
-                auto* world = bridge.GetPhysicsWorld();
-                if (!world) return result;
-                
-                // Create AABB for box overlap test
-                reactphysics3d::Vector3 boxMin(center.x - size.x * 0.5f, center.y - size.y * 0.5f, center.z - size.z * 0.5f);
-                reactphysics3d::Vector3 boxMax(center.x + size.x * 0.5f, center.y + size.y * 0.5f, center.z + size.z * 0.5f);
-                
-                struct BoxOverlapCallback : public reactphysics3d::OverlapCallback {
-                    std::vector<reactphysics3d::CollisionBody*> overlappingBodies;
-                    reactphysics3d::AABB testAABB;
-                    
-                    BoxOverlapCallback(const reactphysics3d::Vector3& min, const reactphysics3d::Vector3& max)
-                        : testAABB(min, max) {}
-                    
-                    void onOverlap(reactphysics3d::OverlapCallback::CallbackData& callbackData) override {
-                        reactphysics3d::uint32 numPairs = callbackData.getNbOverlappingPairs();
-                        for (reactphysics3d::uint32 i = 0; i < numPairs; ++i) {
-                            auto pair = callbackData.getOverlappingPair(i);
-                            // Check if body AABB overlaps with test AABB
-                            if (pair.getBody1()) {
-                                auto bodyAABB = pair.getBody1()->getAABB();
-                                if (testAABB.testCollision(bodyAABB)) {
-                                    // Avoid duplicates
-                                    bool found = false;
-                                    for (auto* b : overlappingBodies) {
-                                        if (b == pair.getBody1()) {
-                                            found = true;
-                                            break;
-                                        }
-                                    }
-                                    if (!found) {
-                                        overlappingBodies.push_back(pair.getBody1());
-                                    }
-                                }
-                            }
-                            if (pair.getBody2()) {
-                                auto bodyAABB = pair.getBody2()->getAABB();
-                                if (testAABB.testCollision(bodyAABB)) {
-                                    // Avoid duplicates
-                                    bool found = false;
-                                    for (auto* b : overlappingBodies) {
-                                        if (b == pair.getBody2()) {
-                                            found = true;
-                                            break;
-                                        }
-                                    }
-                                    if (!found) {
-                                        overlappingBodies.push_back(pair.getBody2());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } callback(boxMin, boxMax);
-                
-                world->testOverlap(callback);
-                
-                for (size_t i = 0; i < callback.overlappingBodies.size(); ++i) {
-                    result->Push((int64_t)0); // Placeholder entity ID
+                const Vec3 min(center.x - size.x * 0.5f, center.y - size.y * 0.5f, center.z - size.z * 0.5f);
+                const Vec3 max(center.x + size.x * 0.5f, center.y + size.y * 0.5f, center.z + size.z * 0.5f);
+                const auto entities = physicsSystem->OverlapAabb(min, max);
+                for (const auto entityId : entities) {
+                    result->Push((int64_t)entityId);
                 }
                 
                 return result;

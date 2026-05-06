@@ -22,8 +22,11 @@ SolsticeFfmpegRunResult SolsticeRunProcessCapture(const std::string& executable,
     if (exe.size() >= 2 && ((exe.front() == '"' && exe.back() == '"') || (exe.front() == '\'' && exe.back() == '\''))) {
         exe = exe.substr(1, exe.size() - 2);
     }
-    std::string cmd = "\"" + exe + "\" " + arguments;
+    std::string cmdCore = "\"" + exe + "\" " + arguments;
+    std::string cmd = cmdCore;
 #ifdef _WIN32
+    // _popen goes through cmd.exe; this wrapper avoids common quote parsing failures on Windows.
+    cmd = "cmd /s /c \"" + cmdCore + "\"";
     FILE* pipe = _popen(cmd.c_str(), "rb");
 #else
     FILE* pipe = popen(cmd.c_str(), "r");

@@ -6,9 +6,12 @@
 #include <functional>
 #include <Math/Vector.hxx>
 #include <Physics/Integration/ReactPhysics3DBridge.hxx>
+#include <Physics/Integration/PhysicsBackend.hxx>
 #include <Physics/Collision/Broadphase/CCD.hxx>
 #include <Physics/Collision/Narrowphase/CollisionResolution.hxx>
 #include <Physics/Dynamics/IterativeSolver.hxx>
+#include <Physics/Dynamics/SoftBody.hxx>
+#include <Physics/Dynamics/Vehicle.hxx>
 #include <Physics/Collision/Narrowphase/ManifoldManager.hxx>
 
 namespace Solstice::Physics {
@@ -47,6 +50,27 @@ public:
 
     // Get the ReactPhysics3D bridge
     ReactPhysics3DBridge& GetBridge() { return m_Bridge; }
+    const ReactPhysics3DBridge& GetBridge() const { return m_Bridge; }
+    IPhysicsBackend& GetBackend() { return m_Bridge; }
+    const IPhysicsBackend& GetBackend() const { return m_Bridge; }
+
+    // Backend-neutral query APIs
+    RaycastHit RaycastClosest(const RaycastRequest& request);
+    bool RaycastAny(const RaycastRequest& request);
+    std::vector<RaycastAllHit> RaycastAll(const RaycastRequest& request);
+    std::vector<ECS::EntityId> OverlapSphere(const Math::Vec3& center, float radius);
+    std::vector<ECS::EntityId> OverlapAabb(const Math::Vec3& min, const Math::Vec3& max);
+    PhysicsDebugDrawData GetDebugDrawData();
+
+    // Scheduler policy
+    void SetTaskSchedulerPolicy(const PhysicsTaskSchedulerPolicy& policy) { m_TaskScheduler.SetPolicy(policy); }
+    const PhysicsTaskSchedulerPolicy& GetTaskSchedulerPolicy() const { return m_TaskScheduler.GetPolicy(); }
+
+    // Future hooks (stubs)
+    bool SupportsVehicles() const { return true; }
+    bool SupportsSoftBodies() const { return true; }
+    void CreateVehicleStub(ECS::EntityId entityId, const VehicleConfig& config);
+    void CreateSoftBodyStub(ECS::EntityId entityId, const SoftBodyConfig& config);
 
     /// Blends from the per-substep snapshot toward the current simulated pose when building the render scene
     /// (see Render::SyncPhysicsToScene). Fixed-step games set this from the frame's physics accumulator; default 1.
@@ -65,6 +89,8 @@ private:
     void IntegratePosition(float dt);
     void UpdateBroadphase();
     void ResolveCollisions();
+    void UpdateVehicles(float dt);
+    void UpdateSoftBodies(float dt);
     void UpdateFluidSimulations(float dt);
     void UpdateSleepState();
     // PerformCCD moved to CCD class
@@ -93,9 +119,13 @@ private:
     std::vector<FluidSimulation*> m_FluidSimulations;
 
     float m_MaxStepDt{1.0f / 30.0f};
+    float m_FixedStepDt{1.0f / 60.0f};
+    float m_StepAccumulator{0.0f};
+    int m_MaxSubStepsPerFrame{4};
 
     // Render: blend from substep snapshot to current pose (0..1, typically 1 - accumulator / fixedStep).
     float m_SceneRenderBlendT{1.0f};
+    PhysicsTaskScheduler m_TaskScheduler{};
 
     // Functional integration strategy type
     using IntegrationStrategy = std::function<void(struct RigidBody&, float)>;

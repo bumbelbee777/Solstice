@@ -11,10 +11,21 @@ std::vector<TypeIssue> StaticTypeChecker::CheckProgram(const Program& program) {
     for (const auto& [ip, reg] : program.PtrOperandRegs) {
         auto tr = program.RegisterTypes.find(reg);
         if (tr == program.RegisterTypes.end()) {
-            out.push_back({"Ptr.* call at instruction " + std::to_string(ip) + " uses register " +
-                           std::to_string((int)reg) + " without a type hint (expected Ptr<...>)"});
+            TypeIssue issue;
+            issue.message = "Ptr.* call uses register " + std::to_string((int)reg) +
+                            " without a type hint (expected Ptr<...>)";
+            issue.instructionIndex = ip;
+            out.push_back(std::move(issue));
         } else if (tr->second.rfind("Ptr", 0) != 0) {
-            out.push_back({"Ptr.* call at instruction " + std::to_string(ip) + " expected Ptr type, got " + tr->second});
+            TypeIssue issue;
+            issue.message = "Ptr.* call expected Ptr type, got " + tr->second;
+            issue.instructionIndex = ip;
+            out.push_back(std::move(issue));
+        } else if (tr->second == "Ptr") {
+            TypeIssue issue;
+            issue.message = "Ptr.* call uses bare Ptr type; prefer Ptr<T> so pointee intent is explicit";
+            issue.instructionIndex = ip;
+            out.push_back(std::move(issue));
         }
     }
     return out;

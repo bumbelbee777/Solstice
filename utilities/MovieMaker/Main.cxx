@@ -8,6 +8,7 @@
 #include "SmmGltf.hxx"
 #include "SmmFileOps.hxx"
 #include "SmmKeyframePresets.hxx"
+#include "SmmMidiParse.hxx"
 #include "SmmTimelineRangePresets.hxx"
 #include "SmmMg2DPanel.hxx"
 #include "SmmParallaxAuthoringPanel.hxx"
@@ -23,6 +24,7 @@
 #include "LibUI/AssetBrowser/AssetBrowser.hxx"
 #include "LibUI/Core/Core.hxx"
 #include "LibUI/Docking/Docking.hxx"
+#include "LibUI/Layout/SplitPane.hxx"
 #include "LibUI/Widgets/Widgets.hxx"
 #include "LibUI/FileDialogs/FileDialogs.hxx"
 #include "LibUI/Icons/Icons.hxx"
@@ -32,6 +34,7 @@
 #include "LibUI/Timeline/TimelineWidget.hxx"
 #include "LibUI/Workspace/PanelRegistry.hxx"
 #include "LibUI/Tools/DiagLog.hxx"
+#include "LibUI/Tools/PathInputBrowse.hxx"
 #include "LibUI/Viewport/Viewport.hxx"
 #include "LibUI/Viewport/ViewportMath.hxx"
 #include "EditorEnginePreview/EditorEnginePreview.hxx"
@@ -68,6 +71,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 #include <cstdint>
 #include <functional>
@@ -107,6 +111,77 @@ void DrainImports(Solstice::Parallax::DevSessionAssetResolver& resolver, std::ve
             e.DisplayName = std::filesystem::path(p).filename().string();
             e.Hash = resolver.HashFromPath(p);
             browser.push_back(std::move(e));
+        }
+    }
+}
+
+static void CollectAssetHashesForElement(
+    const Solstice::Parallax::ParallaxScene& scene, const Solstice::Parallax::ParallaxScene::ElementNode& el,
+    std::unordered_set<uint64_t>& outHashes) {
+    if (el.SchemaIndex >= scene.GetSchemas().size()) {
+        return;
+    }
+    const auto& schema = scene.GetSchemas()[el.SchemaIndex];
+    for (const auto& ad : schema.Attributes) {
+        if (ad.Type != Solstice::Parallax::AttributeType::AssetHash) {
+            continue;
+        }
+        auto it = el.Attributes.find(ad.Name);
+        if (it == el.Attributes.end()) {
+            continue;
+        }
+        if (const auto* h = std::get_if<uint64_t>(&it->second); h && *h != 0ull) {
+            outHashes.insert(*h);
+        }
+    }
+}
+
+static void CollectAssetHashesForMG(
+    const Solstice::Parallax::ParallaxScene& scene, const Solstice::Parallax::MGElementRecord& mg,
+    std::unordered_set<uint64_t>& outHashes) {
+    if (mg.SchemaIndex >= scene.GetSchemas().size()) {
+        return;
+    }
+    const auto& schema = scene.GetSchemas()[mg.SchemaIndex];
+    for (const auto& ad : schema.Attributes) {
+        if (ad.Type != Solstice::Parallax::AttributeType::AssetHash) {
+            continue;
+        }
+        auto it = mg.Attributes.find(ad.Name);
+        if (it == mg.Attributes.end()) {
+            continue;
+        }
+        if (const auto* h = std::get_if<uint64_t>(&it->second); h && *h != 0ull) {
+            outHashes.insert(*h);
+        }
+    }
+}
+
+static void PrepareSceneEmbeddedAssets(
+    Solstice::Parallax::ParallaxScene& scene, Solstice::Parallax::DevSessionAssetResolver& resolver) {
+    scene.GetEmbeddedAssets().clear();
+    auto& pathTable = scene.GetPathTable();
+    for (const auto& kv : resolver.GetPathBindings()) {
+        pathTable[kv.first] = kv.second;
+    }
+
+    std::unordered_set<uint64_t> wantedHashes;
+    for (const auto& el : scene.GetElements()) {
+        CollectAssetHashesForElement(scene, el, wantedHashes);
+    }
+    for (const auto& mg : scene.GetMGElements()) {
+        CollectAssetHashesForMG(scene, mg, wantedHashes);
+    }
+    for (const auto& kv : pathTable) {
+        if (kv.second != 0ull) {
+            wantedHashes.insert(kv.second);
+        }
+    }
+
+    for (const auto& h : wantedHashes) {
+        Solstice::Parallax::AssetData data{};
+        if (resolver.Resolve(h, data)) {
+            scene.GetEmbeddedAssets()[h] = std::move(data);
         }
     }
 }
@@ -232,29 +307,29 @@ void MovieMakerPluginsDrawPanel(bool* pOpen) {
     if (pOpen && !*pOpen) {
         return;
     }
-    ImGui::SetNextWindowSize(ImVec2(440, 240), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Plugins##SMM", pOpen)) {
-        ImGui::TextUnformatted("Native plugins: ./plugins next to MovieMaker");
-        if (ImGui::Button("Reload##mmplug")) {
+    LibUI::Widgets::SetNextWindowSize(ImVec2(440, 240), ImGuiCond_FirstUseEver);
+    if (LibUI::Widgets::BeginWindow("Plugins##SMM", pOpen)) {
+        LibUI::Widgets::Text("Native plugins: ./plugins next to MovieMaker");
+        if (LibUI::Widgets::Button("Reload##mmplug")) {
             LoadMovieMakerPlugins();
         }
-        ImGui::Separator();
+        LibUI::Widgets::Separator();
         if (!g_MovieMakerPluginLoadErrors.empty()) {
             for (const auto& fe : g_MovieMakerPluginLoadErrors) {
                 ImGui::BulletText("%s\n  %s", fe.first.c_str(), fe.second.c_str());
             }
-            ImGui::Separator();
+            LibUI::Widgets::Separator();
         }
         std::vector<Solstice::UtilityPluginHost::ModuleSummary> mods;
         MovieMakerPlugins().EnumerateModules(mods);
         if (mods.empty()) {
-            ImGui::TextUnformatted("No plugins loaded.");
+            LibUI::Widgets::Text("No plugins loaded.");
         }
         for (const auto& m : mods) {
             ImGui::BulletText("%s — %s", m.DisplayName.c_str(), m.PathUtf8.c_str());
         }
     }
-    ImGui::End();
+    LibUI::Widgets::EndWindow();
 }
 
 Solstice::Parallax::ChannelIndex FindChannelForAttribute(Solstice::Parallax::ParallaxScene& scene,
@@ -266,6 +341,546 @@ Solstice::Parallax::ChannelIndex FindChannelForAttribute(Solstice::Parallax::Par
         }
     }
     return Solstice::Parallax::PARALLAX_INVALID_INDEX;
+}
+
+Solstice::Parallax::ChannelIndex EnsureElementChannel(Solstice::Parallax::ParallaxScene& scene, Solstice::Parallax::ElementIndex element,
+    std::string_view attribute, Solstice::Parallax::AttributeType type) {
+    Solstice::Parallax::ChannelIndex ch = FindChannelForAttribute(scene, element, attribute, type);
+    if (ch == Solstice::Parallax::PARALLAX_INVALID_INDEX) {
+        ch = Solstice::Parallax::AddChannel(scene, element, attribute, type);
+    }
+    return ch;
+}
+
+uint32_t FindMGTrack(const Solstice::Parallax::ParallaxScene& scene, Solstice::Parallax::MGIndex mgIndex, std::string_view property) {
+    if (mgIndex >= scene.GetMGElements().size()) {
+        return Solstice::Parallax::PARALLAX_INVALID_INDEX;
+    }
+    const auto& mg = scene.GetMGElements()[mgIndex];
+    const auto& tracks = scene.GetMGTracks();
+    for (uint32_t i = 0; i < mg.TrackCount; ++i) {
+        const uint32_t ti = mg.FirstTrackIndex + i;
+        if (ti >= tracks.size()) {
+            break;
+        }
+        if (tracks[ti].PropertyName == property) {
+            return ti;
+        }
+    }
+    return Solstice::Parallax::PARALLAX_INVALID_INDEX;
+}
+
+uint32_t EnsureMGTrack(Solstice::Parallax::ParallaxScene& scene, Solstice::Parallax::MGIndex mgIndex, std::string_view property,
+    Solstice::Parallax::AttributeType type) {
+    uint32_t ti = FindMGTrack(scene, mgIndex, property);
+    if (ti == Solstice::Parallax::PARALLAX_INVALID_INDEX) {
+        ti = Solstice::Parallax::AddMGTrack(scene, mgIndex, property, type, Solstice::Parallax::EasingType::Linear);
+    }
+    return ti;
+}
+
+void AddFloatKeys(Solstice::Parallax::ParallaxScene& scene, Solstice::Parallax::ElementIndex element, std::string_view attribute,
+    std::initializer_list<std::pair<uint64_t, float>> keys) {
+    const Solstice::Parallax::ChannelIndex ch =
+        EnsureElementChannel(scene, element, attribute, Solstice::Parallax::AttributeType::Float);
+    if (ch == Solstice::Parallax::PARALLAX_INVALID_INDEX) {
+        return;
+    }
+    for (const auto& [t, v] : keys) {
+        Solstice::Parallax::AddKeyframe(scene, ch, t, Solstice::Parallax::AttributeValue{v}, Solstice::Parallax::EasingType::EaseInOut);
+    }
+}
+
+void AddVec3Keys(Solstice::Parallax::ParallaxScene& scene, Solstice::Parallax::ElementIndex element, std::string_view attribute,
+    std::initializer_list<std::pair<uint64_t, Solstice::Math::Vec3>> keys) {
+    const Solstice::Parallax::ChannelIndex ch =
+        EnsureElementChannel(scene, element, attribute, Solstice::Parallax::AttributeType::Vec3);
+    if (ch == Solstice::Parallax::PARALLAX_INVALID_INDEX) {
+        return;
+    }
+    for (const auto& [t, v] : keys) {
+        Solstice::Parallax::AddKeyframe(scene, ch, t, Solstice::Parallax::AttributeValue{v}, Solstice::Parallax::EasingType::EaseInOut);
+    }
+}
+
+void AddMgFloatKeys(Solstice::Parallax::ParallaxScene& scene, Solstice::Parallax::MGIndex mgIndex, std::string_view property,
+    std::initializer_list<std::pair<uint64_t, float>> keys) {
+    const uint32_t ti = EnsureMGTrack(scene, mgIndex, property, Solstice::Parallax::AttributeType::Float);
+    if (ti == Solstice::Parallax::PARALLAX_INVALID_INDEX) {
+        return;
+    }
+    for (const auto& [t, v] : keys) {
+        Solstice::Parallax::AddMGKeyframe(scene, ti, t, Solstice::Parallax::AttributeValue{v}, Solstice::Parallax::EasingType::EaseInOut);
+    }
+}
+
+void AddMgVec4Keys(Solstice::Parallax::ParallaxScene& scene, Solstice::Parallax::MGIndex mgIndex, std::string_view property,
+    std::initializer_list<std::pair<uint64_t, Solstice::Math::Vec4>> keys) {
+    const uint32_t ti = EnsureMGTrack(scene, mgIndex, property, Solstice::Parallax::AttributeType::Vec4);
+    if (ti == Solstice::Parallax::PARALLAX_INVALID_INDEX) {
+        return;
+    }
+    for (const auto& [t, v] : keys) {
+        Solstice::Parallax::AddMGKeyframe(scene, ti, t, Solstice::Parallax::AttributeValue{v}, Solstice::Parallax::EasingType::EaseInOut);
+    }
+}
+
+void AppendU16BE(std::vector<uint8_t>& out, uint16_t v) {
+    out.push_back(static_cast<uint8_t>((v >> 8) & 0xFFu));
+    out.push_back(static_cast<uint8_t>(v & 0xFFu));
+}
+
+void AppendU32BE(std::vector<uint8_t>& out, uint32_t v) {
+    out.push_back(static_cast<uint8_t>((v >> 24) & 0xFFu));
+    out.push_back(static_cast<uint8_t>((v >> 16) & 0xFFu));
+    out.push_back(static_cast<uint8_t>((v >> 8) & 0xFFu));
+    out.push_back(static_cast<uint8_t>(v & 0xFFu));
+}
+
+void AppendU16LE(std::vector<uint8_t>& out, uint16_t v) {
+    out.push_back(static_cast<uint8_t>(v & 0xFFu));
+    out.push_back(static_cast<uint8_t>((v >> 8) & 0xFFu));
+}
+
+void AppendU32LE(std::vector<uint8_t>& out, uint32_t v) {
+    out.push_back(static_cast<uint8_t>(v & 0xFFu));
+    out.push_back(static_cast<uint8_t>((v >> 8) & 0xFFu));
+    out.push_back(static_cast<uint8_t>((v >> 16) & 0xFFu));
+    out.push_back(static_cast<uint8_t>((v >> 24) & 0xFFu));
+}
+
+void AppendVarLen(std::vector<uint8_t>& out, uint32_t v) {
+    uint8_t buf[5]{};
+    int n = 0;
+    buf[n++] = static_cast<uint8_t>(v & 0x7Fu);
+    while ((v >>= 7u) != 0u) {
+        buf[n++] = static_cast<uint8_t>(0x80u | (v & 0x7Fu));
+    }
+    while (n > 0) {
+        out.push_back(buf[--n]);
+    }
+}
+
+std::vector<uint8_t> BuildShowcaseMidiBytes() {
+    std::vector<uint8_t> track;
+    auto push = [&](uint8_t b) { track.push_back(b); };
+    auto noteOn = [&](uint32_t dt, uint8_t note, uint8_t vel) {
+        AppendVarLen(track, dt);
+        push(0x90u);
+        push(note);
+        push(vel);
+    };
+    auto noteOff = [&](uint32_t dt, uint8_t note) {
+        AppendVarLen(track, dt);
+        push(0x80u);
+        push(note);
+        push(0u);
+    };
+
+    // 120 BPM tempo, warm synth patch, then a short heroic phrase.
+    AppendVarLen(track, 0);
+    push(0xFFu);
+    push(0x51u);
+    push(0x03u);
+    push(0x07u);
+    push(0xA1u);
+    push(0x20u);
+
+    AppendVarLen(track, 0);
+    push(0xC0u);
+    push(0x50u);
+
+    const uint8_t phrase[] = {60, 64, 67, 72, 71, 67, 64, 60};
+    constexpr size_t phraseCount = sizeof(phrase) / sizeof(phrase[0]);
+    for (size_t i = 0; i < phraseCount; ++i) {
+        noteOn(0, phrase[i], 98u);
+        noteOff(i == phraseCount - 1 ? 960u : 480u, phrase[i]);
+    }
+
+    AppendVarLen(track, 0);
+    push(0xFFu);
+    push(0x2Fu);
+    push(0x00u);
+
+    std::vector<uint8_t> smf;
+    smf.reserve(track.size() + 22);
+    smf.push_back('M');
+    smf.push_back('T');
+    smf.push_back('h');
+    smf.push_back('d');
+    AppendU32BE(smf, 6u);
+    AppendU16BE(smf, 0u);
+    AppendU16BE(smf, 1u);
+    AppendU16BE(smf, 480u);
+    smf.push_back('M');
+    smf.push_back('T');
+    smf.push_back('r');
+    smf.push_back('k');
+    AppendU32BE(smf, static_cast<uint32_t>(track.size()));
+    smf.insert(smf.end(), track.begin(), track.end());
+    return smf;
+}
+
+std::vector<uint8_t> BuildShowcaseWavBytes() {
+    constexpr int sampleRate = 44100;
+    constexpr int channels = 1;
+    constexpr int bitsPerSample = 16;
+    constexpr float durationSec = 8.0f;
+    const int totalSamples = static_cast<int>(durationSec * static_cast<float>(sampleRate));
+    std::vector<int16_t> pcm(static_cast<size_t>(totalSamples));
+    const float notesHz[] = {261.63f, 329.63f, 392.00f, 523.25f, 493.88f, 392.00f, 329.63f, 261.63f};
+    const int noteSamples = sampleRate / 2; // 0.5s each
+    for (int i = 0; i < totalSamples; ++i) {
+        const int ni = (i / noteSamples) % static_cast<int>(sizeof(notesHz) / sizeof(notesHz[0]));
+        const float hz = notesHz[ni];
+        const float t = static_cast<float>(i) / static_cast<float>(sampleRate);
+        const float envPos = static_cast<float>(i % noteSamples) / static_cast<float>(noteSamples);
+        const float env = std::clamp(1.0f - envPos * 0.85f, 0.15f, 1.0f);
+        const float s = std::sin(2.0f * 3.14159265f * hz * t) * 0.28f * env;
+        pcm[static_cast<size_t>(i)] = static_cast<int16_t>(std::clamp(s * 32767.0f, -32767.0f, 32767.0f));
+    }
+    const uint32_t dataBytes = static_cast<uint32_t>(pcm.size() * sizeof(int16_t));
+    std::vector<uint8_t> wav;
+    wav.reserve(44u + dataBytes);
+    wav.push_back('R');
+    wav.push_back('I');
+    wav.push_back('F');
+    wav.push_back('F');
+    AppendU32LE(wav, 36u + dataBytes);
+    wav.push_back('W');
+    wav.push_back('A');
+    wav.push_back('V');
+    wav.push_back('E');
+    wav.push_back('f');
+    wav.push_back('m');
+    wav.push_back('t');
+    wav.push_back(' ');
+    AppendU32LE(wav, 16u);
+    AppendU16LE(wav, 1u);
+    AppendU16LE(wav, static_cast<uint16_t>(channels));
+    AppendU32LE(wav, static_cast<uint32_t>(sampleRate));
+    AppendU32LE(wav, static_cast<uint32_t>(sampleRate * channels * (bitsPerSample / 8)));
+    AppendU16LE(wav, static_cast<uint16_t>(channels * (bitsPerSample / 8)));
+    AppendU16LE(wav, static_cast<uint16_t>(bitsPerSample));
+    wav.push_back('d');
+    wav.push_back('a');
+    wav.push_back('t');
+    wav.push_back('a');
+    AppendU32LE(wav, dataBytes);
+    const auto* p = reinterpret_cast<const uint8_t*>(pcm.data());
+    wav.insert(wav.end(), p, p + dataBytes);
+    return wav;
+}
+
+bool WriteShowcaseWav(const std::filesystem::path& path, std::string& errOut) {
+    errOut.clear();
+    std::error_code ec;
+    if (const std::filesystem::path parent = path.parent_path(); !parent.empty()) {
+        std::filesystem::create_directories(parent, ec);
+        if (ec) {
+            errOut = "Could not create WAV output folder: " + ec.message();
+            return false;
+        }
+    }
+    const std::vector<uint8_t> bytes = BuildShowcaseWavBytes();
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        errOut = "Could not open WAV output path: " + path.string();
+        return false;
+    }
+    out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    if (!out) {
+        errOut = "Failed to write WAV bytes: " + path.string();
+        return false;
+    }
+    return true;
+}
+
+bool WriteShowcaseMidi(const std::filesystem::path& path, std::string& errOut) {
+    errOut.clear();
+    std::error_code ec;
+    if (const std::filesystem::path parent = path.parent_path(); !parent.empty()) {
+        std::filesystem::create_directories(parent, ec);
+        if (ec) {
+            errOut = "Could not create MIDI output folder: " + ec.message();
+            return false;
+        }
+    }
+    const std::vector<uint8_t> bytes = BuildShowcaseMidiBytes();
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        errOut = "Could not open MIDI output path: " + path.string();
+        return false;
+    }
+    out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    if (!out) {
+        errOut = "Failed to write MIDI bytes: " + path.string();
+        return false;
+    }
+    return true;
+}
+
+void BootstrapShowcaseScene(std::unique_ptr<Solstice::Parallax::ParallaxScene>& scenePtr, Smm::Editing::ParticleEditorState& particleState,
+    Smm::Authoring::SessionState& authoring, Solstice::Parallax::DevSessionAssetResolver& resolver,
+    const std::filesystem::path& projectPath, std::string& statusLine) {
+    scenePtr = Solstice::Parallax::CreateScene(6000);
+    if (!scenePtr) {
+        statusLine = "Showcase initialization failed: could not allocate scene.";
+        return;
+    }
+    Solstice::Parallax::ParallaxScene& scene = *scenePtr;
+    const uint64_t tps = scene.GetTicksPerSecond();
+    const uint64_t s1 = tps;
+    scene.SetTimelineDurationTicks(16ull * s1);
+
+    const Solstice::Parallax::ElementIndex cam =
+        Solstice::Parallax::AddElement(scene, "CameraElement", "Showcase Camera", 0);
+    const Solstice::Parallax::ElementIndex beamLight =
+        Solstice::Parallax::AddElement(scene, "LightElement", "Golden Beam Light", 0);
+    const Solstice::Parallax::ElementIndex fillLight =
+        Solstice::Parallax::AddElement(scene, "LightElement", "Shard Fill Light", 0);
+    const Solstice::Parallax::ElementIndex pyramid =
+        Solstice::Parallax::AddElement(scene, "ActorElement", "Summoned Pyramid", 0);
+    const Solstice::Parallax::ElementIndex fragA =
+        Solstice::Parallax::AddElement(scene, "ActorElement", "Fragment A", 0);
+    const Solstice::Parallax::ElementIndex fragB =
+        Solstice::Parallax::AddElement(scene, "ActorElement", "Fragment B", 0);
+    const Solstice::Parallax::ElementIndex fragC =
+        Solstice::Parallax::AddElement(scene, "ActorElement", "Fragment C", 0);
+    const Solstice::Parallax::ElementIndex fragD =
+        Solstice::Parallax::AddElement(scene, "ActorElement", "Fragment D", 0);
+    const Solstice::Parallax::ElementIndex cube =
+        Solstice::Parallax::AddElement(scene, "ActorElement", "Final Black Cube", 0);
+    const Solstice::Parallax::ElementIndex audio =
+        Solstice::Parallax::AddElement(scene, "AudioSourceElement", "Showcase Melody", 0);
+
+    Solstice::Parallax::SetAttribute(scene, cam, "Position", Solstice::Parallax::AttributeValue{Solstice::Math::Vec3{0.f, 2.6f, 9.f}});
+    Solstice::Parallax::SetAttribute(scene, cam, "Target", Solstice::Parallax::AttributeValue{Solstice::Math::Vec3{0.f, 1.3f, 0.f}});
+    Solstice::Parallax::SetAttribute(scene, cam, "FovDegrees", Solstice::Parallax::AttributeValue{48.f});
+    Solstice::Parallax::SetAttribute(scene, cam, "Near", Solstice::Parallax::AttributeValue{0.1f});
+    Solstice::Parallax::SetAttribute(scene, cam, "Far", Solstice::Parallax::AttributeValue{3000.f});
+
+    Solstice::Parallax::SetAttribute(scene, beamLight, "Position", Solstice::Parallax::AttributeValue{Solstice::Math::Vec3{0.f, 6.4f, 0.f}});
+    Solstice::Parallax::SetAttribute(scene, beamLight, "Color", Solstice::Parallax::AttributeValue{Solstice::Math::Vec4{1.f, 0.86f, 0.24f, 1.f}});
+    Solstice::Parallax::SetAttribute(scene, beamLight, "Radius", Solstice::Parallax::AttributeValue{24.f});
+    Solstice::Parallax::SetAttribute(scene, beamLight, "CastShadows", Solstice::Parallax::AttributeValue{true});
+    Solstice::Parallax::SetAttribute(scene, beamLight, "Intensity", Solstice::Parallax::AttributeValue{0.f});
+
+    Solstice::Parallax::SetAttribute(scene, fillLight, "Position", Solstice::Parallax::AttributeValue{Solstice::Math::Vec3{0.f, 2.2f, -2.5f}});
+    Solstice::Parallax::SetAttribute(scene, fillLight, "Color", Solstice::Parallax::AttributeValue{Solstice::Math::Vec4{1.f, 0.45f, 0.1f, 1.f}});
+    Solstice::Parallax::SetAttribute(scene, fillLight, "Radius", Solstice::Parallax::AttributeValue{18.f});
+    Solstice::Parallax::SetAttribute(scene, fillLight, "Intensity", Solstice::Parallax::AttributeValue{0.f});
+
+    Solstice::Parallax::SetAttribute(scene, pyramid, "Position", Solstice::Parallax::AttributeValue{Solstice::Math::Vec3{0.f, -7.f, 0.f}});
+    Solstice::Parallax::SetAttribute(scene, cube, "Position", Solstice::Parallax::AttributeValue{Solstice::Math::Vec3{0.f, -8.f, 0.f}});
+    Solstice::Parallax::SetAttribute(scene, audio, "Position", Solstice::Parallax::AttributeValue{Solstice::Math::Vec3{0.f, 1.f, 0.f}});
+    Solstice::Parallax::SetAttribute(scene, audio, "Volume", Solstice::Parallax::AttributeValue{0.9f});
+    Solstice::Parallax::SetAttribute(scene, audio, "Pitch", Solstice::Parallax::AttributeValue{1.f});
+
+    AddVec3Keys(scene, cam, "Position", {{0ull, {0.f, 2.6f, 9.f}}, {8ull * s1, {0.f, 2.1f, 6.9f}}, {16ull * s1, {0.f, 2.0f, 5.8f}}});
+    AddVec3Keys(scene, cam, "Target", {{0ull, {0.f, 1.2f, 0.f}}, {8ull * s1, {0.f, 1.0f, 0.f}}, {16ull * s1, {0.f, 0.8f, 0.f}}});
+
+    AddFloatKeys(scene, beamLight, "Intensity",
+        {{0ull, 0.f}, {2ull * s1, 18.f}, {8ull * s1, 16.f}, {10ull * s1, 32.f}, {12ull * s1, 8.f}, {16ull * s1, 4.f}});
+    AddFloatKeys(scene, fillLight, "Intensity", {{0ull, 0.f}, {9ull * s1, 3.f}, {10ull * s1, 14.f}, {12ull * s1, 2.f}, {16ull * s1, 1.f}});
+
+    // Summon from beam, hold as a pyramid, drop, then disappear on explosion.
+    AddVec3Keys(scene, pyramid, "Position",
+        {{0ull, {0.f, -7.f, 0.f}}, {2ull * s1, {0.f, -7.f, 0.f}}, {6ull * s1, {0.f, 2.6f, 0.f}}, {8ull * s1, {0.f, 3.2f, 0.f}},
+            {9ull * s1, {0.f, 0.7f, 0.f}}, {10ull * s1, {0.f, -7.f, 0.f}}});
+
+    // Explosion shards: emerge at impact, spread, then reassemble.
+    AddVec3Keys(scene, fragA, "Position",
+        {{0ull, {0.f, -8.f, 0.f}}, {9ull * s1, {0.1f, 0.8f, 0.1f}}, {11ull * s1, {-2.4f, 2.8f, 1.7f}}, {14ull * s1, {0.f, 0.7f, 0.f}},
+            {16ull * s1, {0.f, 0.7f, 0.f}}});
+    AddVec3Keys(scene, fragB, "Position",
+        {{0ull, {0.f, -8.f, 0.f}}, {9ull * s1, {-0.1f, 0.8f, -0.1f}}, {11ull * s1, {2.3f, 3.0f, -1.4f}},
+            {14ull * s1, {0.f, 0.7f, 0.f}}, {16ull * s1, {0.f, 0.7f, 0.f}}});
+    AddVec3Keys(scene, fragC, "Position",
+        {{0ull, {0.f, -8.f, 0.f}}, {9ull * s1, {0.f, 0.9f, 0.f}}, {11ull * s1, {1.5f, 2.5f, 2.2f}}, {14ull * s1, {0.f, 0.7f, 0.f}},
+            {16ull * s1, {0.f, 0.7f, 0.f}}});
+    AddVec3Keys(scene, fragD, "Position",
+        {{0ull, {0.f, -8.f, 0.f}}, {9ull * s1, {0.f, 0.9f, 0.f}}, {11ull * s1, {-1.8f, 2.2f, -2.0f}}, {14ull * s1, {0.f, 0.7f, 0.f}},
+            {16ull * s1, {0.f, 0.7f, 0.f}}});
+
+    AddVec3Keys(scene, cube, "Position",
+        {{0ull, {0.f, -8.f, 0.f}}, {13ull * s1, {0.f, -8.f, 0.f}}, {14ull * s1, {0.f, 0.7f, 0.f}}, {16ull * s1, {0.f, 0.7f, 0.f}}});
+
+    const Solstice::Parallax::MGIndex mgRoot =
+        Solstice::Parallax::AddMGElement(scene, "MotionGraphicsRootElement", "Showcase MG Root", Solstice::Parallax::PARALLAX_INVALID_INDEX);
+    if (mgRoot != Solstice::Parallax::PARALLAX_INVALID_INDEX) {
+        auto& mg = scene.GetMGElements()[mgRoot];
+        mg.Attributes["CompositeAlpha"] = Solstice::Parallax::AttributeValue{1.0f};
+        mg.Attributes["ChromaticAberration"] = Solstice::Parallax::AttributeValue{0.003f};
+        mg.Attributes["GradeExposure"] = Solstice::Parallax::AttributeValue{0.92f};
+        mg.Attributes["GradeSaturation"] = Solstice::Parallax::AttributeValue{1.1f};
+        mg.Attributes["GradeContrast"] = Solstice::Parallax::AttributeValue{1.08f};
+    }
+
+    const Solstice::Parallax::MGIndex mgCaption = Solstice::Parallax::AddMGElement(
+        scene, "MGTextElement", "Showcase Caption", Solstice::Parallax::PARALLAX_INVALID_INDEX);
+    if (mgCaption != Solstice::Parallax::PARALLAX_INVALID_INDEX) {
+        auto& mg = scene.GetMGElements()[mgCaption];
+        mg.Attributes["Text"] = Solstice::Parallax::AttributeValue{
+            std::string("Golden beam summons a pyramid. Impact shatters to shards. Shards reassemble into a black cube.")};
+        mg.Attributes["Position"] = Solstice::Parallax::AttributeValue{Solstice::Math::Vec2{42.f, 42.f}};
+        mg.Attributes["Color"] = Solstice::Parallax::AttributeValue{Solstice::Math::Vec4{1.f, 0.93f, 0.72f, 0.95f}};
+        mg.Attributes["Depth"] = Solstice::Parallax::AttributeValue{5.f};
+        AddMgFloatKeys(scene, mgCaption, "Depth", {{0ull, 5.f}, {10ull * s1, 8.f}, {16ull * s1, 5.f}});
+    }
+
+    const Solstice::Parallax::MGIndex mgAura =
+        Solstice::Parallax::AddMGElement(scene, "MGSpriteElement", "Beam Aura Card", Solstice::Parallax::PARALLAX_INVALID_INDEX);
+    if (mgAura != Solstice::Parallax::PARALLAX_INVALID_INDEX) {
+        auto& mg = scene.GetMGElements()[mgAura];
+        mg.Attributes["MGProjectionMode"] = Solstice::Parallax::AttributeValue{int32_t{1}};
+        mg.Attributes["WorldPosition"] = Solstice::Parallax::AttributeValue{Solstice::Math::Vec3{0.f, 3.0f, 0.f}};
+        mg.Attributes["WorldScale"] = Solstice::Parallax::AttributeValue{Solstice::Math::Vec3{0.8f, 6.2f, 0.8f}};
+        mg.Attributes["Color"] = Solstice::Parallax::AttributeValue{Solstice::Math::Vec4{1.f, 0.83f, 0.2f, 0.7f}};
+        mg.Attributes["Depth"] = Solstice::Parallax::AttributeValue{-2.f};
+        AddMgVec4Keys(scene, mgAura, "Color",
+            {{0ull, {1.f, 0.80f, 0.18f, 0.0f}}, {2ull * s1, {1.f, 0.83f, 0.2f, 0.85f}}, {12ull * s1, {0.1f, 0.1f, 0.1f, 0.75f}},
+                {16ull * s1, {0.05f, 0.05f, 0.05f, 0.85f}}});
+    }
+
+    particleState = {};
+    particleState.enabled = true;
+    particleState.attachToSceneElement = true;
+    particleState.attachElementIndex = static_cast<int>(beamLight);
+    particleState.spawnPerSec = 220.f;
+    particleState.lifetimeSec = 2.1f;
+    particleState.velMin = Solstice::Math::Vec3{-0.9f, 0.5f, -0.9f};
+    particleState.velMax = Solstice::Math::Vec3{0.9f, 2.3f, 0.9f};
+    particleState.startSize = 0.14f;
+    particleState.endSize = 0.02f;
+    particleState.gravity = Solstice::Math::Vec3{0.f, -0.65f, 0.f};
+    particleState.linearDrag = 0.16f;
+    particleState.maxParticles = 7000;
+    particleState.useColorGradient = true;
+    particleState.gradStopsInited = true;
+    particleState.gradientStops = 4;
+    particleState.gradT[0] = 0.f;
+    particleState.gradT[1] = 0.22f;
+    particleState.gradT[2] = 0.68f;
+    particleState.gradT[3] = 1.f;
+    particleState.gradRgba[0][0] = 1.f;
+    particleState.gradRgba[0][1] = 0.95f;
+    particleState.gradRgba[0][2] = 0.65f;
+    particleState.gradRgba[0][3] = 1.f;
+    particleState.gradRgba[1][0] = 1.f;
+    particleState.gradRgba[1][1] = 0.76f;
+    particleState.gradRgba[1][2] = 0.2f;
+    particleState.gradRgba[1][3] = 0.95f;
+    particleState.gradRgba[2][0] = 0.4f;
+    particleState.gradRgba[2][1] = 0.25f;
+    particleState.gradRgba[2][2] = 0.1f;
+    particleState.gradRgba[2][3] = 0.35f;
+    particleState.gradRgba[3][0] = 0.06f;
+    particleState.gradRgba[3][1] = 0.06f;
+    particleState.gradRgba[3][2] = 0.06f;
+    particleState.gradRgba[3][3] = 0.f;
+    particleState.ribbonTrails = true;
+    particleState.ribbonSegments = 10;
+    particleState.burstPending = 240;
+
+    std::string particleSyncErr;
+    (void)Smm::Particles::SyncEditorToParallaxScene(scene, particleState, resolver, particleSyncErr);
+
+    authoring.Prefabs.clear();
+    authoring.AssetDb.clear();
+    authoring.LipsyncStubs.clear();
+    authoring.CinematicView.ChromaticAberrationStrength = 0.0042f;
+    authoring.CinematicView.ChromaticAberrationDepthScale = 1.18f;
+    authoring.CinematicView.ChromaticCenterU = 0.50f;
+    authoring.CinematicView.ChromaticCenterV = 0.48f;
+    authoring.CinematicView.SmearFrameStrength = 0.072f;
+    authoring.CinematicView.ScreenFogDither = 0.12f;
+
+    authoring.Prefabs.push_back(
+        {"showcase_camera", "Showcase Camera", "CameraElement", "FovDegrees=48;Near=0.1;Far=3000;Position=0,2.6,9;Target=0,1.2,0"});
+    authoring.Prefabs.push_back({"showcase_beam", "Golden Beam Light", "LightElement",
+        "Position=0,6.4,0;Color=1,0.86,0.24,1;Intensity=18;Radius=24;CastShadows=1"});
+    authoring.Prefabs.push_back({"showcase_cube", "Final Black Cube", "ActorElement",
+        "Position=0,0.7,0;ArzachelRigidBodyDamage=0;ArzachelDestructionAnimPreset=ReassembleFromShards"});
+
+    Smm::Authoring::LipsyncLineStub callout;
+    callout.Label = "showcase_callout";
+    callout.StartTick = 0;
+    callout.EndTick = 5ull * s1;
+    callout.Text = "Golden beam summon sequence online.";
+    callout.Strength = 1.0f;
+    callout.PhoneticMode = 2;
+    authoring.LipsyncStubs.push_back(std::move(callout));
+
+    std::string midiErr;
+    std::string wavErr;
+    try {
+        const std::filesystem::path projectDir =
+            projectPath.parent_path().empty() ? std::filesystem::current_path() : projectPath.parent_path();
+        const std::filesystem::path wavPath = projectDir / "smm_showcase_melody.wav";
+        if (WriteShowcaseWav(wavPath, wavErr)) {
+            if (const auto audioHash = resolver.ImportFile(wavPath)) {
+                Solstice::Parallax::SetAttribute(scene, audio, "AudioAsset", Solstice::Parallax::AttributeValue{*audioHash});
+                Smm::Authoring::AssetDbEntry wa;
+                wa.Hash = *audioHash;
+                wa.PathHint = wavPath.filename().string();
+                wa.Tags = "music,showcase,wav";
+                wa.Kind = "audio";
+                wa.Notes = "Auto-generated showcase melody waveform.";
+                authoring.AssetDb.push_back(std::move(wa));
+            }
+        }
+    } catch (const std::exception& ex) {
+        wavErr = ex.what();
+    } catch (...) {
+        wavErr = "unknown filesystem error while creating showcase WAV";
+    }
+    bool midiOk = false;
+    try {
+        const std::filesystem::path projectDir =
+            projectPath.parent_path().empty() ? std::filesystem::current_path() : projectPath.parent_path();
+        const std::filesystem::path midiPath = projectDir / "smm_showcase_melody.mid";
+        if (WriteShowcaseMidi(midiPath, midiErr)) {
+            Smm::Midi::ParseResult midiParsed{};
+            if (Smm::Midi::ParseStandardMidiFile(midiPath, midiParsed, midiErr)) {
+                authoring.MidiConductor.SourcePathUtf8 = midiPath.string();
+                authoring.MidiConductor.TicksPerQuarter = midiParsed.TicksPerQuarter;
+                authoring.MidiConductor.MicrosecondsPerQuarter = midiParsed.MicrosecondsPerQuarter;
+                authoring.MidiConductor.BeatTicks = midiParsed.BeatTicks;
+                Smm::Authoring::AssetDbEntry midiAsset;
+                midiAsset.Hash = 0;
+                midiAsset.PathHint = midiPath.filename().string();
+                midiAsset.Tags = "music,showcase,midi";
+                midiAsset.Kind = "midi";
+                midiAsset.Notes = "Auto-generated SMM showcase melody (path reference).";
+                authoring.AssetDb.push_back(std::move(midiAsset));
+                midiOk = true;
+            }
+        }
+    } catch (const std::exception& ex) {
+        midiErr = ex.what();
+    } catch (...) {
+        midiErr = "unknown filesystem error while creating showcase MIDI";
+    }
+    if (!midiOk) {
+        // Fallback beat grid so conductor features are still demonstrated without filesystem dependency.
+        authoring.MidiConductor.SourcePathUtf8 = "(generated fallback)";
+        authoring.MidiConductor.TicksPerQuarter = 480u;
+        authoring.MidiConductor.MicrosecondsPerQuarter = 500000u;
+        authoring.MidiConductor.BeatTicks.clear();
+        for (uint32_t bt = 0; bt <= 480u * 8u; bt += 480u) {
+            authoring.MidiConductor.BeatTicks.push_back(bt);
+        }
+    }
+    if (!particleSyncErr.empty()) {
+        statusLine = "Showcase initialized with particle warning: " + particleSyncErr;
+    } else if (!wavErr.empty()) {
+        statusLine = "Showcase initialized with audio warning: " + wavErr;
+    } else if (!midiErr.empty()) {
+        statusLine = "Showcase initialized with MIDI warning: " + midiErr;
+    } else {
+        statusLine = "Loaded SMM showcase: beam summon, drop/explosion/reassembly, particles, and generated MIDI melody.";
+    }
 }
 
 void PushRecentPath(std::vector<std::string>& recent, const std::string& p, size_t maxN = 8) {
@@ -297,6 +912,10 @@ struct MovieMakerProjectState {
     bool compressPrlx = false;
     /// Background `.prlx` recovery snapshot interval (seconds) while the scene is dirty.
     uint32_t recoveryIntervalSec = 60;
+    /// 0 = pure 2D MG workflow, 1 = unified world MG workflow.
+    uint32_t mgWorkflowMode = 0;
+    /// In pure 2D MG workflow, disable 3D background capture when true.
+    bool pure2DDisable3DBackground = true;
 };
 
 static std::filesystem::path MovieMakerDefaultProjectPath() {
@@ -373,7 +992,10 @@ static bool SaveMovieMakerProjectToPath(const std::filesystem::path& path, const
             << st.videoHeight << ",\"videoFps\":" << st.videoFps << ",\"videoMp4\":" << (st.videoMp4 ? "true" : "false")
             << ",\"compressPrlx\":" << (st.compressPrlx ? "true" : "false")
             << ",\"videoStartTick\":" << st.videoStartTick << ",\"videoEndTick\":" << st.videoEndTick
-            << ",\"recoveryIntervalSec\":" << st.recoveryIntervalSec << ",\"recent\":[";
+            << ",\"recoveryIntervalSec\":" << st.recoveryIntervalSec
+            << ",\"mgWorkflowMode\":" << st.mgWorkflowMode
+            << ",\"pure2DDisable3DBackground\":" << (st.pure2DDisable3DBackground ? "true" : "false")
+            << ",\"recent\":[";
         for (size_t i = 0; i < st.recentPrlx.size(); ++i) {
             if (i > 0) {
                 out << ',';
@@ -526,6 +1148,14 @@ static bool ParseMovieMakerProjectJson(const std::string& j, MovieMakerProjectSt
     if (ParseJsonKeyU32(j, "recoveryIntervalSec", ris)) {
         st.recoveryIntervalSec = (std::max)(10u, (std::min)(ris, 3600u));
     }
+    uint32_t mgMode = st.mgWorkflowMode;
+    if (ParseJsonKeyU32(j, "mgWorkflowMode", mgMode)) {
+        st.mgWorkflowMode = (std::min)(mgMode, 1u);
+    }
+    bool pure2DNo3D = st.pure2DDisable3DBackground;
+    if (ParseJsonKeyBool(j, "pure2DDisable3DBackground", pure2DNo3D)) {
+        st.pure2DDisable3DBackground = pure2DNo3D;
+    }
     st.recentPrlx.clear();
     size_t rpos = j.find("\"recent\":[");
     if (rpos != std::string::npos) {
@@ -614,7 +1244,8 @@ static void ApplyMovieMakerProjectState(MovieMakerProjectState& st, char* export
     char* importPathBuf, size_t importPathBufSize, char* folderPathBuf, size_t folderPathBufSize, char* ffmpegExeBuf,
     size_t ffmpegExeBufSize, char* videoExportPathBuf, size_t videoExportPathBufSize, uint32_t& videoW, uint32_t& videoH,
     uint32_t& videoFps, bool& videoMp4, uint64_t& videoStartTick, uint64_t& videoEndTick, bool& compressPrlx,
-    std::vector<std::string>& recentPrlxPaths, std::filesystem::path& activeProjectPath, uint32_t& recoveryIntervalSecOut) {
+    std::vector<std::string>& recentPrlxPaths, std::filesystem::path& activeProjectPath, uint32_t& recoveryIntervalSecOut,
+    uint32_t& mgWorkflowModeOut, bool& pure2DDisable3DBackgroundOut) {
     std::snprintf(exportPathBuf, exportPathBufSize, "%s", st.exportPath.c_str());
     std::snprintf(importPathBuf, importPathBufSize, "%s", st.importPath.c_str());
     std::snprintf(folderPathBuf, folderPathBufSize, "%s", st.folderPath.c_str());
@@ -632,13 +1263,18 @@ static void ApplyMovieMakerProjectState(MovieMakerProjectState& st, char* export
         activeProjectPath = std::filesystem::path(*st.loadedFromPath);
     }
     recoveryIntervalSecOut = (std::max)(10u, (std::min)(st.recoveryIntervalSec, 3600u));
+    mgWorkflowModeOut = (std::min)(st.mgWorkflowMode, 1u);
+    pure2DDisable3DBackgroundOut = st.pure2DDisable3DBackground;
 }
 
-static void DrainPendingMovieMakerProject(char* exportPathBuf, size_t exportPathBufSize, char* importPathBuf,
+/// Returns true when a pending MovieMaker project JSON was applied (buffers `mgWorkflowModeOut` / `pure2DDisable3DBackgroundOut`
+/// are only updated in that case).
+static bool DrainPendingMovieMakerProject(char* exportPathBuf, size_t exportPathBufSize, char* importPathBuf,
     size_t importPathBufSize, char* folderPathBuf, size_t folderPathBufSize, char* ffmpegExeBuf, size_t ffmpegExeBufSize,
     char* videoExportPathBuf, size_t videoExportPathBufSize, uint32_t& videoW, uint32_t& videoH, uint32_t& videoFps,
     bool& videoMp4, uint64_t& videoStartTick, uint64_t& videoEndTick, bool& compressPrlx,
-    std::vector<std::string>& recentPrlxPaths, std::filesystem::path& activeProjectPath, uint32_t& recoveryIntervalSecOut) {
+    std::vector<std::string>& recentPrlxPaths, std::filesystem::path& activeProjectPath, uint32_t& recoveryIntervalSecOut,
+    uint32_t& mgWorkflowModeOut, bool& pure2DDisable3DBackgroundOut) {
     std::optional<MovieMakerProjectState> pending;
     {
         std::lock_guard<std::mutex> lock(g_ProjectMutex);
@@ -648,8 +1284,10 @@ static void DrainPendingMovieMakerProject(char* exportPathBuf, size_t exportPath
         ApplyMovieMakerProjectState(*pending, exportPathBuf, exportPathBufSize, importPathBuf, importPathBufSize,
             folderPathBuf, folderPathBufSize, ffmpegExeBuf, ffmpegExeBufSize, videoExportPathBuf, videoExportPathBufSize,
             videoW, videoH, videoFps, videoMp4, videoStartTick, videoEndTick, compressPrlx, recentPrlxPaths,
-            activeProjectPath, recoveryIntervalSecOut);
+            activeProjectPath, recoveryIntervalSecOut, mgWorkflowModeOut, pure2DDisable3DBackgroundOut);
+        return true;
     }
+    return false;
 }
 
 static std::string SmmBuildVideoExportFailureReport(const Solstice::MovieMaker::VideoExportParams& p, const std::string& errMsg,
@@ -797,8 +1435,16 @@ int main(int argc, char* argv[]) {
     bool projectPathChosen = false;
     std::string lastFfmpegShellCommand;
     uint32_t smmRecoveryIntervalSecU32 = 60;
+    uint32_t smmWorkflowModeU32 = 0;
+    bool smmPure2DDisable3DBackground = true;
     std::vector<Solstice::MovieMaker::VideoExportParams> smmVideoRenderQueue;
     std::optional<std::string> pendingVideoImportPath;
+    std::optional<Solstice::MovieMaker::VideoExportParams> pendingVideoExportStart;
+    bool pendingVideoRenderQueueRun = false;
+    Solstice::MovieMaker::IncrementalVideoExportSession* activeVideoExportSession = nullptr;
+    Solstice::MovieMaker::VideoExportParams activeVideoExportJob{};
+    bool activeVideoExportIsQueue = false;
+    size_t activeVideoExportQueueIndex = 0;
 
     {
         MovieMakerProjectState boot;
@@ -806,15 +1452,27 @@ int main(int argc, char* argv[]) {
             ApplyMovieMakerProjectState(boot, exportPathBuf, sizeof(exportPathBuf), importPathBuf, sizeof(importPathBuf),
                 folderPathBuf, sizeof(folderPathBuf), ffmpegExeBuf, sizeof(ffmpegExeBuf), videoExportPathBuf,
                 sizeof(videoExportPathBuf), videoW, videoH, videoFps, videoMp4, videoStartTick, videoEndTick,
-                compressPrlx, recentPrlxPaths, activeProjectPath, smmRecoveryIntervalSecU32);
+                compressPrlx, recentPrlxPaths, activeProjectPath, smmRecoveryIntervalSecU32, smmWorkflowModeU32,
+                smmPure2DDisable3DBackground);
         }
     }
+    smmWorkspace.unifiedMgWorkflowMode
+        = (smmWorkflowModeU32 == 1u) ? Smm::UI::UnifiedMgWorkflowMode::Unified3D : Smm::UI::UnifiedMgWorkflowMode::Pure2D;
+    smmWorkspace.pure2DDisable3DBackground = smmPure2DDisable3DBackground;
     LibUI::Tools::DiagLogLine("[SMM][TRACE] Boot project state loaded.");
 
     Smm::Authoring::SessionState smmAuthoringSession;
     {
         std::string authErr;
         (void)Smm::Authoring::LoadSessionAuthoring(Smm::Authoring::AuthoringSidecarPathForProject(activeProjectPath), smmAuthoringSession, &authErr);
+    }
+    const bool hasAuthoringData = !smmAuthoringSession.AssetDb.empty() || !smmAuthoringSession.Prefabs.empty()
+        || !smmAuthoringSession.LipsyncStubs.empty() || !smmAuthoringSession.MidiConductor.SourcePathUtf8.empty()
+        || !smmAuthoringSession.MidiConductor.BeatTicks.empty();
+    if (!hasAuthoringData) {
+        BootstrapShowcaseScene(scene, smmWorkspace.particleEditorState, smmAuthoringSession, resolver, activeProjectPath, smmStatus);
+    } else {
+        Smm::Particles::LoadParticleEditorFromScene(*scene, smmWorkspace.particleEditorState);
     }
     ReloadSmmWorkspaceIniPresets(activeProjectPath);
     LibUI::Tools::DiagLogLine("[SMM][TRACE] Authoring session + presets loaded.");
@@ -834,6 +1492,8 @@ int main(int argc, char* argv[]) {
         pst.videoEndTick = videoEndTick;
         pst.compressPrlx = compressPrlx;
         pst.recoveryIntervalSec = smmRecoveryIntervalSecU32;
+        pst.mgWorkflowMode = (smmWorkspace.unifiedMgWorkflowMode == Smm::UI::UnifiedMgWorkflowMode::Unified3D) ? 1u : 0u;
+        pst.pure2DDisable3DBackground = smmWorkspace.pure2DDisable3DBackground;
         pst.recentPrlx = recentPrlxPaths;
         if (!SaveMovieMakerProjectToPath(activeProjectPath, pst, error)) {
             return false;
@@ -885,6 +1545,7 @@ int main(int argc, char* argv[]) {
                 (void)Smm::Particles::SyncEditorToParallaxScene(
                     *scene, smmWorkspace.particleEditorState, resolver, particleSyncErr);
             }
+            PrepareSceneEmbeddedAssets(*scene, resolver);
             Solstice::Parallax::ParallaxError sceneError = Solstice::Parallax::ParallaxError::None;
             if (Solstice::Parallax::SaveScene(*scene, sceneSavePath, compressPrlx, &sceneError)) {
                 sceneDirty = false;
@@ -953,6 +1614,10 @@ int main(int argc, char* argv[]) {
         sceneDirty = false;
         elementSelected = scene->GetElements().empty() ? -1 : 0;
         mgElementSelected = scene->GetMGElements().empty() ? -1 : 0;
+        smmWorkspace.viewportSelectedElements.clear();
+        if (elementSelected >= 0) {
+            smmWorkspace.viewportSelectedElements.insert(elementSelected);
+        }
         timeTicks = Solstice::MovieMaker::Workflow::ClampPlayhead(timeTicks, scene->GetTimelineDurationTicks());
         return true;
     };
@@ -961,15 +1626,18 @@ int main(int argc, char* argv[]) {
     auto commitNewParallaxScene = [&]() {
         Smm::ClearSceneUndo();
         Smm::Editing::ResetParticleEditUndo();
-        scene = Solstice::Parallax::CreateScene(6000);
-        Smm::Particles::LoadParticleEditorFromScene(*scene, smmWorkspace.particleEditorState);
+        BootstrapShowcaseScene(scene, smmWorkspace.particleEditorState, smmAuthoringSession, resolver, activeProjectPath, smmStatus);
         Solstice::MovieMaker::UI::Panels::ResetUnifiedViewportEnginePreviewWarmup();
         smmWorkspace.enginePreviewSessionDisabled = false;
         timeTicks = 0;
         elementSelected = scene->GetElements().empty() ? -1 : 0;
         mgElementSelected = scene->GetMGElements().empty() ? -1 : 0;
-        sceneDirty = false;
-        ffmpegLog = "New Parallax scene.\n" + ffmpegLog;
+        smmWorkspace.viewportSelectedElements.clear();
+        if (elementSelected >= 0) {
+            smmWorkspace.viewportSelectedElements.insert(elementSelected);
+        }
+        sceneDirty = true;
+        ffmpegLog = "New SMM showcase scene.\n" + ffmpegLog;
     };
 
     auto requestNewParallaxScene = [&]() {
@@ -1039,6 +1707,10 @@ int main(int argc, char* argv[]) {
         Smm::Particles::LoadParticleEditorFromScene(*scene, smmWorkspace.particleEditorState);
         elementSelected = scene->GetElements().empty() ? -1 : 0;
         mgElementSelected = scene->GetMGElements().empty() ? -1 : 0;
+        smmWorkspace.viewportSelectedElements.clear();
+        if (elementSelected >= 0) {
+            smmWorkspace.viewportSelectedElements.insert(elementSelected);
+        }
         timeTicks = Solstice::MovieMaker::Workflow::ClampPlayhead(timeTicks, scene->GetTimelineDurationTicks());
         sceneDirty = true;
         smmStatus = "Restored Parallax scene from recovery autosave.";
@@ -1069,10 +1741,16 @@ int main(int argc, char* argv[]) {
         }
 
         SmmSetCrashStage("frame.drain_pending_project");
-        DrainPendingMovieMakerProject(exportPathBuf, sizeof(exportPathBuf), importPathBuf, sizeof(importPathBuf),
-            folderPathBuf, sizeof(folderPathBuf), ffmpegExeBuf, sizeof(ffmpegExeBuf), videoExportPathBuf,
-            sizeof(videoExportPathBuf), videoW, videoH, videoFps, videoMp4, videoStartTick, videoEndTick, compressPrlx,
-            recentPrlxPaths, activeProjectPath, smmRecoveryIntervalSecU32);
+        const bool smmPendingProjectApplied = DrainPendingMovieMakerProject(exportPathBuf, sizeof(exportPathBuf),
+            importPathBuf, sizeof(importPathBuf), folderPathBuf, sizeof(folderPathBuf), ffmpegExeBuf, sizeof(ffmpegExeBuf),
+            videoExportPathBuf, sizeof(videoExportPathBuf), videoW, videoH, videoFps, videoMp4, videoStartTick, videoEndTick,
+            compressPrlx, recentPrlxPaths, activeProjectPath, smmRecoveryIntervalSecU32, smmWorkflowModeU32,
+            smmPure2DDisable3DBackground);
+        if (smmPendingProjectApplied) {
+            smmWorkspace.unifiedMgWorkflowMode = (smmWorkflowModeU32 == 1u) ? Smm::UI::UnifiedMgWorkflowMode::Unified3D
+                                                                           : Smm::UI::UnifiedMgWorkflowMode::Pure2D;
+            smmWorkspace.pure2DDisable3DBackground = smmPure2DDisable3DBackground;
+        }
         static std::filesystem::path s_smmAuthProject;
         if (s_smmAuthProject != activeProjectPath) {
             s_smmAuthProject = activeProjectPath;
@@ -1124,6 +1802,7 @@ int main(int argc, char* argv[]) {
                     (void)Smm::Particles::SyncEditorToParallaxScene(
                         *scene, smmWorkspace.particleEditorState, resolver, particleSyncErr);
                 }
+                PrepareSceneEmbeddedAssets(*scene, resolver);
                 if (Solstice::Parallax::SaveScene(*scene, outPath, compressPrlx, &err)) {
                     std::snprintf(exportPathBuf, sizeof(exportPathBuf), "%s", outPath.string().c_str());
                     PushRecentPath(recentPrlxPaths, outPath.string());
@@ -1132,6 +1811,106 @@ int main(int argc, char* argv[]) {
                     (void)persistMovieMakerProjectFields();
                 } else {
                     smmStatus = "PARALLAX export failed with ParallaxError " + std::to_string(static_cast<int>(err));
+                }
+            }
+        }
+
+        auto tryStartVideoExport = [&](const Solstice::MovieMaker::VideoExportParams& vep, bool fromQueue) {
+            std::string particleSceneSync{};
+            (void)Smm::Particles::SyncEditorToParallaxScene(*scene, smmWorkspace.particleEditorState, resolver, particleSceneSync);
+            Solstice::MovieMaker::VideoExportParticleSettings xps{};
+            xps.viewportOrbitForMatch = &smmWorkspace.unifiedViewportCamera;
+            if (smmWorkspace.particleEditorState.enabled) {
+                xps.particleEditor = &smmWorkspace.particleEditorState;
+                xps.emitterWorldManual = smmWorkspace.manualParticleEmitterWorld;
+                xps.emitterWorld = smmWorkspace.manualParticleEmitterWorldVec;
+            }
+            std::string beginErr;
+            if (!Solstice::MovieMaker::BeginParallaxSceneVideoExport(
+                    *scene, resolver, window, vep, activeVideoExportSession, beginErr, &xps)) {
+                videoExportLastDetail = SmmBuildVideoExportFailureReport(vep, beginErr, nullptr);
+                videoExportLog = "Failed to start export job.\n\n" + beginErr + "\n\n---\n" + videoExportLastDetail;
+                return false;
+            }
+            activeVideoExportIsQueue = fromQueue;
+            activeVideoExportJob = vep;
+            std::string lastCmdDiag
+                = "ffmpeg: \"" + vep.ffmpegExecutable + "\" (rawvideo pipe -> " + vep.outputPath + ")";
+            videoExportLog = "Started export job.\n" + lastCmdDiag + "\n";
+            videoExportLastDetail.clear();
+            return true;
+        };
+
+        if (!activeVideoExportSession && pendingVideoExportStart) {
+            const Solstice::MovieMaker::VideoExportParams vep = *pendingVideoExportStart;
+            pendingVideoExportStart.reset();
+            (void)tryStartVideoExport(vep, false);
+        }
+        if (!activeVideoExportSession && pendingVideoRenderQueueRun) {
+            pendingVideoRenderQueueRun = false;
+            activeVideoExportQueueIndex = 0;
+            if (smmVideoRenderQueue.empty()) {
+                videoExportLog = "Render queue is empty.\n";
+            } else {
+                (void)tryStartVideoExport(smmVideoRenderQueue[0], true);
+            }
+        }
+        if (activeVideoExportSession) {
+            float pr = 0.f;
+            bool done = false;
+            std::string stepErr;
+            const bool ok = Solstice::MovieMaker::StepParallaxSceneVideoExport(
+                *activeVideoExportSession, *scene, resolver, window, pr, done, stepErr);
+            if (!ok) {
+                videoExportLastDetail = SmmBuildVideoExportFailureReport(activeVideoExportJob, stepErr, nullptr);
+                videoExportLog = "Export failed.\n\n" + stepErr + "\n\n---\n" + videoExportLastDetail;
+                Solstice::MovieMaker::CancelParallaxSceneVideoExport(activeVideoExportSession);
+                activeVideoExportIsQueue = false;
+                smmVideoRenderQueue.clear();
+            } else {
+                const int p = static_cast<int>(pr * 100.f);
+                if (activeVideoExportIsQueue && activeVideoExportQueueIndex < smmVideoRenderQueue.size()) {
+                    videoExportLog = "Queue job " + std::to_string(activeVideoExportQueueIndex + 1) + "/"
+                        + std::to_string(smmVideoRenderQueue.size()) + ": " + smmVideoRenderQueue[activeVideoExportQueueIndex].outputPath
+                        + " - " + std::to_string(p) + "%\n";
+                } else {
+                    videoExportLog = "Encoding... " + std::to_string(p) + "%\n";
+                }
+                if (done) {
+                    if (!stepErr.empty()) {
+                        videoExportLog += "\nExport finished with warning:\n" + stepErr + "\n";
+                    }
+                    Solstice::MovieMaker::CancelParallaxSceneVideoExport(activeVideoExportSession);
+                    if (activeVideoExportIsQueue) {
+                        activeVideoExportQueueIndex++;
+                        if (activeVideoExportQueueIndex < smmVideoRenderQueue.size()) {
+                            (void)tryStartVideoExport(smmVideoRenderQueue[activeVideoExportQueueIndex], true);
+                        } else {
+                            activeVideoExportIsQueue = false;
+                            smmVideoRenderQueue.clear();
+                            videoExportLog = "Render queue completed.\n" + videoExportLog;
+                        }
+                    } else {
+                        activeVideoExportIsQueue = false;
+                        MovieMakerProjectState pst;
+                        pst.exportPath = exportPathBuf;
+                        pst.importPath = importPathBuf;
+                        pst.folderPath = folderPathBuf;
+                        pst.ffmpegExe = ffmpegExeBuf;
+                        pst.videoExportPath = videoExportPathBuf;
+                        pst.videoWidth = videoW;
+                        pst.videoHeight = videoH;
+                        pst.videoFps = videoFps;
+                        pst.videoMp4 = videoMp4;
+                        pst.videoStartTick = videoStartTick;
+                        pst.videoEndTick = videoEndTick;
+                        pst.compressPrlx = compressPrlx;
+                        pst.recoveryIntervalSec = smmRecoveryIntervalSecU32;
+                        pst.mgWorkflowMode = (smmWorkspace.unifiedMgWorkflowMode == Smm::UI::UnifiedMgWorkflowMode::Unified3D) ? 1u : 0u;
+                        pst.pure2DDisable3DBackground = smmWorkspace.pure2DDisable3DBackground;
+                        pst.recentPrlx = recentPrlxPaths;
+                        (void)SaveMovieMakerProjectToPath(activeProjectPath, pst);
+                    }
                 }
             }
         }
@@ -1149,25 +1928,25 @@ int main(int argc, char* argv[]) {
 
         SmmSetCrashStage("frame.imgui_root");
         ImGuiViewport* vp = ImGui::GetMainViewport();
-        ImGui::SetNextWindowPos(vp->Pos);
-        ImGui::SetNextWindowSize(vp->Size);
-        ImGui::Begin("SMMRoot", nullptr,
+        LibUI::Widgets::SetNextWindowPos(vp->Pos);
+        LibUI::Widgets::SetNextWindowSize(vp->Size);
+        LibUI::Widgets::BeginWindow("SMMRoot", nullptr,
             ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
                 ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus |
                 ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-        if (ImGui::BeginMenuBar()) {
-            if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem("New Scene")) {
+        if (LibUI::Widgets::BeginMenuBar()) {
+            if (LibUI::Widgets::BeginMenu("File")) {
+                if (LibUI::Widgets::MenuItem("New Scene")) {
                     requestNewParallaxScene();
                 }
-                if (ImGui::MenuItem("Save Project", "Ctrl+S")) {
+                if (LibUI::Widgets::MenuItem("Save Project", "Ctrl+S")) {
                     requestSaveMovieMakerProject();
                 }
-                if (ImGui::MenuItem("Open Project...")) {
+                if (LibUI::Widgets::MenuItem("Open Project...")) {
                     requestOpenMovieMakerProject();
                 }
-                if (ImGui::MenuItem("Import glTF to selected Actor...")) {
+                if (LibUI::Widgets::MenuItem("Import glTF to selected Actor...")) {
                     LibUI::FileDialogs::ShowOpenFile(
                         window, "Import glTF asset", [](std::optional<std::string> path) {
                             if (path) {
@@ -1176,7 +1955,7 @@ int main(int argc, char* argv[]) {
                         },
                         Smm::kGltfFilters);
                 }
-                if (ImGui::MenuItem("Export selected Actor glTF...")) {
+                if (LibUI::Widgets::MenuItem("Export selected Actor glTF...")) {
                     LibUI::FileDialogs::ShowSaveFile(
                         window, "Export selected glTF asset", [](std::optional<std::string> path) {
                             if (path) {
@@ -1185,7 +1964,7 @@ int main(int argc, char* argv[]) {
                         },
                         Smm::kGltfFilters);
                 }
-                if (ImGui::MenuItem("Import raster to selected MG sprite...")) {
+                if (LibUI::Widgets::MenuItem("Import raster to selected MG sprite...")) {
                     LibUI::FileDialogs::ShowOpenFile(
                         window, "Import raster texture", [](std::optional<std::string> path) {
                             if (path) {
@@ -1194,7 +1973,7 @@ int main(int argc, char* argv[]) {
                         },
                         std::span<const LibUI::FileDialogs::FileFilter>(Smm::Image::kRasterImportFilters));
                 }
-                if (ImGui::MenuItem("Export selected MG sprite texture...")) {
+                if (LibUI::Widgets::MenuItem("Export selected MG sprite texture...")) {
                     LibUI::FileDialogs::ShowSaveFile(
                         window, "Export MG sprite Texture bytes", [](std::optional<std::string> path) {
                             if (path) {
@@ -1203,7 +1982,7 @@ int main(int argc, char* argv[]) {
                         },
                         std::span<const LibUI::FileDialogs::FileFilter>(Smm::Image::kRasterExportFilters));
                 }
-                if (ImGui::MenuItem("Import audio to selected Audio source...")) {
+                if (LibUI::Widgets::MenuItem("Import audio to selected Audio source...")) {
                     LibUI::FileDialogs::ShowOpenFile(
                         window, "Import audio asset", [](std::optional<std::string> path) {
                             if (path) {
@@ -1212,7 +1991,7 @@ int main(int argc, char* argv[]) {
                         },
                         std::span<const LibUI::FileDialogs::FileFilter>(Smm::Audio::kAudioImportFilters));
                 }
-                if (ImGui::MenuItem("Import video to session...")) {
+                if (LibUI::Widgets::MenuItem("Import video to session...")) {
                     static const LibUI::FileDialogs::FileFilter kSmmVideoImportFilters[] = {
                         {"MP4 or MOV", "mp4,mov"},
                         {"All", "*"},
@@ -1226,10 +2005,10 @@ int main(int argc, char* argv[]) {
                         },
                         std::span<const LibUI::FileDialogs::FileFilter>(kSmmVideoImportFilters));
                 }
-                if (ImGui::MenuItem("Write recovery snapshot now")) {
+                if (LibUI::Widgets::MenuItem("Write recovery snapshot now")) {
                     tryWritePrlxRecoverySnapshot();
                 }
-                if (ImGui::MenuItem("Export selected Audio source...")) {
+                if (LibUI::Widgets::MenuItem("Export selected Audio source...")) {
                     LibUI::FileDialogs::ShowSaveFile(
                         window, "Export AudioAsset bytes", [](std::optional<std::string> path) {
                             if (path) {
@@ -1238,30 +2017,30 @@ int main(int argc, char* argv[]) {
                         },
                         std::span<const LibUI::FileDialogs::FileFilter>(Smm::Audio::kAudioExportFilters));
                 }
-                if (ImGui::MenuItem("Export PARALLAX scene...")) {
+                if (LibUI::Widgets::MenuItem("Export PARALLAX scene...")) {
                     requestExportParallaxScene();
                 }
-                if (ImGui::MenuItem("Export...")) {
+                if (LibUI::Widgets::MenuItem("Export...")) {
                     showExportWindow = true;
                 }
                 if (!recentPrlxPaths.empty()) {
-                    ImGui::Separator();
-                    ImGui::TextDisabled("Recent .prlx");
+                    LibUI::Widgets::Separator();
+                    LibUI::Widgets::TextDisabled("Recent .prlx");
                     for (size_t ri = 0; ri < recentPrlxPaths.size(); ++ri) {
                         ImGui::PushID(static_cast<int>(ri));
-                        if (ImGui::MenuItem(recentPrlxPaths[ri].c_str())) {
+                        if (LibUI::Widgets::MenuItem(recentPrlxPaths[ri].c_str())) {
                             std::snprintf(importPathBuf, sizeof(importPathBuf), "%s", recentPrlxPaths[ri].c_str());
                         }
                         ImGui::PopID();
                     }
                 }
-                ImGui::EndMenu();
+                LibUI::Widgets::EndMenu();
             }
-            if (ImGui::BeginMenu("Edit")) {
+            if (LibUI::Widgets::BeginMenu("Edit")) {
                 const bool particleFocus = Smm::Editing::IsParticleEditPanelFocused();
                 const bool canUndo = particleFocus ? Smm::Editing::CanParticleEditUndo() : Smm::g_sceneByteUndo.CanUndo();
                 const bool canRedo = particleFocus ? Smm::Editing::CanParticleEditRedo() : Smm::g_sceneByteUndo.CanRedo();
-                if (ImGui::MenuItem("Undo", "Ctrl+Z", false, canUndo)) {
+                if (LibUI::Widgets::MenuItem("Undo", "Ctrl+Z", false, canUndo)) {
                     if (particleFocus) {
                         if (Smm::Editing::ApplyParticleEditUndo(smmWorkspace.particleEditorState, true)) {
                             smmStatus = "Particle: undo.";
@@ -1271,7 +2050,7 @@ int main(int argc, char* argv[]) {
                         sceneDirty = true;
                     }
                 }
-                if (ImGui::MenuItem("Redo", "Ctrl+Y / Ctrl+Shift+Z", false, canRedo)) {
+                if (LibUI::Widgets::MenuItem("Redo", "Ctrl+Y / Ctrl+Shift+Z", false, canRedo)) {
                     if (particleFocus) {
                         if (Smm::Editing::ApplyParticleEditUndo(smmWorkspace.particleEditorState, false)) {
                             smmStatus = "Particle: redo.";
@@ -1281,32 +2060,32 @@ int main(int argc, char* argv[]) {
                         sceneDirty = true;
                     }
                 }
-                ImGui::EndMenu();
+                LibUI::Widgets::EndMenu();
             }
-            if (ImGui::BeginMenu("View")) {
-                ImGui::MenuItem("Curve editor", nullptr, &smmWorkspace.showCurveEditorPanel);
-                ImGui::MenuItem("Graph editor", nullptr, &smmWorkspace.showGraphEditorPanel);
-                ImGui::MenuItem("Particles", nullptr, &smmWorkspace.showParticleEditorPanel);
-                ImGui::MenuItem("Fluid volumes", nullptr, &smmWorkspace.showFluidVolumesPanel);
-                ImGui::Separator();
-                if (ImGui::MenuItem("Plugins")) {
+            if (LibUI::Widgets::BeginMenu("View")) {
+                LibUI::Widgets::MenuItem("Curve editor", nullptr, &smmWorkspace.showCurveEditorPanel);
+                LibUI::Widgets::MenuItem("Graph editor", nullptr, &smmWorkspace.showGraphEditorPanel);
+                LibUI::Widgets::MenuItem("Particles", nullptr, &smmWorkspace.showParticleEditorPanel);
+                LibUI::Widgets::MenuItem("Fluid volumes", nullptr, &smmWorkspace.showFluidVolumesPanel);
+                LibUI::Widgets::Separator();
+                if (LibUI::Widgets::MenuItem("Plugins")) {
                     showMmPluginsPanel = true;
                 }
-                ImGui::EndMenu();
+                LibUI::Widgets::EndMenu();
             }
-            if (ImGui::BeginMenu("Help")) {
-                if (ImGui::MenuItem("About")) {
+            if (LibUI::Widgets::BeginMenu("Help")) {
+                if (LibUI::Widgets::MenuItem("About")) {
                     showMmAboutPanel = true;
                 }
-                ImGui::EndMenu();
+                LibUI::Widgets::EndMenu();
             }
-            ImGui::EndMenuBar();
+            LibUI::Widgets::EndMenuBar();
         }
 
         if (mmUnsavedPrompt != MmUnsavedKind::None) {
-            ImGui::OpenPopup("MM_Unsaved");
+            LibUI::Widgets::OpenPopup("MM_Unsaved");
         }
-        if (ImGui::BeginPopupModal("MM_Unsaved", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (LibUI::Widgets::BeginPopupModal("MM_Unsaved", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
             const char* line = "Discard unsaved Parallax scene edits?";
             if (mmUnsavedPrompt == MmUnsavedKind::QuitApp) {
                 line = "Quit with unsaved Parallax scene edits?";
@@ -1315,11 +2094,11 @@ int main(int argc, char* argv[]) {
             } else if (mmUnsavedPrompt == MmUnsavedKind::ImportPrlx) {
                 line = "Discard edits and import the selected .prlx?";
             }
-            ImGui::TextUnformatted(line);
-            if (ImGui::Button("Discard", ImVec2(120, 0))) {
+            LibUI::Widgets::Text(line);
+            if (LibUI::Widgets::Button("Discard", ImVec2(120, 0))) {
                 const MmUnsavedKind k = mmUnsavedPrompt;
                 mmUnsavedPrompt = MmUnsavedKind::None;
-                ImGui::CloseCurrentPopup();
+                LibUI::Widgets::CloseCurrentPopup();
                 if (k == MmUnsavedKind::QuitApp) {
                     running = false;
                 } else if (k == MmUnsavedKind::NewScene) {
@@ -1332,39 +2111,39 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
-            ImGui::SameLine();
-            if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            LibUI::Widgets::SameLine();
+            if (LibUI::Widgets::Button("Cancel", ImVec2(120, 0))) {
                 mmUnsavedPrompt = MmUnsavedKind::None;
                 mmPendingImportPath.reset();
-                ImGui::CloseCurrentPopup();
+                LibUI::Widgets::CloseCurrentPopup();
             }
-            ImGui::EndPopup();
+            LibUI::Widgets::EndPopup();
         }
 
         if (smmPrlxRecoveryOpen) {
-            ImGui::OpenPopup("SMM_PrlxRecovery");
+            LibUI::Widgets::OpenPopup("SMM_PrlxRecovery");
         }
-        if (ImGui::BeginPopupModal("SMM_PrlxRecovery", &smmPrlxRecoveryOpen, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextUnformatted("A local PARALLAX autosave (recovery) is available. Restore it?");
-            if (ImGui::Button("Restore", ImVec2(140, 0))) {
+        if (LibUI::Widgets::BeginPopupModal("SMM_PrlxRecovery", &smmPrlxRecoveryOpen, ImGuiWindowFlags_AlwaysAutoResize)) {
+            LibUI::Widgets::Text("A local PARALLAX autosave (recovery) is available. Restore it?");
+            if (LibUI::Widgets::Button("Restore", ImVec2(140, 0))) {
                 std::vector<std::byte> buf;
                 std::string re;
                 if (Solstice::EditorAudio::FileRecovery::ReadLatest(smmRecoveryDir, "prlx", buf, &re)) {
                     if (restorePrlxFromRecoveryBytes(std::span<const std::byte>(buf.data(), buf.size()))) {
                         Solstice::EditorAudio::FileRecovery::ClearMatchingPrefix(smmRecoveryDir, "prlx");
                         smmPrlxRecoveryOpen = false;
-                        ImGui::CloseCurrentPopup();
+                        LibUI::Widgets::CloseCurrentPopup();
                     }
                 } else {
                     smmStatus = "Could not read recovery: " + re;
                 }
             }
-            ImGui::SameLine();
-            if (ImGui::Button("Dismiss", ImVec2(140, 0))) {
+            LibUI::Widgets::SameLine();
+            if (LibUI::Widgets::Button("Dismiss", ImVec2(140, 0))) {
                 smmPrlxRecoveryOpen = false;
-                ImGui::CloseCurrentPopup();
+                LibUI::Widgets::CloseCurrentPopup();
             }
-            ImGui::EndPopup();
+            LibUI::Widgets::EndPopup();
         }
 
         DrainImports(resolver, assetEntries);
@@ -1376,13 +2155,13 @@ int main(int argc, char* argv[]) {
 
         uint64_t maxT = scene->GetTimelineDurationTicks() > 0 ? scene->GetTimelineDurationTicks() : 1;
 
-        if (!io_mm.WantTextInput && io_mm.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        if (!io_mm.WantTextInput && io_mm.KeyCtrl && LibUI::Widgets::IsKeyPressed(ImGuiKey_S, false)) {
             requestSaveMovieMakerProject();
         }
 
         if (!io_mm.WantTextInput) {
             const uint64_t maxTk = scene->GetTimelineDurationTicks() > 0 ? scene->GetTimelineDurationTicks() : 1;
-            if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false)) {
+            if (LibUI::Widgets::IsKeyPressed(ImGuiKey_LeftArrow, false)) {
                 timeTicks = (timeTicks > 0) ? (timeTicks - 1) : 0;
             }
             if (ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)) {
@@ -1429,9 +2208,7 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        if (ImGui::BeginTable("SMM_MainLayout", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV)) {
-            ImGui::TableSetupColumn("Left", ImGuiTableColumnFlags_WidthFixed, 330.0f);
-            ImGui::TableSetupColumn("Main", ImGuiTableColumnFlags_WidthStretch, 1.0f);
+        if (LibUI::Layout::BeginTwoPaneFixedLeftTable("SMM_MainLayout", 330.0f)) {
             ImGui::TableNextColumn();
             ImGui::BeginChild("SMM_LeftPane", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_None);
             if (LibUI::Widgets::BeginTabBar("SMM_LeftTabs")) {
@@ -1449,16 +2226,18 @@ int main(int argc, char* argv[]) {
                         }
                     }
                     Smm::DrawParallaxRootEnvironment(*scene, window, compressPrlx, sceneDirty);
-                    if (ImGui::BeginListBox("Elements", ImVec2(-1, 110))) {
+                    if (LibUI::Widgets::BeginListBox("Elements", ImVec2(-1, 110))) {
                         for (size_t i = 0; i < scene->GetElements().size(); ++i) {
                             const auto& el = scene->GetElements()[i];
                             std::string label = std::to_string(i) + " - " + el.Name;
                             bool sel = (elementSelected == static_cast<int>(i));
-                            if (ImGui::Selectable(label.c_str(), sel)) {
+                            if (LibUI::Widgets::Selectable(label.c_str(), sel)) {
                                 elementSelected = static_cast<int>(i);
+                                smmWorkspace.viewportSelectedElements.clear();
+                                smmWorkspace.viewportSelectedElements.insert(elementSelected);
                             }
                         }
-                        ImGui::EndListBox();
+                        LibUI::Widgets::EndListBox();
                     }
                     if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Duplicate, "Duplicate") && elementSelected >= 0 &&
                         static_cast<size_t>(elementSelected) < scene->GetElements().size()) {
@@ -1470,13 +2249,13 @@ int main(int argc, char* argv[]) {
                         sceneDirty = true;
                     }
                     if (elementSelected >= 0 && static_cast<size_t>(elementSelected) < scene->GetElements().size()) {
-                        ImGui::TextUnformatted("Channel attribute");
-                        ImGui::SetNextItemWidth(-1.0f);
-                        ImGui::InputText("##ChannelAttribute", channelAttrBuf, sizeof(channelAttrBuf));
-                        ImGui::TextUnformatted("Channel value type");
-                        ImGui::SetNextItemWidth(-1.0f);
+                        LibUI::Widgets::Text("Channel attribute");
+                        LibUI::Widgets::SetNextItemWidth(-1.0f);
+                        LibUI::Widgets::InputText("##ChannelAttribute", channelAttrBuf, sizeof(channelAttrBuf));
+                        LibUI::Widgets::Text("Channel value type");
+                        LibUI::Widgets::SetNextItemWidth(-1.0f);
                         ImGui::Combo("##ChannelValueType", &channelValueTypeCombo, "float\0vec3\0\0");
-                        if (ImGui::Button("Add keyframe at playhead")) {
+                        if (LibUI::Widgets::Button("Add keyframe at playhead")) {
                             const Solstice::Parallax::ElementIndex el = static_cast<Solstice::Parallax::ElementIndex>(elementSelected);
                             const Solstice::Parallax::AttributeType at = channelValueTypeCombo == 0
                                 ? Solstice::Parallax::AttributeType::Float
@@ -1497,16 +2276,16 @@ int main(int argc, char* argv[]) {
                         }
                     }
                     uint64_t dur = scene->GetTimelineDurationTicks();
-                    ImGui::TextUnformatted("Duration (ticks)");
-                    ImGui::SetNextItemWidth(-1.0f);
-                    if (ImGui::InputScalar("##DurationTicks", ImGuiDataType_U64, &dur)) {
+                    LibUI::Widgets::Text("Duration (ticks)");
+                    LibUI::Widgets::SetNextItemWidth(-1.0f);
+                    if (LibUI::Widgets::InputScalar("##DurationTicks", ImGuiDataType_U64, &dur)) {
                         scene->SetTimelineDurationTicks(dur);
                         sceneDirty = true;
                     }
                     uint32_t tps = scene->GetTicksPerSecond();
-                    ImGui::TextUnformatted("Ticks/sec");
-                    ImGui::SetNextItemWidth(-1.0f);
-                    if (ImGui::InputScalar("##TicksPerSecond", ImGuiDataType_U32, &tps)) {
+                    LibUI::Widgets::Text("Ticks/sec");
+                    LibUI::Widgets::SetNextItemWidth(-1.0f);
+                    if (LibUI::Widgets::InputScalar("##TicksPerSecond", ImGuiDataType_U32, &tps)) {
                         scene->SetTicksPerSecond(tps);
                         sceneDirty = true;
                     }
@@ -1514,17 +2293,17 @@ int main(int argc, char* argv[]) {
                         Solstice::Parallax::AddElement(*scene, "LightElement", "Light", 0);
                         sceneDirty = true;
                     }
-                    ImGui::SameLine();
+                    LibUI::Widgets::SameLine();
                     if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::New, "Camera")) {
                         Solstice::Parallax::AddElement(*scene, "CameraElement", "Camera", 0);
                         sceneDirty = true;
                     }
-                    ImGui::SameLine();
+                    LibUI::Widgets::SameLine();
                     if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::New, "Actor")) {
                         Solstice::Parallax::AddElement(*scene, "ActorElement", "Actor", 0);
                         sceneDirty = true;
                     }
-                    ImGui::SameLine();
+                    LibUI::Widgets::SameLine();
                     if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::New, "Audio")) {
                         const Solstice::Parallax::ElementIndex ai =
                             Solstice::Parallax::AddElement(*scene, "AudioSourceElement", "Audio", 0);
@@ -1532,11 +2311,13 @@ int main(int argc, char* argv[]) {
                             Solstice::Parallax::SetAttribute(*scene, ai, "Volume", Solstice::Parallax::AttributeValue{1.0f});
                             Solstice::Parallax::SetAttribute(*scene, ai, "Pitch", Solstice::Parallax::AttributeValue{1.0f});
                             elementSelected = static_cast<int>(ai);
+                            smmWorkspace.viewportSelectedElements.clear();
+                            smmWorkspace.viewportSelectedElements.insert(elementSelected);
                             sceneDirty = true;
                         }
                     }
-                    ImGui::Separator();
-                    ImGui::TextUnformatted("Motion graphics");
+                    LibUI::Widgets::Separator();
+                    LibUI::Widgets::Text("Motion graphics");
                     Smm::DrawMg2DCompTools(*scene, mgElementSelected, sceneDirty, compressPrlx, smmNominalCompW, smmNominalCompH);
                     if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::New, "MG Sprite")) {
                         const Solstice::Parallax::MGIndex idx = Solstice::Parallax::AddMGElement(*scene, "MGSpriteElement", "Sprite",
@@ -1545,12 +2326,21 @@ int main(int argc, char* argv[]) {
                             auto& rec = scene->GetMGElements()[idx];
                             rec.Attributes["Position"] = Solstice::Parallax::AttributeValue{Solstice::Math::Vec2(16.f, 16.f)};
                             rec.Attributes["Size"] = Solstice::Parallax::AttributeValue{Solstice::Math::Vec2(256.f, 256.f)};
+                            rec.Attributes["MGProjectionMode"] = Solstice::Parallax::AttributeValue{int32_t{0}};
+                            rec.Attributes["WorldPosition"] = Solstice::Parallax::AttributeValue{Solstice::Math::Vec3{0.f, 1.2f, 0.f}};
+                            rec.Attributes["WorldScale"] = Solstice::Parallax::AttributeValue{Solstice::Math::Vec3{1.f, 1.f, 1.f}};
+                            rec.Attributes["WorldPitchDeg"] = Solstice::Parallax::AttributeValue{0.f};
+                            rec.Attributes["WorldYawDeg"] = Solstice::Parallax::AttributeValue{0.f};
+                            rec.Attributes["WorldRollDeg"] = Solstice::Parallax::AttributeValue{0.f};
+                            rec.Attributes["AttachToElement"] = Solstice::Parallax::AttributeValue{false};
+                            rec.Attributes["AttachElementIndex"] = Solstice::Parallax::AttributeValue{int32_t{-1}};
+                            rec.Attributes["CastShadows"] = Solstice::Parallax::AttributeValue{true};
                             mgElementSelected = static_cast<int>(idx);
                             sceneDirty = true;
                         }
                     }
-                    ImGui::Checkbox("Fit MG sprite Size to imported image dims", &smmFitSpriteSizeOnImageImport);
-                    if (ImGui::BeginListBox("MG elements", ImVec2(-1, 72))) {
+                    LibUI::Widgets::Checkbox("Fit MG sprite Size to imported image dims", &smmFitSpriteSizeOnImageImport);
+                    if (LibUI::Widgets::BeginListBox("MG elements", ImVec2(-1, 72))) {
                         for (size_t i = 0; i < scene->GetMGElements().size(); ++i) {
                             const auto& mg = scene->GetMGElements()[i];
                             std::string_view st{};
@@ -1559,11 +2349,11 @@ int main(int argc, char* argv[]) {
                             }
                             const std::string label = std::to_string(i) + " - " + mg.Name + " (" + std::string(st) + ")";
                             const bool sel = (mgElementSelected == static_cast<int>(i));
-                            if (ImGui::Selectable(label.c_str(), sel)) {
+                            if (LibUI::Widgets::Selectable(label.c_str(), sel)) {
                                 mgElementSelected = static_cast<int>(i);
                             }
                         }
-                        ImGui::EndListBox();
+                        LibUI::Widgets::EndListBox();
                     }
                     if (mgElementSelected >= 0 && static_cast<size_t>(mgElementSelected) < scene->GetMGElements().size()) {
                         auto& mgMut = scene->GetMGElements()[static_cast<size_t>(mgElementSelected)];
@@ -1579,16 +2369,63 @@ int main(int argc, char* argv[]) {
                                     depth = *fd;
                                 }
                             }
-                            if (ImGui::DragFloat("MG Depth (draw order)", &depth, 0.25f, -1.0e6f, 1.0e6f)) {
+                            if (LibUI::Widgets::DragFloat("MG Depth (draw order)", &depth, 0.25f, -1.0e6f, 1.0e6f)) {
                                 mgMut.Attributes["Depth"] = Solstice::Parallax::AttributeValue{depth};
                                 sceneDirty = true;
                             }
-                            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+                            if (LibUI::Widgets::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
                                 ImGui::SetTooltip("2D compositing order only: lower values draw first (behind); higher values draw "
                                                   "last (in front). Animate with a Depth track if needed.");
                             }
                         }
                         if (st == "MGSpriteElement") {
+                            int32_t projMode = 0;
+                            if (const auto itMode = mgRow.Attributes.find("MGProjectionMode"); itMode != mgRow.Attributes.end()) {
+                                if (const auto* im = std::get_if<int32_t>(&itMode->second)) {
+                                    projMode = *im;
+                                }
+                            }
+                            int projModeCombo = static_cast<int>(projMode);
+                            if (ImGui::Combo("Projection workflow", &projModeCombo, "Screen 2D\0Unified world 3D\0")) {
+                                Smm::PushSceneUndoSnapshot(*scene, compressPrlx);
+                                projMode = std::clamp<int32_t>(static_cast<int32_t>(projModeCombo), 0, 1);
+                                mgMut.Attributes["MGProjectionMode"] = Solstice::Parallax::AttributeValue{projMode};
+                                sceneDirty = true;
+                            }
+                            if (projMode == 0 && LibUI::Widgets::Button("Convert selected sprite to unified 3D")) {
+                                Smm::PushSceneUndoSnapshot(*scene, compressPrlx);
+                                mgMut.Attributes["MGProjectionMode"] = Solstice::Parallax::AttributeValue{int32_t{1}};
+                                const Solstice::Math::Vec2 pos2 = [&]() {
+                                    const auto it = mgMut.Attributes.find("Position");
+                                    if (it != mgMut.Attributes.end()) {
+                                        if (const auto* p = std::get_if<Solstice::Math::Vec2>(&it->second)) {
+                                            return *p;
+                                        }
+                                    }
+                                    return Solstice::Math::Vec2{16.f, 16.f};
+                                }();
+                                const Solstice::Math::Vec2 size2 = [&]() {
+                                    const auto it = mgMut.Attributes.find("Size");
+                                    if (it != mgMut.Attributes.end()) {
+                                        if (const auto* p = std::get_if<Solstice::Math::Vec2>(&it->second)) {
+                                            return *p;
+                                        }
+                                    }
+                                    return Solstice::Math::Vec2{256.f, 256.f};
+                                }();
+                                mgMut.Attributes["WorldPosition"] = Solstice::Parallax::AttributeValue{
+                                    Solstice::Math::Vec3{pos2.x * 0.01f, 1.2f, pos2.y * 0.01f}};
+                                mgMut.Attributes["WorldScale"] = Solstice::Parallax::AttributeValue{
+                                    Solstice::Math::Vec3{std::max(0.1f, std::abs(size2.x) * 0.01f), std::max(0.1f, std::abs(size2.y) * 0.01f), 1.f}};
+                                mgMut.Attributes["WorldPitchDeg"] = Solstice::Parallax::AttributeValue{0.f};
+                                mgMut.Attributes["WorldYawDeg"] = Solstice::Parallax::AttributeValue{0.f};
+                                mgMut.Attributes["WorldRollDeg"] = Solstice::Parallax::AttributeValue{0.f};
+                                mgMut.Attributes["CastShadows"] = Solstice::Parallax::AttributeValue{true};
+                                mgMut.Attributes["AttachToElement"] = Solstice::Parallax::AttributeValue{false};
+                                mgMut.Attributes["AttachElementIndex"] = Solstice::Parallax::AttributeValue{int32_t{-1}};
+                                sceneDirty = true;
+                            }
+
                             float szw = 256.f;
                             float szh = 256.f;
                             const auto itS = mgRow.Attributes.find("Size");
@@ -1599,11 +2436,126 @@ int main(int argc, char* argv[]) {
                                 }
                             }
                             float szPair[2] = {szw, szh};
-                            if (ImGui::DragFloat2("Sprite display Size", szPair, 1.f, 2.f, 4096.f)) {
+                            if (LibUI::Widgets::DragFloat2("Sprite display Size", szPair, 1.f, 2.f, 4096.f)) {
                                 std::string err;
                                 if (Smm::Image::TrySetSpriteDisplaySize(*scene,
                                         static_cast<Solstice::Parallax::MGIndex>(mgElementSelected), szPair[0], szPair[1], err)) {
                                     sceneDirty = true;
+                                }
+                            }
+
+                            if (projMode == 1) {
+                                Solstice::Math::Vec3 wp{0.f, 1.25f, 0.f};
+                                if (const auto itP = mgRow.Attributes.find("WorldPosition"); itP != mgRow.Attributes.end()) {
+                                    if (const auto* p = std::get_if<Solstice::Math::Vec3>(&itP->second)) {
+                                        wp = *p;
+                                    }
+                                }
+                                float wpArr[3] = {wp.x, wp.y, wp.z};
+                                if (LibUI::Widgets::DragFloat3("World position", wpArr, 0.02f, -1.0e6f, 1.0e6f)) {
+                                    Smm::PushSceneUndoSnapshot(*scene, compressPrlx);
+                                    mgMut.Attributes["WorldPosition"] = Solstice::Parallax::AttributeValue{
+                                        Solstice::Math::Vec3{wpArr[0], wpArr[1], wpArr[2]}};
+                                    sceneDirty = true;
+                                }
+                                Solstice::Math::Vec3 ws{1.f, 1.f, 1.f};
+                                if (const auto itS = mgRow.Attributes.find("WorldScale"); itS != mgRow.Attributes.end()) {
+                                    if (const auto* p = std::get_if<Solstice::Math::Vec3>(&itS->second)) {
+                                        ws = *p;
+                                    }
+                                }
+                                float wsArr[3] = {ws.x, ws.y, ws.z};
+                                if (LibUI::Widgets::DragFloat3("World scale", wsArr, 0.01f, 0.05f, 256.f)) {
+                                    Smm::PushSceneUndoSnapshot(*scene, compressPrlx);
+                                    mgMut.Attributes["WorldScale"] = Solstice::Parallax::AttributeValue{
+                                        Solstice::Math::Vec3{wsArr[0], wsArr[1], wsArr[2]}};
+                                    sceneDirty = true;
+                                }
+                                float pitch = 0.f;
+                                float yaw = 0.f;
+                                float roll = 0.f;
+                                if (const auto it = mgRow.Attributes.find("WorldPitchDeg"); it != mgRow.Attributes.end()) {
+                                    if (const auto* p = std::get_if<float>(&it->second)) {
+                                        pitch = *p;
+                                    }
+                                }
+                                if (const auto it = mgRow.Attributes.find("WorldYawDeg"); it != mgRow.Attributes.end()) {
+                                    if (const auto* p = std::get_if<float>(&it->second)) {
+                                        yaw = *p;
+                                    }
+                                }
+                                if (const auto it = mgRow.Attributes.find("WorldRollDeg"); it != mgRow.Attributes.end()) {
+                                    if (const auto* p = std::get_if<float>(&it->second)) {
+                                        roll = *p;
+                                    }
+                                }
+                                if (LibUI::Widgets::DragFloat("World pitch (deg)", &pitch, 0.25f, -360.f, 360.f)
+                                    || LibUI::Widgets::DragFloat("World yaw (deg)", &yaw, 0.25f, -360.f, 360.f)
+                                    || LibUI::Widgets::DragFloat("World roll (deg)", &roll, 0.25f, -360.f, 360.f)) {
+                                    Smm::PushSceneUndoSnapshot(*scene, compressPrlx);
+                                    mgMut.Attributes["WorldPitchDeg"] = Solstice::Parallax::AttributeValue{pitch};
+                                    mgMut.Attributes["WorldYawDeg"] = Solstice::Parallax::AttributeValue{yaw};
+                                    mgMut.Attributes["WorldRollDeg"] = Solstice::Parallax::AttributeValue{roll};
+                                    sceneDirty = true;
+                                }
+                                bool castShadows = true;
+                                if (const auto it = mgRow.Attributes.find("CastShadows"); it != mgRow.Attributes.end()) {
+                                    if (const auto* p = std::get_if<bool>(&it->second)) {
+                                        castShadows = *p;
+                                    }
+                                }
+                                if (LibUI::Widgets::Checkbox("Cast shadows (unified)", &castShadows)) {
+                                    Smm::PushSceneUndoSnapshot(*scene, compressPrlx);
+                                    mgMut.Attributes["CastShadows"] = Solstice::Parallax::AttributeValue{castShadows};
+                                    sceneDirty = true;
+                                }
+                                bool attach = false;
+                                int32_t attachIdx = -1;
+                                if (const auto it = mgRow.Attributes.find("AttachToElement"); it != mgRow.Attributes.end()) {
+                                    if (const auto* p = std::get_if<bool>(&it->second)) {
+                                        attach = *p;
+                                    }
+                                }
+                                if (const auto it = mgRow.Attributes.find("AttachElementIndex"); it != mgRow.Attributes.end()) {
+                                    if (const auto* p = std::get_if<int32_t>(&it->second)) {
+                                        attachIdx = *p;
+                                    }
+                                }
+                                if (LibUI::Widgets::Checkbox("Attach to scene element", &attach)) {
+                                    Smm::PushSceneUndoSnapshot(*scene, compressPrlx);
+                                    mgMut.Attributes["AttachToElement"] = Solstice::Parallax::AttributeValue{attach};
+                                    sceneDirty = true;
+                                }
+                                if (attach) {
+                                    std::vector<const char*> items;
+                                    std::vector<int> itemToElement;
+                                    static std::vector<std::string> labels;
+                                    labels.clear();
+                                    labels.reserve(scene->GetElements().size());
+                                    for (size_t ei = 0; ei < scene->GetElements().size(); ++ei) {
+                                        const std::string_view est = Solstice::Parallax::GetElementSchema(*scene, static_cast<Solstice::Parallax::ElementIndex>(ei));
+                                        if (est != "ActorElement" && est != "CameraElement" && est != "LightElement") {
+                                            continue;
+                                        }
+                                        labels.push_back(std::to_string(ei) + ": " + scene->GetElements()[ei].Name);
+                                        items.push_back(labels.back().c_str());
+                                        itemToElement.push_back(static_cast<int>(ei));
+                                    }
+                                    int currentItem = -1;
+                                    for (size_t ii = 0; ii < itemToElement.size(); ++ii) {
+                                        if (itemToElement[ii] == attachIdx) {
+                                            currentItem = static_cast<int>(ii);
+                                            break;
+                                        }
+                                    }
+                                    if (!items.empty() && ImGui::Combo("Attach target", &currentItem, items.data(), static_cast<int>(items.size()))) {
+                                        Smm::PushSceneUndoSnapshot(*scene, compressPrlx);
+                                        const int32_t nextAttach = (currentItem >= 0 && static_cast<size_t>(currentItem) < itemToElement.size())
+                                            ? static_cast<int32_t>(itemToElement[static_cast<size_t>(currentItem)])
+                                            : int32_t{-1};
+                                        mgMut.Attributes["AttachElementIndex"] = Solstice::Parallax::AttributeValue{nextAttach};
+                                        sceneDirty = true;
+                                    }
                                 }
                             }
                         }
@@ -1656,7 +2608,7 @@ int main(int argc, char* argv[]) {
                         Smm::DrawActorArzachelFields(*scene, elementSelected, compressPrlx, sceneDirty);
                     }
                     if (!smmStatus.empty()) {
-                        ImGui::Separator();
+                        LibUI::Widgets::Separator();
                         ImGui::TextWrapped("%s", smmStatus.c_str());
                     }
                     LibUI::Widgets::EndTabItem();
@@ -1667,15 +2619,15 @@ int main(int argc, char* argv[]) {
                     LibUI::Widgets::EndTabItem();
                 }
                 if (LibUI::Widgets::BeginTabItem("Assets")) {
-                    if (ImGui::Button("Import File")) {
+                    if (LibUI::Widgets::Button("Import File")) {
                         LibUI::FileDialogs::ShowOpenFile(window, "Import", [](std::optional<std::string> path) {
                             if (path) {
                                 QueuePath(std::move(*path));
                             }
                         });
                     }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Import glTF")) {
+                    LibUI::Widgets::SameLine();
+                    if (LibUI::Widgets::Button("Import glTF")) {
                         LibUI::FileDialogs::ShowOpenFile(
                             window, "Import glTF asset", [](std::optional<std::string> path) {
                                 if (path) {
@@ -1684,8 +2636,8 @@ int main(int argc, char* argv[]) {
                             },
                             Smm::kGltfFilters);
                     }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Export glTF")) {
+                    LibUI::Widgets::SameLine();
+                    if (LibUI::Widgets::Button("Export glTF")) {
                         LibUI::FileDialogs::ShowSaveFile(
                             window, "Export selected glTF asset", [](std::optional<std::string> path) {
                                 if (path) {
@@ -1694,7 +2646,7 @@ int main(int argc, char* argv[]) {
                             },
                             Smm::kGltfFilters);
                     }
-                    if (ImGui::Button("Import raster")) {
+                    if (LibUI::Widgets::Button("Import raster")) {
                         LibUI::FileDialogs::ShowOpenFile(
                             window, "Import raster texture", [](std::optional<std::string> path) {
                                 if (path) {
@@ -1703,8 +2655,8 @@ int main(int argc, char* argv[]) {
                             },
                             std::span<const LibUI::FileDialogs::FileFilter>(Smm::Image::kRasterImportFilters));
                     }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Export raster")) {
+                    LibUI::Widgets::SameLine();
+                    if (LibUI::Widgets::Button("Export raster")) {
                         LibUI::FileDialogs::ShowSaveFile(
                             window, "Export MG sprite Texture bytes", [](std::optional<std::string> path) {
                                 if (path) {
@@ -1713,7 +2665,7 @@ int main(int argc, char* argv[]) {
                             },
                             std::span<const LibUI::FileDialogs::FileFilter>(Smm::Image::kRasterExportFilters));
                     }
-                    if (ImGui::Button("Import audio")) {
+                    if (LibUI::Widgets::Button("Import audio")) {
                         LibUI::FileDialogs::ShowOpenFile(
                             window, "Import audio asset", [](std::optional<std::string> path) {
                                 if (path) {
@@ -1722,8 +2674,8 @@ int main(int argc, char* argv[]) {
                             },
                             std::span<const LibUI::FileDialogs::FileFilter>(Smm::Audio::kAudioImportFilters));
                     }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Export audio")) {
+                    LibUI::Widgets::SameLine();
+                    if (LibUI::Widgets::Button("Export audio")) {
                         LibUI::FileDialogs::ShowSaveFile(
                             window, "Export AudioAsset bytes", [](std::optional<std::string> path) {
                                 if (path) {
@@ -1733,7 +2685,7 @@ int main(int argc, char* argv[]) {
                             std::span<const LibUI::FileDialogs::FileFilter>(Smm::Audio::kAudioExportFilters));
                     }
                     ImGui::InputText("Import folder (path)", folderPathBuf, sizeof(folderPathBuf));
-                    if (ImGui::Button("Scan folder")) {
+                    if (LibUI::Widgets::Button("Scan folder")) {
                         std::filesystem::path p(folderPathBuf);
                         if (std::filesystem::is_directory(p)) {
                             ImportFolderRecursive(p, resolver, assetEntries);
@@ -1743,7 +2695,7 @@ int main(int argc, char* argv[]) {
                     LibUI::AssetBrowser::DrawPanel("Assets", assetEntries, &sel);
                     assetSelected = sel;
                     ImGui::InputText("Import .prlx path", importPathBuf, sizeof(importPathBuf));
-                    if (ImGui::Button("Import PARALLAX")) {
+                    if (LibUI::Widgets::Button("Import PARALLAX")) {
                         if (sceneDirty) {
                             mmPendingImportPath = std::string(importPathBuf);
                             mmUnsavedPrompt = MmUnsavedKind::ImportPrlx;
@@ -1751,12 +2703,12 @@ int main(int argc, char* argv[]) {
                             performPrlxImportFromBuffers();
                         }
                     }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Export PARALLAX")) {
+                    LibUI::Widgets::SameLine();
+                    if (LibUI::Widgets::Button("Export PARALLAX")) {
                         requestExportParallaxScene();
                     }
                     if (!smmStatus.empty()) {
-                        ImGui::Separator();
+                        LibUI::Widgets::Separator();
                         ImGui::TextWrapped("%s", smmStatus.c_str());
                     }
                     LibUI::Widgets::EndTabItem();
@@ -1778,27 +2730,40 @@ int main(int argc, char* argv[]) {
                 ImGui::TextUnformatted("Viewer");
                 ImGui::TableNextColumn();
                 if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Settings, "Overlays")) {
-                    ImGui::OpenPopup("SMM_ViewportOverlaysPopup");
+                    LibUI::Widgets::OpenPopup("SMM_ViewportOverlaysPopup");
                 }
-                ImGui::SameLine();
+                LibUI::Widgets::SameLine();
                 if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Mesh, "Material")) {
-                    ImGui::OpenPopup("SMM_ViewportMaterialPopup");
+                    LibUI::Widgets::OpenPopup("SMM_ViewportMaterialPopup");
                 }
-                ImGui::SameLine();
+                LibUI::Widgets::SameLine();
                 if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Shortcuts, "Ranges")) {
-                    ImGui::OpenPopup("SMM_TimelineRangesPopup");
+                    LibUI::Widgets::OpenPopup("SMM_TimelineRangesPopup");
                 }
                 ImGui::TableNextColumn();
-                ImGui::SetNextItemWidth(120.0f);
+                LibUI::Widgets::SetNextItemWidth(120.0f);
                 ImGui::SliderFloat("MG overlay", &smmWorkspace.mgOverlayAlpha, 0.f, 1.f, "%.2f");
-                ImGui::SameLine();
+                LibUI::Widgets::SameLine();
+                int mgWorkflowMode = static_cast<int>(smmWorkspace.unifiedMgWorkflowMode);
+                LibUI::Widgets::SetNextItemWidth(210.0f);
+                if (ImGui::Combo(
+                        "##smmmgworkflow", &mgWorkflowMode, "MG workflow: Pure 2D\0MG workflow: Unified 3D\0")) {
+                    smmWorkspace.unifiedMgWorkflowMode
+                        = static_cast<Smm::UI::UnifiedMgWorkflowMode>(std::clamp(mgWorkflowMode, 0, 1));
+                    sceneDirty = true;
+                }
+                if (smmWorkspace.unifiedMgWorkflowMode == Smm::UI::UnifiedMgWorkflowMode::Pure2D) {
+                    LibUI::Widgets::SameLine();
+                    LibUI::Widgets::Checkbox("Pure2D: disable 3D", &smmWorkspace.pure2DDisable3DBackground);
+                }
+                LibUI::Widgets::SameLine();
                 const char* projLabels[] = {"Perspective", "Ortho top", "Ortho front", "Ortho side"};
                 int projMode = static_cast<int>(smmWorkspace.unifiedViewportCamera.projection);
-                ImGui::SetNextItemWidth(145.0f);
+                LibUI::Widgets::SetNextItemWidth(145.0f);
                 if (ImGui::Combo("##smmproj", &projMode, projLabels, IM_ARRAYSIZE(projLabels))) {
                     smmWorkspace.unifiedViewportCamera.projection = static_cast<LibUI::Viewport::OrbitProjectionMode>(projMode);
                 }
-                ImGui::SameLine();
+                LibUI::Widgets::SameLine();
                 if (LibUI::Icons::SmallButtonWithIcon(LibUI::Icons::Id::Reload, "Reset")) {
                     smmWorkspace.unifiedViewportCamera = {};
                 }
@@ -1806,58 +2771,35 @@ int main(int argc, char* argv[]) {
             }
 
             if (ImGui::BeginPopup("SMM_ViewportOverlaysPopup")) {
-                ImGui::Checkbox("Fluid AABB overlay", &smmWorkspace.showFluidVolumeOverlay);
-                ImGui::Checkbox("Framing guides (unified view)", &smmWorkspace.showViewportFramingGuides);
+                LibUI::Widgets::Checkbox("Fluid AABB overlay", &smmWorkspace.showFluidVolumeOverlay);
+                LibUI::Widgets::Checkbox("Framing guides (unified view)", &smmWorkspace.showViewportFramingGuides);
                 ImGui::EndPopup();
             }
             if (ImGui::BeginPopup("SMM_ViewportMaterialPopup")) {
-                ImGui::Checkbox("Preview .smat on cubes", &smmWorkspace.previewUseSmat);
-                ImGui::SameLine();
-                ImGui::Checkbox("Actors only##smat", &smmWorkspace.previewSmatActorsOnly);
-                ImGui::SameLine();
-                ImGui::Checkbox("Selected element only##smat", &smmWorkspace.previewSmatSelectedOnly);
-                ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 90.0f);
-                ImGui::InputTextWithHint("##smatpath", ".smat path (UTF-8)", smmWorkspace.previewSmatPath,
-                    sizeof(smmWorkspace.previewSmatPath));
-                ImGui::SameLine();
-                if (ImGui::Button("Browse##smat")) {
-                    LibUI::FileDialogs::ShowOpenFile(
-                        window, "Open Solstice material", [&smmWorkspace](std::optional<std::string> path) {
-                            if (path) {
-                                std::strncpy(smmWorkspace.previewSmatPath, path->c_str(),
-                                    sizeof(smmWorkspace.previewSmatPath) - 1);
-                                smmWorkspace.previewSmatPath[sizeof(smmWorkspace.previewSmatPath) - 1] = '\0';
-                            }
-                        },
-                        std::span<const LibUI::FileDialogs::FileFilter>(kSmatFileFilters));
-                }
-                ImGui::Checkbox("Preview raster maps on cubes", &smmWorkspace.previewBindMaterialMaps);
+                LibUI::Widgets::Checkbox("Preview .smat on cubes", &smmWorkspace.previewUseSmat);
+                LibUI::Widgets::SameLine();
+                LibUI::Widgets::Checkbox("Actors only##smat", &smmWorkspace.previewSmatActorsOnly);
+                LibUI::Widgets::SameLine();
+                LibUI::Widgets::Checkbox("Selected element only##smat", &smmWorkspace.previewSmatSelectedOnly);
+                LibUI::Tools::InputPathOpenBrowseRowHint(90.0f, "##smatpath", ".smat path (UTF-8)", smmWorkspace.previewSmatPath,
+                    sizeof(smmWorkspace.previewSmatPath), window, "Open Solstice material", "Browse##smat",
+                    std::span<const LibUI::FileDialogs::FileFilter>(kSmatFileFilters));
+                LibUI::Widgets::Checkbox("Preview raster maps on cubes", &smmWorkspace.previewBindMaterialMaps);
                 ImGui::SliderFloat("Schematic baked AO (low-poly)", &smmWorkspace.schematicBakedAO, 0.0f, 1.0f, "%.2f");
                 ImGui::TextDisabled("Uses the same actor / selection filter as .smat above.");
                 if (smmWorkspace.previewBindMaterialMaps) {
-                    auto drawMapRow = [&](const char* inputId, const char* hint, char* pathBuf, size_t pathCap, const char* browseId,
-                                          const char* dialogTitle) {
-                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 88.0f);
-                        ImGui::InputTextWithHint(inputId, hint, pathBuf, pathCap);
-                        ImGui::SameLine();
-                        if (ImGui::Button(browseId)) {
-                            LibUI::FileDialogs::ShowOpenFile(
-                                window, dialogTitle,
-                                [pathBuf, pathCap](std::optional<std::string> path) {
-                                    if (path) {
-                                        std::strncpy(pathBuf, path->c_str(), pathCap - 1);
-                                        pathBuf[pathCap - 1] = '\0';
-                                    }
-                                },
-                                std::span<const LibUI::FileDialogs::FileFilter>(Smm::Image::kRasterImportFilters));
-                        }
-                    };
-                    drawMapRow("##mapAlbedo", "Albedo map (RGBA)", smmWorkspace.previewMaterialAlbedoPath,
-                        sizeof(smmWorkspace.previewMaterialAlbedoPath), "Browse##mapAlbedo", "Open albedo texture");
-                    drawMapRow("##mapNormal", "Normal map (optional)", smmWorkspace.previewMaterialNormalPath,
-                        sizeof(smmWorkspace.previewMaterialNormalPath), "Browse##mapNormal", "Open normal map");
-                    drawMapRow("##mapRough", "Roughness map (optional)", smmWorkspace.previewMaterialRoughnessPath,
-                        sizeof(smmWorkspace.previewMaterialRoughnessPath), "Browse##mapRough", "Open roughness texture");
+                    LibUI::Tools::InputPathOpenBrowseRowHint(88.0f, "##mapAlbedo", "Albedo map (RGBA)",
+                        smmWorkspace.previewMaterialAlbedoPath, sizeof(smmWorkspace.previewMaterialAlbedoPath), window,
+                        "Open albedo texture", "Browse##mapAlbedo",
+                        std::span<const LibUI::FileDialogs::FileFilter>(Smm::Image::kRasterImportFilters));
+                    LibUI::Tools::InputPathOpenBrowseRowHint(88.0f, "##mapNormal", "Normal map (optional)",
+                        smmWorkspace.previewMaterialNormalPath, sizeof(smmWorkspace.previewMaterialNormalPath), window,
+                        "Open normal map", "Browse##mapNormal",
+                        std::span<const LibUI::FileDialogs::FileFilter>(Smm::Image::kRasterImportFilters));
+                    LibUI::Tools::InputPathOpenBrowseRowHint(88.0f, "##mapRough", "Roughness map (optional)",
+                        smmWorkspace.previewMaterialRoughnessPath, sizeof(smmWorkspace.previewMaterialRoughnessPath), window,
+                        "Open roughness texture", "Browse##mapRough",
+                        std::span<const LibUI::FileDialogs::FileFilter>(Smm::Image::kRasterImportFilters));
                 }
                 ImGui::EndPopup();
             }
@@ -1874,16 +2816,14 @@ int main(int argc, char* argv[]) {
             if (ImGui::BeginChild("SMM_ViewportArea", ImVec2(0.0f, viewportHeight), ImGuiChildFlags_None,
                     ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings)) {
                 if (const char* undoMsg = Smm::GetPendingUndoSnapshotMessage()) {
-                    ImGui::TextColored(ImVec4(1.f, 0.45f, 0.35f, 1.f), "%s", undoMsg);
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("Dismiss##undooom")) {
+                    if (!LibUI::Widgets::DrawInlineAlert(
+                            "smm_undooom", undoMsg, LibUI::Widgets::InlineAlertSeverity::Warning)) {
                         Smm::ClearPendingUndoSnapshotMessage();
                     }
                 }
                 if (smmWorkspace.enginePreviewLastError[0] != '\0') {
-                    ImGui::TextColored(ImVec4(1.f, 0.35f, 0.35f, 1.f), "%s", smmWorkspace.enginePreviewLastError);
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("Dismiss##engprev")) {
+                    if (!LibUI::Widgets::DrawInlineAlert(
+                            "smm_engprev", smmWorkspace.enginePreviewLastError, LibUI::Widgets::InlineAlertSeverity::Error)) {
                         smmWorkspace.enginePreviewLastError[0] = '\0';
                     }
                 }
@@ -1905,7 +2845,9 @@ int main(int argc, char* argv[]) {
                     }
                 } else {
                 Solstice::Math::Vec3 particleEmitter{0.f, 1.2f, 0.f};
-                if (smmWorkspace.particleEditorState.attachToSceneElement && elementSelected >= 0) {
+                if (smmWorkspace.manualParticleEmitterWorld) {
+                    particleEmitter = smmWorkspace.manualParticleEmitterWorldVec;
+                } else if (smmWorkspace.particleEditorState.attachToSceneElement && elementSelected >= 0) {
                     Solstice::Parallax::SceneEvaluationResult evPos{};
                     Solstice::Parallax::EvaluateScene(*scene, timeTicks, evPos);
                     for (const auto& et : evPos.ElementTransforms) {
@@ -1917,7 +2859,13 @@ int main(int argc, char* argv[]) {
                 }
                 Solstice::MovieMaker::UI::Panels::UnifiedViewportSettings uv{};
                 uv.camera = &smmWorkspace.unifiedViewportCamera;
-                uv.selectedElementIndex = elementSelected;
+                uv.primaryElementIndex = &elementSelected;
+                uv.viewportSelectedElements = &smmWorkspace.viewportSelectedElements;
+                uv.selectedMgElementIndex = &mgElementSelected;
+                uv.compressPrlxForUndo = compressPrlx;
+                uv.sceneDirty = &sceneDirty;
+                uv.manualParticleEmitterWorld = &smmWorkspace.manualParticleEmitterWorld;
+                uv.manualParticleEmitterWorldVec = &smmWorkspace.manualParticleEmitterWorldVec;
                 uv.previewSmatUtf8 = smmWorkspace.previewSmatPath;
                 uv.usePreviewSmat = smmWorkspace.previewUseSmat;
                 uv.smatActorsOnly = smmWorkspace.previewSmatActorsOnly;
@@ -1933,6 +2881,8 @@ int main(int argc, char* argv[]) {
                 uv.enginePreviewErrorSink = smmWorkspace.enginePreviewLastError;
                 uv.enginePreviewErrorSinkBytes = sizeof(smmWorkspace.enginePreviewLastError);
                 uv.enginePreviewSessionDisabled = &smmWorkspace.enginePreviewSessionDisabled;
+                uv.mgWorkflowMode = static_cast<int>(smmWorkspace.unifiedMgWorkflowMode);
+                uv.disable3DInPure2D = smmWorkspace.pure2DDisable3DBackground;
                 uv.cinematicView3D = &smmAuthoringSession.CinematicView;
                 Solstice::MovieMaker::UI::Panels::DrawUnifiedViewportPanel(window, *scene, resolver, timeTicks,
                     smmScene3dPreviewTex, viewportHeight - 8.0f, &smmWorkspace.particleEditorState, &smmParticleSpriteTex,
@@ -2093,7 +3043,7 @@ int main(int argc, char* argv[]) {
             }
             ImGui::EndChild();
             ImGui::EndChild();
-            ImGui::EndTable();
+            LibUI::Layout::EndTwoPaneFixedLeftTable();
         }
 
         if (showExportWindow) {
@@ -2125,6 +3075,7 @@ int main(int argc, char* argv[]) {
                         std::string particleSyncErr;
                         (void)Smm::Particles::SyncEditorToParallaxScene(
                             *scene, smmWorkspace.particleEditorState, resolver, particleSyncErr);
+                        PrepareSceneEmbeddedAssets(*scene, resolver);
                         if (!Solstice::Parallax::SaveScene(*scene, outPath, compressPrlx, &err)) {
                             smmStatus =
                                 "PARALLAX export failed with ParallaxError " + std::to_string(static_cast<int>(err));
@@ -2232,35 +3183,11 @@ int main(int argc, char* argv[]) {
             vep.startTick = videoStartTick;
             vep.endTick = videoEndTick;
             vep.container = videoMp4 ? Solstice::MovieMaker::VideoContainer::Mp4 : Solstice::MovieMaker::VideoContainer::Mov;
-            std::string err;
-            std::string detail;
-            videoExportLog.clear();
-            videoExportLastDetail.clear();
-            std::string lastCmdDiag = "ffmpeg: \"" + std::string(ffmpegExeBuf) + "\" (rawvideo pipe → " + std::string(videoExportPathBuf) + ")";
-            const bool ok = SmmRunVideoExportTry(*scene, resolver, window, vep, err, detail,
-                [&](float pr) { videoExportLog = "Encoding… " + std::to_string(static_cast<int>(pr * 100.f)) + "%\n" + lastCmdDiag + "\n"; });
-            if (!ok) {
-                videoExportLastDetail = detail.empty() ? SmmBuildVideoExportFailureReport(vep, err, nullptr) : detail;
-                videoExportLog = lastCmdDiag + "\n\n" + err + "\n\n---\n" + videoExportLastDetail;
+            if (activeVideoExportSession) {
+                videoExportLog = "Export already running. Wait until it finishes.\n";
             } else {
-                videoExportLastDetail.clear();
-                videoExportLog = "Export finished: " + std::string(videoExportPathBuf) + "\n";
-                MovieMakerProjectState pst;
-                pst.exportPath = exportPathBuf;
-                pst.importPath = importPathBuf;
-                pst.folderPath = folderPathBuf;
-                pst.ffmpegExe = ffmpegExeBuf;
-                pst.videoExportPath = videoExportPathBuf;
-                pst.videoWidth = videoW;
-                pst.videoHeight = videoH;
-                pst.videoFps = videoFps;
-                pst.videoMp4 = videoMp4;
-                pst.videoStartTick = videoStartTick;
-                pst.videoEndTick = videoEndTick;
-                pst.compressPrlx = compressPrlx;
-                pst.recoveryIntervalSec = smmRecoveryIntervalSecU32;
-                pst.recentPrlx = recentPrlxPaths;
-                SaveMovieMakerProjectToPath(activeProjectPath, pst);
+                pendingVideoExportStart = std::move(vep);
+                videoExportLog = "Queued export job. It will run after this UI frame.\n";
             }
         }
         if (ImGui::Button("Add current settings to render queue##rq")) {
@@ -2289,23 +3216,11 @@ int main(int argc, char* argv[]) {
                 ImGui::PopID();
             }
             if (ImGui::Button("Run render queue (sequential)##rq")) {
-                videoExportLastDetail.clear();
-                for (const Solstice::MovieMaker::VideoExportParams& job : smmVideoRenderQueue) {
-                    std::string err2;
-                    std::string det2;
-                    const bool runOk = SmmRunVideoExportTry(*scene, resolver, window, job, err2, det2,
-                        [&](float pr) {
-                            videoExportLog = "Queue: " + job.outputPath + " — " + std::to_string(static_cast<int>(pr * 100.f)) + "%\n";
-                        });
-                    if (!runOk) {
-                        videoExportLastDetail = det2.empty() ? SmmBuildVideoExportFailureReport(job, err2, nullptr) : det2;
-                        videoExportLog = "Render queue failed: " + job.outputPath + "\n" + err2 + "\n\n---\n" + videoExportLastDetail;
-                        break;
-                    }
-                }
-                smmVideoRenderQueue.clear();
-                if (videoExportLog.find("failed") == std::string::npos) {
-                    videoExportLog = "Render queue completed.\n" + videoExportLog;
+                if (activeVideoExportSession) {
+                    videoExportLog = "Export already running. Wait until it finishes.\n";
+                } else {
+                    pendingVideoRenderQueueRun = true;
+                    videoExportLog = "Queued render queue run. It will start after this UI frame.\n";
                 }
             }
         }
@@ -2339,11 +3254,13 @@ int main(int argc, char* argv[]) {
         ImGui::SameLine();
         if (ImGui::Button("Test encode (1s testsrc → temp MP4)")) {
             ffmpegLog.clear();
-            std::filesystem::path tmp = std::filesystem::temp_directory_path() / "smm_ffmpeg_test.mp4";
+            std::error_code tec;
+            const std::filesystem::path tdir = std::filesystem::temp_directory_path(tec);
+            std::filesystem::path tmp = (tec ? std::filesystem::current_path() : tdir) / "smm_ffmpeg_test.mp4";
             std::string outPath = tmp.generic_string();
             std::string args =
                 "-y -hide_banner -loglevel warning -f lavfi -i testsrc=duration=1:size=160x120:rate=1 -pix_fmt yuv420p "
-                "-c:v libx264 \"";
+                "-c:v mpeg4 -q:v 4 \"";
             args += outPath;
             args += "\"";
             lastFfmpegShellCommand = "\"" + std::string(ffmpegExeBuf) + "\" " + args;
@@ -2374,7 +3291,7 @@ int main(int argc, char* argv[]) {
             ImGui::End();
         }
 
-        ImGui::End();
+        LibUI::Widgets::EndWindow();
 
         MovieMakerPluginsDrawPanel(&showMmPluginsPanel);
         if (showMmAboutPanel) {

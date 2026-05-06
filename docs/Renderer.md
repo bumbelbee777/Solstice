@@ -4,7 +4,57 @@
 
 The Solstice rendering system is a CPU-centric software renderer with BGFX integration for display.
 
-**Stylized shading, shockwave, and screen fog** (cel/rim, vertex wobble, post shockwave, distance/height fog) are documented in [StylizedRendering.md](StylizedRendering.md). Shared graphics utilities (easing, keyframes) live in the **MinGfx** module; the renderer does not depend on MinGfx unless such usage is added later. It provides a complete rendering pipeline including shadow mapping, post-processing, raytracing, and multi-viewport support. The system is designed for retro-modern visuals targeting PS2 to early PS3-level quality.
+Shared graphics utilities (easing, keyframes) live in the **MinGfx** module; the renderer does not depend on MinGfx unless such usage is added later. It provides a complete rendering pipeline including shadow mapping, post-processing, raytracing, and multi-viewport support. The system is designed for retro-modern visuals targeting PS2 to early PS3-level quality.
+
+## Stylized Rendering and Screen Effects
+
+The main render path is BGFX: `vs_standard` / `fs_standard` for the scene pass and `fs_post` for HDR post.
+
+### Per-material stylized controls (`MaterialExtras`)
+
+When a `Core::Material` has a non-null `Extras` pointer, these fields feed the `u_stylize` uniform (see `source/Shaders/vs_standard.sc` and `fs_standard.sc`):
+
+| Field | Role |
+|--------|------|
+| `CelBands` | `0` = normal PBR key-light response. `2`-`8` = quantize the sun lambert term into that many bands (toon/cel). Point lights are not re-banded in the current shader. |
+| `RimOverdrive` | `0` = default rim weight. `> 0` scales the Fresnel-style rim (values around `2-4` read as hot edges). |
+| `VertexWobbleAmplitude` | World-space displacement along vertex normals using a cheap sin (good for subtle cloth/water/muscle). Works on any mesh submitted with normals, including CPU-skinned meshes. |
+| `VertexWobblePhase` | Added to the sin phase; animate each frame for motion. |
+
+JSON material serialization includes these keys under `Extras` (see `Material.cxx`).
+
+### Screen-space shockwave
+
+`PostProcessing::SetShockwaveSettings` sets `u_shockwaveParams`:
+- `x/y` = center in UV (`0..1`)
+- `z` = ring radius in aspect-corrected UV space
+- `w` = strength (`0` disables)
+
+The post shader refracts color samples (not depth), helping keep TAA and depth-based effects stable.
+
+Typical workflow: on explosion or impact, bump `Strength` for a few frames, animate `RingRadius` outward, then set `Strength` back to `0`.
+
+### Volumetric-style screen fog
+
+Full ray-marched volumes are not in this path; use these options:
+
+1. God rays: `SetVolumetricTexture` + `SetGodRaySettings`.
+2. Screen fog: `PostProcessing::SetScreenFogSettings` (`ScreenFogSettings`) for exponential distance fog plus optional height fog (`HeightAnchorY` / `HeightFalloff`), applied in linear HDR before ACES.
+3. Fog dither: `PostProcessing::CinematicViewState::ScreenFogDither` (`u_FogDither` in `fs_post`) adds small per-pixel hash noise to reduce banding in broad gradients.
+
+Also available on `PostProcessing::CinematicViewState`: depth-scaled chromatic aberration and smear frames (`u_ChromaticParams`, `u_SmearFrame`) for stylized cinematic passes.
+
+Use god rays for shafts, screen fog for atmospheric depth/ground mist, and dither/cinematic fields for stable gradients and tool previews.
+
+### 2D sprites on 3D bones (integration pattern)
+
+There is no single sprite-socket draw call in the core scene pass today. The intended pattern is:
+
+1. Evaluate animation (for example `Skeleton` / `Pose` or Parallax rig) to get a world matrix for the target bone.
+2. Create/update a scene object using a billboard/card mesh (`vs_billboard` / `fs_billboard`) and set its transform from the bone each frame.
+3. Use transparent or cutout material and standard transparent depth ordering.
+
+Authoring tools can automate step 2 by parenting a sprite object to a bone name at export and resolving bone index at load time.
 
 ## Asset packaging (RELIC)
 
@@ -77,6 +127,57 @@ sequenceDiagram
     SoftwareRenderer->>PostProcessing: Apply()
     PostProcessing->>App: Present to backbuffer
 ```
+
+## Forward-pass lighting (scene shader)
+
+The main opaque/transparent mesh pass uses **`vs_standard.sc` / `fs_standard.sc`**. Lighting is a deliberate mix of **readable PBR**, **stylized hooks**, and **controlled cost** on both CPU and GPU.
+
+### Model (per pixel)
+
+| Term | Description |
+|------|-------------|
+| **Key (sun)** | One **directional** light: Cook–Torrance microfacet specular (GGX distribution, Schlick Fresnel, simplified Smith geometry). Diffuse uses a **wrapped Lambert** factor so silhouettes stay soft without extra fill lights. Cel banding from `MaterialExtras::CelBands` applies to this term only. |
+| **Point lights** | Up to **32** stacked lights with the same BRDF as the key; inverse-square attenuation with a smooth range rolloff (see `CalculatePointLight` in `fs_standard.sc`). |
+| **Ambient** | Hemisphere blend (ground/sky tint by world **N.y**) scaled by `SceneLightingTune::AmbientIntensity`. When `EnvIrradianceBlend` &gt; 0 and a skybox cubemap is bound, an **optional** normal-facing cubemap sample approximates diffuse irradiance (cheap IBL flavor, not filtered SH). |
+| **Shadows** | Single cascade-style matrix from the shadow pass; **2×2 PCF** with slope/ground-biased depth compare. Direct diffuse and specular from the key are masked; ambient is **not** fully killed by shadow so interiors stay legible. **`ShadowAmbientFill`** adds extra hemisphere lift in shadowed areas only. |
+| **Reflections / glass** | Environment cubemap along **R** (and refraction for transparent materials). Separate from the irradiance sample; roughness still modulates the forward spec lobe. |
+
+### CPU infrastructure (`SceneRenderer`)
+
+- **Primary directional**: The **first** directional in the light list drives `u_LightDir` / `u_LightColor` (matches shadow and post lighting direction). Extra directionals are ignored on this path; add explicit art or a second pass if you need multiple suns.
+- **Point lights**: Only `LightType::Point` is forwarded. **`Spot` is skipped** here (use volumetrics or future spot support). If more than 32 point lights exist, the **32 closest to the camera** are kept (`partial_sort` by squared distance), stabilizing cost and prioritizing what the player sees.
+- **Environment irradiance blend** is forced to **0** when no valid skybox cubemap is bound, so shaders do not rely on an undefined cubemap.
+
+Global tune is uploaded as **`u_SceneLighting`** from `SceneLightingTune`:
+
+| Field | Shader component | Role |
+|--------|-------------------|------|
+| `AmbientIntensity` | `x` | Scales hemisphere + environment-derived ambient. |
+| `EnvIrradianceBlend` | `y` | `0` = hemisphere only (no extra cubemap sample for **N**); `0.2–0.4` typical with a good skybox. |
+| `KeyDiffuseWrap` | `z` | `0` = standard Lambert; higher = softer terminator (try `0.05–0.15`). |
+| `ShadowAmbientFill` | `w` | Extra ambient in penumbra/shadow to avoid pitch-black micro-detail (try `0.4–0.8`). |
+
+Set from C++ on the renderer:
+
+```cpp
+Solstice::Render::SceneLightingTune tune;
+tune.AmbientIntensity = 1.0f;
+tune.EnvIrradianceBlend = 0.28f;
+tune.KeyDiffuseWrap = 0.08f;
+tune.ShadowAmbientFill = 0.55f;
+renderer.SetSceneLightingTune(tune);
+```
+
+`SoftwareRenderer::SetSceneLightingTune` forwards to `SceneRenderer`; `GetSceneLightingTune()` is available on `SceneRenderer` for tools.
+
+### Performance notes
+
+- **GPU**: Worst case per shaded pixel includes shadow map PCF, up to 32 point iterations, optional environment **N** sample (only when `EnvIrradianceBlend` &gt; 0), plus reflection/refraction cubemap samples on reflective materials. Stylized modes that keep point counts and env blend low track best on integrated GPUs.
+- **CPU**: Light selection is **O(N log 32)** when *N* &gt; 32 points; otherwise linear. Ray tracing / volumetrics in `SoftwareRenderer::RenderScene` are separate toggles and workloads.
+
+### Shader builds
+
+Changing `fs_standard.sc` requires recompiling the scene fragment shader to **`fs_standard.bin`** on your target backends (shaderc scripts or project build step); see `ShaderLoader` search paths (`source/Shaders/bin/`, etc.).
 
 ## Core Concepts
 
@@ -188,6 +289,8 @@ void RenderScene(Scene& sceneGraph, const Camera& cam);
 void RenderScene(Scene& sceneGraph, const Camera& cam, 
                  const std::vector<Physics::LightSource>& lights);
 
+void SetSceneLightingTune(const SceneLightingTune& tune);
+
 // VR stereo rendering
 void RenderSceneVR(Scene& sceneGraph, const Camera& cam, bool leftEye);
 ```
@@ -292,6 +395,21 @@ void SetShowDebugOverlay(bool enable);
 void SetSelectedObjects(const std::set<SceneObjectID>& objects);
 void SetHoveredObject(SceneObjectID objectID);
 void SetLightSources(const std::vector<Physics::LightSource>& lights);
+void SetSceneLightingTune(const SceneLightingTune& tune);
+const SceneLightingTune& GetSceneLightingTune() const;
+```
+
+### SceneLightingTune
+
+POD knobs for `u_SceneLighting` in `fs_standard.sc`; see **Forward-pass lighting** above.
+
+```cpp
+struct SceneLightingTune {
+    float AmbientIntensity = 1.0f;
+    float EnvIrradianceBlend = 0.28f;
+    float KeyDiffuseWrap = 0.08f;
+    float ShadowAmbientFill = 0.55f;
+};
 ```
 
 ### ShadowRenderer

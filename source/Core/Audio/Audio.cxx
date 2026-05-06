@@ -28,6 +28,12 @@ namespace Solstice::Core::Audio {
         float DbToLinear(float db) {
             return std::pow(10.0f, db / 20.0f);
         }
+
+        float RandRange(float minValue, float maxValue) {
+            static thread_local std::mt19937 rng{std::random_device{}()};
+            std::uniform_real_distribution<float> dist(minValue, maxValue);
+            return dist(rng);
+        }
     }
 
     AudioManager::~AudioManager() {
@@ -75,6 +81,146 @@ namespace Solstice::Core::Audio {
                 return minDist / (minDist + rolloff * (d - minDist));
             }
         }
+    }
+
+    float AudioManager::ComputeConeAttenuation(const AudioSource& Source, const Math::Vec3& ToListenerDir) {
+        const float innerDeg = std::clamp(Source.ConeInnerAngleDeg, 0.0f, 360.0f);
+        const float outerDeg = std::clamp(std::max(innerDeg, Source.ConeOuterAngleDeg), 0.0f, 360.0f);
+        if (outerDeg >= 359.9f) {
+            return 1.0f;
+        }
+
+        Math::Vec3 direction = Source.Direction;
+        if (direction.Dot(direction) < 0.0001f) {
+            direction = Math::Vec3(0.0f, 0.0f, -1.0f);
+        } else {
+            direction = direction.Normalized();
+        }
+
+        const Math::Vec3 toListener = (ToListenerDir.Dot(ToListenerDir) < 0.0001f)
+            ? Math::Vec3(0.0f, 0.0f, -1.0f)
+            : ToListenerDir.Normalized();
+        const float cosTheta = std::clamp(direction.Dot(toListener), -1.0f, 1.0f);
+        const float thetaDeg = std::acos(cosTheta) * (180.0f / static_cast<float>(M_PI));
+        const float halfInner = innerDeg * 0.5f;
+        const float halfOuter = outerDeg * 0.5f;
+        const float outerGain = Clamp01(Source.ConeOuterGain);
+
+        if (thetaDeg <= halfInner) {
+            return 1.0f;
+        }
+        if (thetaDeg >= halfOuter) {
+            return outerGain;
+        }
+        const float t = (thetaDeg - halfInner) / std::max(0.001f, halfOuter - halfInner);
+        return std::lerp(1.0f, outerGain, t);
+    }
+
+    float AudioManager::ComputeDopplerRatio(const AudioSource& Source, const Math::Vec3& ListenerVelocity,
+                                            const Math::Vec3& SourceVelocity, const Math::Vec3& ToSourceDir) {
+        const float speedOfSound = std::max(0.1f, Source.SpeedOfSound);
+        const float dopplerFactor = std::max(0.0f, Source.DopplerFactor);
+        if (dopplerFactor <= 0.0001f) {
+            return 1.0f;
+        }
+
+        const Math::Vec3 dir = (ToSourceDir.Dot(ToSourceDir) < 0.0001f)
+            ? Math::Vec3(0.0f, 0.0f, -1.0f)
+            : ToSourceDir.Normalized();
+        const float listenerVel = ListenerVelocity.Dot(dir);
+        const float sourceVel = SourceVelocity.Dot(dir);
+
+        const float maxRelative = speedOfSound * 0.95f;
+        const float clampedListener = std::clamp(listenerVel * dopplerFactor, -maxRelative, maxRelative);
+        const float clampedSource = std::clamp(sourceVel * dopplerFactor, -maxRelative, maxRelative);
+        const float numerator = speedOfSound - clampedListener;
+        const float denominator = std::max(0.05f, speedOfSound - clampedSource);
+        return std::clamp(numerator / denominator, 0.5f, 2.0f);
+    }
+
+    float AudioManager::ComputeFocusGain(const AudioSource& Source, const Listener& ListenerData, const Math::Vec3& ToSourceDir) {
+        const float focus = Clamp01(Source.FocusFactor);
+        if (focus <= 0.0001f) {
+            return 1.0f;
+        }
+
+        Math::Vec3 listenerForward = ListenerData.Forward;
+        if (listenerForward.Dot(listenerForward) < 0.0001f) {
+            listenerForward = Math::Vec3(0.0f, 0.0f, -1.0f);
+        } else {
+            listenerForward = listenerForward.Normalized();
+        }
+        const Math::Vec3 sourceDir = (ToSourceDir.Dot(ToSourceDir) < 0.0001f)
+            ? Math::Vec3(0.0f, 0.0f, -1.0f)
+            : ToSourceDir.Normalized();
+        const float facing = std::clamp(listenerForward.Dot(sourceDir), -1.0f, 1.0f);
+        const float frontWeight = std::clamp((facing + 1.0f) * 0.5f, 0.0f, 1.0f);
+        const float clarityGain = std::lerp(0.85f, 1.15f, frontWeight);
+        return std::lerp(1.0f, clarityGain, focus);
+    }
+
+    float AudioManager::ComputePriorityGain(const AudioSource& Source) {
+        const float priorityNorm = std::clamp(static_cast<float>(Source.Priority) / 6.0f, -1.0f, 1.0f);
+        float gain = 1.0f + 0.18f * priorityNorm;
+        if (Source.IsDialogue) {
+            gain *= 1.08f;
+        }
+        if (Source.IsCriticalCue) {
+            gain *= 1.06f;
+        }
+        return std::clamp(gain, 0.75f, 1.35f);
+    }
+
+    float AudioManager::ComputeImmersionGain(const AudioSource& Source, const Listener& ListenerData, const Math::Vec3& ToSourceDir) {
+        const float immersion = Clamp01(Source.ImmersionFactor);
+        if (immersion <= 0.0001f) {
+            return 1.0f;
+        }
+
+        Math::Vec3 forward = ListenerData.Forward;
+        Math::Vec3 up = ListenerData.Up;
+        if (forward.Dot(forward) < 0.0001f) forward = Math::Vec3(0.0f, 0.0f, -1.0f);
+        if (up.Dot(up) < 0.0001f) up = Math::Vec3(0.0f, 1.0f, 0.0f);
+        forward = forward.Normalized();
+        up = up.Normalized();
+        Math::Vec3 right = forward.Cross(up);
+        if (right.Dot(right) < 0.0001f) {
+            right = Math::Vec3(1.0f, 0.0f, 0.0f);
+        } else {
+            right = right.Normalized();
+        }
+
+        const Math::Vec3 dir = (ToSourceDir.Dot(ToSourceDir) < 0.0001f)
+            ? Math::Vec3(0.0f, 0.0f, -1.0f)
+            : ToSourceDir.Normalized();
+        const float front = std::clamp(forward.Dot(dir), -1.0f, 1.0f);
+        const float side = std::abs(std::clamp(right.Dot(dir), -1.0f, 1.0f));
+        const float rearWeight = std::clamp((-front + 1.0f) * 0.5f, 0.0f, 1.0f);
+        const float sideWeight = side;
+        const float gain = 1.0f - 0.10f * rearWeight + 0.06f * sideWeight;
+        return std::lerp(1.0f, gain, immersion);
+    }
+
+    float AudioManager::ComputeDiffractionGain(const AudioSource& Source, const Listener& ListenerData, const Math::Vec3& ToSourceDir, float Occlusion01) {
+        const float diffraction = Clamp01(Source.DiffractionFactor);
+        const float occlusion = Clamp01(Occlusion01);
+        if (diffraction <= 0.0001f || occlusion <= 0.0001f) {
+            return 1.0f;
+        }
+
+        Math::Vec3 forward = ListenerData.Forward;
+        if (forward.Dot(forward) < 0.0001f) {
+            forward = Math::Vec3(0.0f, 0.0f, -1.0f);
+        } else {
+            forward = forward.Normalized();
+        }
+        const Math::Vec3 dir = (ToSourceDir.Dot(ToSourceDir) < 0.0001f)
+            ? Math::Vec3(0.0f, 0.0f, -1.0f)
+            : ToSourceDir.Normalized();
+        const float facing = std::clamp(forward.Dot(dir), -1.0f, 1.0f);
+        const float edgeWeight = 1.0f - std::abs(facing); // strongest at listener side.
+        const float bleed = occlusion * diffraction * edgeWeight;
+        return 1.0f + 0.45f * bleed;
     }
 
     bool AudioManager::ContainsZonePoint(const AcousticZone& Zone, const Math::Vec3& Point) {
@@ -137,6 +283,12 @@ namespace Solstice::Core::Audio {
         // - critical cue ducking ceiling ~= -2.5 dB
         m_DialogueDuckingStrength = 1.0f - DbToLinear(-kMaxDialogueDuckingDb);
         m_CriticalCueDuckingStrength = 1.0f - DbToLinear(-kMaxCriticalCueDuckingDb);
+        m_HRTFRenderer.Initialize(Frequency, 128);
+        m_Ambisonics.SetOrder(AmbisonicOrder::First);
+        m_WaveTracer.Initialize(nullptr);
+        m_WaveTracer.SetPortalAudio(&m_PortalAudio);
+        m_WaveTracer.SetFluidCoupler(&m_FluidCoupler);
+        m_MLSpatializer.Initialize();
         m_Initialized = true;
         SOLSTICE_LOG("Audio Subsystem Initialized");
     }
@@ -250,6 +402,10 @@ namespace Solstice::Core::Audio {
             MIX_DestroyMixer(m_Mixer);
             m_Mixer = nullptr;
         }
+
+        m_HRTFRenderer.Shutdown();
+        m_WaveTracer.Shutdown();
+        m_MLSpatializer.Shutdown();
 
         MIX_Quit();
         m_Initialized = false;
@@ -649,6 +805,8 @@ namespace Solstice::Core::Audio {
 
     void AudioManager::SetListener(const Listener& ListenerData) {
         LockGuard Guard(m_Lock);
+        m_PreviousListenerPosition = m_Listener.Position;
+        m_HasPreviousListenerPosition = true;
         m_Listener = ListenerData;
         if (m_Listener.Forward.Dot(m_Listener.Forward) > 0.001f) m_Listener.Forward = m_Listener.Forward.Normalized();
         if (m_Listener.Up.Dot(m_Listener.Up) > 0.001f) m_Listener.Up = m_Listener.Up.Normalized();
@@ -661,12 +819,32 @@ namespace Solstice::Core::Audio {
     AudioSource AudioManager::PlaySound3D(const char* Path, const Math::Vec3& Position, float MaxDistance, bool Loop) {
         AudioSource Source;
         Source.Position = Position;
+        Source.PreviousPosition = Position;
+        Source.Direction = Math::Vec3(0.0f, 0.0f, -1.0f);
+        Source.Velocity = Math::Vec3(0.0f, 0.0f, 0.0f);
         Source.MinDistance = 1.0f;
         Source.MaxDistance = MaxDistance;
         Source.RolloffFactor = 1.0f;
         Source.OcclusionFactor = 0.0f;
         Source.ObstructionFactor = 0.0f;
-        Source.PitchVariance = 0.0f;
+        Source.PitchVariance = 0.03f;
+        Source.BasePitchRatio = 1.0f + RandRange(-Source.PitchVariance, Source.PitchVariance);
+        Source.DopplerFactor = 1.0f;
+        Source.SpeedOfSound = 343.3f;
+        Source.AirAbsorptionFactor = 0.25f;
+        Source.ConeInnerAngleDeg = 360.0f;
+        Source.ConeOuterAngleDeg = 360.0f;
+        Source.ConeOuterGain = 1.0f;
+        Source.FocusFactor = 0.15f;
+        Source.NearFieldGain = 0.05f;
+        Source.MaxGain = 1.0f;
+        Source.DopplerSmoothing = 0.06f;
+        Source.ImmersionFactor = 0.35f;
+        Source.DistanceReverbFactor = 0.40f;
+        Source.RearReverbFactor = 0.25f;
+        Source.DiffractionFactor = 0.35f;
+        Source.OcclusionPitchDamping = 0.12f;
+        Source.AdaptiveMotionFactor = 0.20f;
         Source.WetLevel = 1.0f;
         Source.DryLevel = 1.0f;
         Source.OcclusionAttack = kTargetOcclusionAttackSec;
@@ -675,12 +853,15 @@ namespace Solstice::Core::Audio {
         Source.WetRelease = kTargetWetReleaseSec;
         Source.CurrentOcclusion = 0.0f;
         Source.CurrentWetLevel = 0.0f;
+        Source.CurrentFrequencyRatio = Source.BasePitchRatio;
         Source.Volume = 1.0f; // Default full volume
         Source.Priority = 0;
         Source.DistanceMode = DistanceModel::Inverse;
         Source.IsDialogue = false;
         Source.IsCriticalCue = false;
         Source.IsLooping = Loop;
+        Source.HasManualVelocity = false;
+        Source.HasPreviousPosition = false;
         Source.Track = nullptr;
 
         {
@@ -919,6 +1100,22 @@ namespace Solstice::Core::Audio {
 
         const Math::Vec3 toSource = Source.Position - listener.Position;
         const float distance = std::max(0.1f, toSource.Magnitude());
+        const Math::Vec3 toSourceDir = (distance > 0.0001f) ? (toSource / distance) : Math::Vec3(0.0f, 0.0f, -1.0f);
+        const Math::Vec3 toListenerDir = toSourceDir * -1.0f;
+
+        Math::Vec3 listenerVelocity(0.0f, 0.0f, 0.0f);
+        {
+            LockGuard Guard(m_Lock);
+            if (m_HasPreviousListenerPosition && Dt > 0.0001f) {
+                listenerVelocity = (listener.Position - m_PreviousListenerPosition) / Dt;
+            }
+        }
+        Math::Vec3 sourceVelocity(0.0f, 0.0f, 0.0f);
+        if (Source.HasManualVelocity) {
+            sourceVelocity = Source.Velocity;
+        } else if (Source.HasPreviousPosition && Dt > 0.0001f) {
+            sourceVelocity = (Source.Position - Source.PreviousPosition) / Dt;
+        }
 
         Math::Vec3 forward = listener.Forward.Normalized();
         Math::Vec3 up = listener.Up.Normalized();
@@ -954,7 +1151,33 @@ namespace Solstice::Core::Audio {
         );
         const float zoneObstructionMul = sourceZone ? sourceZone->ObstructionMultiplier : 1.0f;
         const float targetOcclusion = Clamp01(Source.OcclusionFactor + Source.ObstructionFactor * zoneObstructionMul);
-        const float targetWet = Clamp01(Source.WetLevel * zoneWet);
+        const float normalizedDistance = std::clamp((distance - Source.MinDistance) / std::max(0.01f, Source.MaxDistance - Source.MinDistance), 0.0f, 1.0f);
+        const float rearWeight = std::clamp((-listener.Forward.Normalized().Dot(toSourceDir) + 1.0f) * 0.5f, 0.0f, 1.0f);
+        const float listenerSpeed = listenerVelocity.Magnitude();
+        const float motionWeight = std::clamp(listenerSpeed / std::max(1.0f, Source.SpeedOfSound * 0.08f), 0.0f, 1.0f);
+        float focusFactor = Source.FocusFactor;
+        float immersionFactor = Source.ImmersionFactor;
+        float diffractionFactor = Source.DiffractionFactor;
+        float adaptiveMotionFactor = Source.AdaptiveMotionFactor;
+        float airAbsorptionFactor = Source.AirAbsorptionFactor;
+        if (m_MLSpatializationEnabled) {
+            const auto ml = m_MLSpatializer.Predict(Source.Position, listener.Position, sourceVelocity, listenerVelocity,
+                                                    targetOcclusion, distance, std::atan2(toSourceDir.x, -toSourceDir.z));
+            focusFactor = std::lerp(focusFactor, ml.Focus, 0.35f);
+            immersionFactor = std::lerp(immersionFactor, ml.Immersion, 0.35f);
+            diffractionFactor = std::lerp(diffractionFactor, ml.Diffraction, 0.35f);
+            adaptiveMotionFactor = std::lerp(adaptiveMotionFactor, ml.MotionAdaptation, 0.35f);
+            airAbsorptionFactor = std::lerp(airAbsorptionFactor, ml.AirAbsorption, 0.35f);
+        }
+        Source.FocusFactor = Clamp01(focusFactor);
+        Source.ImmersionFactor = Clamp01(immersionFactor);
+        Source.DiffractionFactor = Clamp01(diffractionFactor);
+        Source.AdaptiveMotionFactor = Clamp01(adaptiveMotionFactor);
+        Source.AirAbsorptionFactor = Clamp01(airAbsorptionFactor);
+        const float adaptiveMotion = Source.AdaptiveMotionFactor * motionWeight;
+        const float distanceWetBloom = Clamp01(Source.DistanceReverbFactor) * normalizedDistance * (1.0f + 0.5f * adaptiveMotion);
+        const float rearWetBloom = Clamp01(Source.RearReverbFactor) * rearWeight;
+        const float targetWet = Clamp01(Source.WetLevel * zoneWet + distanceWetBloom + rearWetBloom);
 
         Source.CurrentOcclusion = SmoothTowards(
             Source.CurrentOcclusion,
@@ -972,15 +1195,35 @@ namespace Solstice::Core::Audio {
         );
 
         const float distanceGain = Clamp01(ComputeDistanceAttenuation(Source, distance));
+        const float coneGain = Clamp01(ComputeConeAttenuation(Source, toListenerDir));
+        const float focusGain = ComputeFocusGain(Source, listener, toSourceDir);
+        const float immersionGain = ComputeImmersionGain(Source, listener, toSourceDir);
+        const float diffractionGain = ComputeDiffractionGain(Source, listener, toSourceDir, Source.CurrentOcclusion);
+        const float priorityGain = ComputePriorityGain(Source);
+        const float airAbsorptionGain = std::exp(-std::max(0.0f, Source.AirAbsorptionFactor) * normalizedDistance);
+        const float nearFieldBoost = (distance < Source.MinDistance)
+            ? std::lerp(1.0f + std::max(0.0f, Source.NearFieldGain), 1.0f, std::clamp(distance / std::max(0.01f, Source.MinDistance), 0.0f, 1.0f))
+            : 1.0f;
         const float occludedGain = std::lerp(1.0f, 0.15f, Clamp01(Source.CurrentOcclusion));
         const float wetPenalty = std::lerp(1.0f, 0.85f, Clamp01(Source.CurrentWetLevel));
-        const float finalGain = Clamp01(Source.Volume * Source.DryLevel * distanceGain * occludedGain * wetPenalty * DuckingFactor);
+        const float rawGain = Source.Volume * Source.DryLevel * distanceGain * coneGain * focusGain * immersionGain * diffractionGain * priorityGain * nearFieldBoost * airAbsorptionGain * occludedGain * wetPenalty * DuckingFactor;
+        const float finalGain = std::clamp(rawGain, 0.0f, std::max(0.05f, Source.MaxGain));
 
         try {
             MIX_SetTrackGain(Source.Track, finalGain);
+            const float dopplerRatio = ComputeDopplerRatio(Source, listenerVelocity, sourceVelocity, toSourceDir);
+            const float occlusionPitch = std::lerp(1.0f, 1.0f - Clamp01(Source.OcclusionPitchDamping), Clamp01(Source.CurrentOcclusion));
+            const float motionSpreadPitch = 1.0f + adaptiveMotion * 0.03f * (1.0f - std::abs(toSourceDir.Dot(listener.Forward.Normalized())));
+            const float targetFreqRatio = std::clamp(Source.BasePitchRatio * dopplerRatio * occlusionPitch * motionSpreadPitch, 0.01f, 100.0f);
+            const float smoothTime = std::max(0.001f, Source.DopplerSmoothing);
+            Source.CurrentFrequencyRatio = SmoothTowards(Source.CurrentFrequencyRatio, targetFreqRatio, smoothTime, smoothTime, Dt);
+            Source.CurrentFrequencyRatio = std::clamp(Source.CurrentFrequencyRatio, 0.01f, 100.0f);
+            MIX_SetTrackFrequencyRatio(Source.Track, Source.CurrentFrequencyRatio);
         } catch (...) {
             Source.Track = nullptr;
         }
+        Source.PreviousPosition = Source.Position;
+        Source.HasPreviousPosition = true;
     }
 
     AudioEmitterHandle AudioManager::CreateEmitter(const char* Path, const Math::Vec3& Position, float MaxDistance, bool Loop) {
@@ -1034,6 +1277,129 @@ namespace Solstice::Core::Audio {
         it->second.MaxDistance = std::max(it->second.MinDistance + 0.01f, MaxDistance);
         it->second.RolloffFactor = std::max(0.001f, RolloffFactor);
         it->second.DistanceMode = Model;
+        return true;
+    }
+
+    bool AudioManager::SetEmitterDirection(AudioEmitterHandle Handle, const Math::Vec3& Direction) {
+        LockGuard Guard(m_Lock);
+        auto it = m_Emitters.find(Handle);
+        if (it == m_Emitters.end()) {
+            return false;
+        }
+        if (Direction.Dot(Direction) > 0.0001f) {
+            it->second.Direction = Direction.Normalized();
+        }
+        return true;
+    }
+
+    bool AudioManager::SetEmitterCone(AudioEmitterHandle Handle, float InnerAngleDeg, float OuterAngleDeg, float OuterGain) {
+        LockGuard Guard(m_Lock);
+        auto it = m_Emitters.find(Handle);
+        if (it == m_Emitters.end()) {
+            return false;
+        }
+        it->second.ConeInnerAngleDeg = std::clamp(InnerAngleDeg, 0.0f, 360.0f);
+        it->second.ConeOuterAngleDeg = std::clamp(std::max(it->second.ConeInnerAngleDeg, OuterAngleDeg), 0.0f, 360.0f);
+        it->second.ConeOuterGain = Clamp01(OuterGain);
+        return true;
+    }
+
+    bool AudioManager::SetEmitterDoppler(AudioEmitterHandle Handle, float DopplerFactor, float SpeedOfSound) {
+        LockGuard Guard(m_Lock);
+        auto it = m_Emitters.find(Handle);
+        if (it == m_Emitters.end()) {
+            return false;
+        }
+        it->second.DopplerFactor = std::max(0.0f, DopplerFactor);
+        it->second.SpeedOfSound = std::max(0.1f, SpeedOfSound);
+        return true;
+    }
+
+    bool AudioManager::SetEmitterVelocity(AudioEmitterHandle Handle, const Math::Vec3& Velocity, bool Manual) {
+        LockGuard Guard(m_Lock);
+        auto it = m_Emitters.find(Handle);
+        if (it == m_Emitters.end()) {
+            return false;
+        }
+        it->second.Velocity = Velocity;
+        it->second.HasManualVelocity = Manual;
+        return true;
+    }
+
+    bool AudioManager::ClearEmitterVelocity(AudioEmitterHandle Handle) {
+        LockGuard Guard(m_Lock);
+        auto it = m_Emitters.find(Handle);
+        if (it == m_Emitters.end()) {
+            return false;
+        }
+        it->second.Velocity = Math::Vec3(0.0f, 0.0f, 0.0f);
+        it->second.HasManualVelocity = false;
+        return true;
+    }
+
+    bool AudioManager::SetEmitterFocus(AudioEmitterHandle Handle, float FocusFactor, float NearFieldGain, float MaxGain) {
+        LockGuard Guard(m_Lock);
+        auto it = m_Emitters.find(Handle);
+        if (it == m_Emitters.end()) {
+            return false;
+        }
+        it->second.FocusFactor = Clamp01(FocusFactor);
+        it->second.NearFieldGain = std::max(0.0f, NearFieldGain);
+        it->second.MaxGain = std::max(0.05f, MaxGain);
+        return true;
+    }
+
+    bool AudioManager::SetEmitterImmersion(AudioEmitterHandle Handle, float ImmersionFactor, float DistanceReverbFactor, float RearReverbFactor) {
+        LockGuard Guard(m_Lock);
+        auto it = m_Emitters.find(Handle);
+        if (it == m_Emitters.end()) {
+            return false;
+        }
+        it->second.ImmersionFactor = Clamp01(ImmersionFactor);
+        it->second.DistanceReverbFactor = Clamp01(DistanceReverbFactor);
+        it->second.RearReverbFactor = Clamp01(RearReverbFactor);
+        return true;
+    }
+
+    bool AudioManager::SetEmitterDiffraction(AudioEmitterHandle Handle, float DiffractionFactor, float OcclusionPitchDamping) {
+        LockGuard Guard(m_Lock);
+        auto it = m_Emitters.find(Handle);
+        if (it == m_Emitters.end()) {
+            return false;
+        }
+        it->second.DiffractionFactor = Clamp01(DiffractionFactor);
+        it->second.OcclusionPitchDamping = Clamp01(OcclusionPitchDamping);
+        return true;
+    }
+
+    bool AudioManager::SetEmitterMotionAdaptation(AudioEmitterHandle Handle, float AdaptiveMotionFactor) {
+        LockGuard Guard(m_Lock);
+        auto it = m_Emitters.find(Handle);
+        if (it == m_Emitters.end()) {
+            return false;
+        }
+        it->second.AdaptiveMotionFactor = Clamp01(AdaptiveMotionFactor);
+        return true;
+    }
+
+    bool AudioManager::SetEmitterAirAbsorption(AudioEmitterHandle Handle, float AirAbsorptionFactor) {
+        LockGuard Guard(m_Lock);
+        auto it = m_Emitters.find(Handle);
+        if (it == m_Emitters.end()) {
+            return false;
+        }
+        it->second.AirAbsorptionFactor = std::max(0.0f, AirAbsorptionFactor);
+        return true;
+    }
+
+    bool AudioManager::SetEmitterPitchVariance(AudioEmitterHandle Handle, float PitchVariance) {
+        LockGuard Guard(m_Lock);
+        auto it = m_Emitters.find(Handle);
+        if (it == m_Emitters.end()) {
+            return false;
+        }
+        it->second.PitchVariance = std::max(0.0f, PitchVariance);
+        it->second.BasePitchRatio = std::clamp(1.0f + RandRange(-it->second.PitchVariance, it->second.PitchVariance), 0.01f, 100.0f);
         return true;
     }
 
@@ -1100,6 +1466,8 @@ namespace Solstice::Core::Audio {
             }
         }
 
+        std::vector<AudioSource> waveSources;
+        waveSources.reserve(handles.size());
         for (AudioEmitterHandle handle : handles) {
             AudioSource sourceCopy;
             bool exists = false;
@@ -1133,6 +1501,8 @@ namespace Solstice::Core::Audio {
                 continue;
             }
 
+            waveSources.push_back(sourceCopy);
+
             ApplySpatialization(sourceCopy, listenerCopy, Dt, duckingFactor);
             {
                 LockGuard Guard(m_Lock);
@@ -1153,6 +1523,133 @@ namespace Solstice::Core::Audio {
                 m_Emitters.erase(handle);
             }
         }
+
+        if (m_WaveTracingEnabled) {
+            std::vector<SoundRayResult> results;
+            m_WaveTracer.Trace(waveSources, listenerCopy.Position, results);
+            m_WaveTracer.ApplyResults(results, *this);
+        }
+
+        {
+            LockGuard Guard(m_Lock);
+            m_PreviousListenerPosition = m_Listener.Position;
+            m_HasPreviousListenerPosition = true;
+        }
+    }
+
+    bool AudioManager::ApplySpatialProfile(AudioEmitterHandle Handle, int Profile) {
+        switch (Profile) {
+            case 1: // AmbientBed
+                return SetEmitterFocus(Handle, 0.05f, 0.03f, 0.95f)
+                    && SetEmitterImmersion(Handle, 0.75f, 0.65f, 0.45f)
+                    && SetEmitterDiffraction(Handle, 0.65f, 0.20f)
+                    && SetEmitterMotionAdaptation(Handle, 0.90f);
+            case 2: // Footstep
+                return SetEmitterFocus(Handle, 0.30f, 0.07f, 1.0f)
+                    && SetEmitterImmersion(Handle, 0.45f, 0.30f, 0.18f)
+                    && SetEmitterDiffraction(Handle, 0.35f, 0.10f)
+                    && SetEmitterMotionAdaptation(Handle, 0.35f);
+            case 3: // Weapon
+                return SetEmitterFocus(Handle, 0.55f, 0.10f, 1.05f)
+                    && SetEmitterImmersion(Handle, 0.60f, 0.50f, 0.28f)
+                    && SetEmitterDiffraction(Handle, 0.55f, 0.16f)
+                    && SetEmitterMotionAdaptation(Handle, 0.40f);
+            case 4: // Voice
+                return SetEmitterFocus(Handle, 0.85f, 0.12f, 1.1f)
+                    && SetEmitterImmersion(Handle, 0.70f, 0.42f, 0.35f)
+                    && SetEmitterDiffraction(Handle, 0.50f, 0.22f)
+                    && SetEmitterMotionAdaptation(Handle, 0.30f)
+                    && SetEmitterFlags(Handle, true, false, 2);
+            case 5: // Vehicle
+                return SetEmitterFocus(Handle, 0.35f, 0.08f, 1.05f)
+                    && SetEmitterImmersion(Handle, 0.85f, 0.58f, 0.42f)
+                    && SetEmitterDiffraction(Handle, 0.70f, 0.18f)
+                    && SetEmitterMotionAdaptation(Handle, 0.75f);
+            case 0:
+            default:
+                return SetEmitterFocus(Handle, 0.15f, 0.05f, 1.0f)
+                    && SetEmitterImmersion(Handle, 0.35f, 0.40f, 0.25f)
+                    && SetEmitterDiffraction(Handle, 0.35f, 0.12f)
+                    && SetEmitterMotionAdaptation(Handle, 0.20f);
+        }
+    }
+
+    void AudioManager::SetHRTFEnabled(bool Enabled) {
+        m_HRTFEnabled = Enabled;
+        m_HRTFRenderer.SetEnabled(Enabled);
+    }
+
+    bool AudioManager::LoadHRTFDatabase(const char* Path) {
+        if (!Path || !Path[0]) {
+            return m_HRTFRenderer.LoadDefaultDatabase();
+        }
+        return m_HRTFRenderer.LoadSOFA(Path);
+    }
+
+    void AudioManager::SetHeadRadius(float Radius) {
+        m_HRTFRenderer.SetHeadRadius(Radius);
+    }
+
+    void AudioManager::SetWaveTracingEnabled(bool Enabled) {
+        m_WaveTracingEnabled = Enabled;
+    }
+
+    void AudioManager::SetWaveTracingMaxRays(int PerSource) {
+        m_WaveTracer.SetMaxRays(PerSource);
+    }
+
+    void AudioManager::SetWaveTracingMaxBounces(int Bounces) {
+        m_WaveTracer.SetMaxBounces(Bounces);
+    }
+
+    void AudioManager::SetAmbisonicOrder(int Order) {
+        if (Order <= 1) {
+            m_Ambisonics.SetOrder(AmbisonicOrder::First);
+        } else if (Order == 2) {
+            m_Ambisonics.SetOrder(AmbisonicOrder::Second);
+        } else {
+            m_Ambisonics.SetOrder(AmbisonicOrder::Third);
+        }
+    }
+
+    int AudioManager::GetAmbisonicOrder() const {
+        switch (m_Ambisonics.GetOrder()) {
+            case AmbisonicOrder::First: return 1;
+            case AmbisonicOrder::Second: return 2;
+            case AmbisonicOrder::Third: return 3;
+            default: return 1;
+        }
+    }
+
+    void AudioManager::SetFluidCouplingEnabled(bool Enabled) {
+        m_FluidCouplingEnabled = Enabled;
+    }
+
+    void AudioManager::SetPortalTransform(const Math::Matrix4& Transform, bool Enabled) {
+        m_PortalAudio.SetPortalTransform(Transform, Enabled);
+    }
+
+    void AudioManager::ClearPortalTransform() {
+        m_PortalAudio.ClearPortalTransform();
+    }
+
+    void AudioManager::SetMLSpatializationEnabled(bool Enabled) {
+        m_MLSpatializationEnabled = Enabled;
+        m_MLSpatializer.SetEnabled(Enabled);
+    }
+
+    void AudioManager::TrainMLModel() {
+        m_MLSpatializer.Train();
+    }
+
+    bool AudioManager::SaveMLWeights(const char* Path) {
+        if (!Path || !Path[0]) return false;
+        return m_MLSpatializer.SaveWeights(Path);
+    }
+
+    bool AudioManager::LoadMLWeights(const char* Path) {
+        if (!Path || !Path[0]) return false;
+        return m_MLSpatializer.LoadWeights(Path);
     }
 
     void AudioManager::SetReverbPreset(ReverbPresetType Preset) {

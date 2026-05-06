@@ -9,6 +9,7 @@
 #include <functional>
 #include <memory>
 #include <future>
+#include <string>
 
 namespace Solstice::Core {
 
@@ -343,8 +344,14 @@ public:
         return m_Layers.empty() ? 0 : m_Layers.back().OutputSize;
     }
 
+    void SetDeterministicSeed(uint32_t Seed) { m_Seed = Seed; }
+    void InitializeRandomWeights(float Scale = 0.05f);
+    bool SaveWeights(const std::string& Path) const;
+    bool LoadWeights(const std::string& Path);
+
 private:
     std::vector<LinearLayer> m_Layers;
+    uint32_t m_Seed{1337u};
 };
 
 } // namespace Solstice::Core

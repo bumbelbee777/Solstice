@@ -1,5 +1,8 @@
 #include <Physics/Integration/PhysicsSystem.hxx>
+#include <Physics/Integration/PortalPhysics.hxx>
 #include <Physics/Dynamics/RigidBody.hxx>
+#include <Physics/Dynamics/SoftBody.hxx>
+#include <Physics/Dynamics/Vehicle.hxx>
 #include <Physics/Fluid/Fluid.hxx>
 #include <Physics/Collision/Broadphase/BVH.hxx>
 #include <Physics/Collision/Narrowphase/CollisionResolution.hxx>
@@ -19,6 +22,51 @@
 #include <string>
 
 namespace Solstice::Physics {
+void PhysicsSystem::CreateVehicleStub(ECS::EntityId entityId, const VehicleConfig& config) {
+    if (!m_Registry || !m_Registry->Valid(entityId)) {
+        return;
+    }
+    Vehicle* existing = m_Registry->TryGet<Vehicle>(entityId);
+    if (!existing) {
+        Vehicle v{};
+        v.BuildDefault(config);
+        v.EngineForce = std::max(0.0f, config.EngineForce);
+        v.BrakeForce = std::max(0.0f, config.BrakeForce);
+        v.MaxSteerAngleRadians = std::max(0.01f, config.MaxSteerAngleRadians);
+        m_Registry->Add<Vehicle>(entityId, v);
+        if (RigidBody* rb = m_Registry->TryGet<RigidBody>(entityId)) {
+            rb->SetMass(std::max(1.0f, config.Mass));
+            rb->Type = ColliderType::Box;
+            rb->HalfExtents = Math::Vec3(config.TrackWidth * 0.55f, 0.5f, config.WheelBase * 0.55f);
+        }
+        return;
+    }
+    existing->BuildDefault(config);
+    existing->EngineForce = std::max(0.0f, config.EngineForce);
+    existing->BrakeForce = std::max(0.0f, config.BrakeForce);
+    existing->MaxSteerAngleRadians = std::max(0.01f, config.MaxSteerAngleRadians);
+}
+
+void PhysicsSystem::CreateSoftBodyStub(ECS::EntityId entityId, const SoftBodyConfig& config) {
+    if (!m_Registry || !m_Registry->Valid(entityId)) {
+        return;
+    }
+
+    SoftBody* existing = m_Registry->TryGet<SoftBody>(entityId);
+    if (!existing) {
+        SoftBody sb{};
+        sb.BuildRectCloth(Math::Vec3(0.0f, 4.0f, 0.0f), config);
+        m_Registry->Add<SoftBody>(entityId, sb);
+        return;
+    }
+
+    Math::Vec3 origin(0.0f, 4.0f, 0.0f);
+    if (const RigidBody* rb = m_Registry->TryGet<RigidBody>(entityId)) {
+        origin = rb->Position;
+    }
+    existing->BuildRectCloth(origin, config);
+}
+
 
 void PhysicsSystem::Start(Solstice::ECS::Registry& registry) {
     if (m_Running && m_Registry == &registry) {
@@ -42,19 +90,13 @@ void PhysicsSystem::Stop() {
 }
 
 void PhysicsSystem::SetVelocityIterations(int iterations) {
-    // Update ReactPhysics3D solver iterations
-    if (m_Bridge.GetPhysicsWorld()) {
-        m_Bridge.GetPhysicsWorld()->setNbIterationsVelocitySolver(static_cast<uint16_t>(iterations));
-    }
+    m_Bridge.SetSolverIterations(iterations, -1);
     // Also update legacy solver for backward compatibility
     m_Solver.SetVelocityIterations(iterations);
 }
 
 void PhysicsSystem::SetPositionIterations(int iterations) {
-    // Update ReactPhysics3D solver iterations
-    if (m_Bridge.GetPhysicsWorld()) {
-        m_Bridge.GetPhysicsWorld()->setNbIterationsPositionSolver(static_cast<uint32_t>(iterations));
-    }
+    m_Bridge.SetSolverIterations(-1, iterations);
     // Also update legacy solver for backward compatibility
     m_Solver.SetPositionIterations(iterations);
 }
@@ -238,85 +280,342 @@ void PhysicsSystem::IntegratePosition(float dt) {
 void PhysicsSystem::Update(float dt) {
     if (!m_Running || !m_Registry) return;
     if (dt <= 0.0f) return;
-    float stepDt = dt;
-    if (m_MaxStepDt > 0.0f && stepDt > m_MaxStepDt) {
-        stepDt = m_MaxStepDt;
+    float frameDt = dt;
+    if (m_MaxStepDt > 0.0f && frameDt > m_MaxStepDt) {
+        frameDt = m_MaxStepDt;
         Core::Profiler::Instance().IncrementCounter("Physics.StepClamped");
     }
+    m_StepAccumulator += frameDt;
 
-    // Start grid fluids as soon as stepDt is known (before Physics.Update scope / SyncTo) so the
-    // solver runs in parallel with registry->RP3D sync and any main-thread setup in PROFILE_SCOPE.
-    std::future<void> fluidFuture;
-    bool fluidAsyncPending = false;
-    bool fluidsSteppedSynchronously = false;
-    for (FluidSimulation* fp : m_FluidSimulations) {
-        if (!fp) {
-            continue;
-        }
-        try {
-            fluidFuture = Core::JobSystem::Instance().SubmitAsync([this, stepDt]() {
+    int subSteps = 0;
+    while (m_StepAccumulator >= m_FixedStepDt && subSteps < m_MaxSubStepsPerFrame) {
+        const float stepDt = m_FixedStepDt;
+        subSteps++;
+        m_StepAccumulator -= m_FixedStepDt;
+
+        std::future<void> fluidFuture;
+        bool fluidAsyncPending = false;
+        bool fluidsSteppedSynchronously = false;
+        for (FluidSimulation* fp : m_FluidSimulations) {
+            if (!fp) {
+                continue;
+            }
+            try {
+                fluidFuture = Core::JobSystem::Instance().SubmitAsync([this, stepDt]() {
+                    UpdateFluidSimulations(stepDt);
+                });
+                fluidAsyncPending = true;
+            } catch (...) {
                 UpdateFluidSimulations(stepDt);
-            });
-            fluidAsyncPending = true;
-        } catch (...) {
-            UpdateFluidSimulations(stepDt);
-            fluidsSteppedSynchronously = true;
+                fluidsSteppedSynchronously = true;
+            }
+            break;
         }
-        break;
+
+        PROFILE_SCOPE("Physics.Update");
+        Solstice::Plugin::SubsystemHooks::Instance().Invoke(Solstice::Plugin::SubsystemHookKind::PhysicsPreStep, stepDt);
+
+        const PhysicsDispatchDecision simDispatch = m_TaskScheduler.Decide(PhysicsTaskClass::SimulationCritical, false, false);
+        Core::Profiler::Instance().SetCounter("Physics.Dispatch.SimulationBackend", static_cast<float>(simDispatch.Backend));
+
+        {
+            PROFILE_SCOPE("Physics.SyncTo");
+            m_Bridge.SyncToBackend();
+        }
+
+        if (fluidAsyncPending) {
+            fluidFuture.wait();
+        } else if (!fluidsSteppedSynchronously) {
+            UpdateFluidSimulations(stepDt);
+        }
+
+        IntegrateVelocity(stepDt);
+
+        m_Registry->ForEach<RigidBody>([&](ECS::EntityId, RigidBody& rb) {
+            if (rb.IsStatic) {
+                rb.HasRenderInterpolationSnapshot = false;
+                return;
+            }
+            rb.RenderInterpFromPos = rb.Position;
+            rb.RenderInterpFromRot = rb.Rotation;
+            rb.HasRenderInterpolationSnapshot = true;
+        });
+
+        {
+            PROFILE_SCOPE("Physics.BridgeUpdate");
+            m_Bridge.Update(stepDt);
+        }
+
+        {
+            PROFILE_SCOPE("Physics.SyncFrom");
+            m_Bridge.SyncFromBackend();
+        }
+
+        ResolvePhysicsPortalCrossings(*m_Registry, m_Bridge);
+
+        {
+            PROFILE_SCOPE("Physics.Vehicles");
+            UpdateVehicles(stepDt);
+        }
+
+        {
+            PROFILE_SCOPE("Physics.SoftBodies");
+            UpdateSoftBodies(stepDt);
+        }
+
+        {
+            PROFILE_SCOPE("Physics.SleepState");
+            UpdateSleepState();
+        }
+
+        Solstice::Plugin::SubsystemHooks::Instance().Invoke(Solstice::Plugin::SubsystemHookKind::PhysicsPostStep, stepDt);
     }
 
-    PROFILE_SCOPE("Physics.Update");
-    Solstice::Plugin::SubsystemHooks::Instance().Invoke(Solstice::Plugin::SubsystemHookKind::PhysicsPreStep, stepDt);
+    if (subSteps == m_MaxSubStepsPerFrame && m_StepAccumulator >= m_FixedStepDt) {
+        m_StepAccumulator = 0.0f;
+        Core::Profiler::Instance().IncrementCounter("Physics.SubstepDrop");
+    }
+    m_SceneRenderBlendT = (m_FixedStepDt > 0.0f) ? (1.0f - (m_StepAccumulator / m_FixedStepDt)) : 1.0f;
+    Core::Profiler::Instance().SetCounter("Physics.Substeps", static_cast<float>(subSteps));
+}
 
-    // ReactPhysics3D Integration:
-    // 1. Sync RigidBody components -> ReactPhysics3D bodies (overlaps with fluid job above)
-    {
-        PROFILE_SCOPE("Physics.SyncTo");
-        m_Bridge.SyncToReactPhysics3D();
+void PhysicsSystem::UpdateVehicles(float dt) {
+    if (!m_Registry || dt <= 0.0f) {
+        return;
     }
 
-    if (fluidAsyncPending) {
-        fluidFuture.wait();
-    } else if (!fluidsSteppedSynchronously) {
-        UpdateFluidSimulations(stepDt);
-    }
+    constexpr float kGroundHeight = 0.0f;
+    constexpr float kWheelBaseMin = 0.1f;
+    constexpr float kTrackMin = 0.1f;
+    constexpr float kMinSpeedForSteer = 0.2f;
+    constexpr float kMinRadius = 0.01f;
 
-    // 2. Integrate velocity (fluid drag/buoyancy sample the fluid fields stepped above)
-    IntegrateVelocity(stepDt);
+    auto rotateVector = [](const Math::Quaternion& q, const Math::Vec3& v) {
+        const Math::Quaternion vq(0.0f, v.x, v.y, v.z);
+        const Math::Quaternion rq = q * vq * q.Conjugate();
+        return Math::Vec3(rq.x, rq.y, rq.z);
+    };
+    auto inverseRotateVector = [](const Math::Quaternion& q, const Math::Vec3& v) {
+        const Math::Quaternion qInv = q.Conjugate();
+        const Math::Quaternion vq(0.0f, v.x, v.y, v.z);
+        const Math::Quaternion rq = qInv * vq * q;
+        return Math::Vec3(rq.x, rq.y, rq.z);
+    };
 
-    // 2.5: Snapshot dynamic poses for render interpolation (fixed substep start vs end of this step)
-    m_Registry->ForEach<RigidBody>([&](ECS::EntityId, RigidBody& rb) {
-        if (rb.IsStatic) {
-            rb.HasRenderInterpolationSnapshot = false;
+    float slipAbsSum = 0.0f;
+    float slipAbsMax = 0.0f;
+    float slipSamples = 0.0f;
+    m_Registry->ForEach<Vehicle, RigidBody>([&](ECS::EntityId, Vehicle& vehicle, RigidBody& rb) {
+        if (!vehicle.Enabled || rb.IsStatic) {
             return;
         }
-        rb.RenderInterpFromPos = rb.Position;
-        rb.RenderInterpFromRot = rb.Rotation;
-        rb.HasRenderInterpolationSnapshot = true;
+
+        const float wheelBase = std::max(vehicle.Config.WheelBase, kWheelBaseMin);
+        const float trackWidth = std::max(vehicle.Config.TrackWidth, kTrackMin);
+        const Math::Vec3 localVelocity = inverseRotateVector(rb.Rotation, rb.Velocity);
+        const float speedForward = localVelocity.z;
+        const float steerInput = std::clamp(vehicle.SteeringInput, -1.0f, 1.0f);
+        const float steerAngle = steerInput * vehicle.MaxSteerAngleRadians;
+        float frontLeftSteer = steerAngle;
+        float frontRightSteer = steerAngle;
+        if (std::fabs(steerAngle) > 1e-4f) {
+            const float tanSteer = std::tan(steerAngle);
+            if (std::fabs(tanSteer) > 1e-4f) {
+                const float turnRadius = wheelBase / tanSteer;
+                const float insideRadius = turnRadius - (trackWidth * 0.5f * std::copysign(1.0f, steerAngle));
+                const float outsideRadius = turnRadius + (trackWidth * 0.5f * std::copysign(1.0f, steerAngle));
+                const float ackInside = std::atan(wheelBase / insideRadius);
+                const float ackOutside = std::atan(wheelBase / outsideRadius);
+                if (steerAngle > 0.0f) {
+                    frontLeftSteer = ackInside;
+                    frontRightSteer = ackOutside;
+                } else {
+                    frontLeftSteer = ackOutside;
+                    frontRightSteer = ackInside;
+                }
+                frontLeftSteer = (steerAngle * (1.0f - vehicle.AckermannStrength)) + (frontLeftSteer * vehicle.AckermannStrength);
+                frontRightSteer = (steerAngle * (1.0f - vehicle.AckermannStrength)) + (frontRightSteer * vehicle.AckermannStrength);
+            }
+        }
+        const float forwardSpeedAbs = std::fabs(speedForward);
+        const float yawRateTarget = (forwardSpeedAbs > kMinSpeedForSteer) ? (std::tan(steerAngle) * speedForward / wheelBase) : 0.0f;
+        rb.AngularVelocity.y += (yawRateTarget - rb.AngularVelocity.y) * std::clamp(vehicle.YawStability * dt, 0.0f, 1.0f);
+
+        const float throttle = std::clamp(vehicle.ThrottleInput, -1.0f, 1.0f);
+        const float brake = std::clamp(vehicle.BrakeInput, 0.0f, 1.0f) + (vehicle.Handbrake ? 0.5f : 0.0f);
+        float surfaceGripScale = 1.0f;
+        if (rb.Friction <= 0.20f) {
+            surfaceGripScale = 0.30f; // ice
+        } else if (rb.Friction <= 0.50f) {
+            surfaceGripScale = 0.65f; // dirt / loose
+        } else {
+            surfaceGripScale = 1.00f; // asphalt / default
+        }
+        const float clampedSpeed = std::clamp(forwardSpeedAbs / std::max(1.0f, vehicle.MaxSpeed), 0.0f, 1.0f);
+        const float engineScale = 1.0f - clampedSpeed;
+        float drivenWheelCount = 0.0f;
+        for (const VehicleWheel& w : vehicle.Wheels) {
+            if (w.Driven) {
+                drivenWheelCount += 1.0f;
+            }
+        }
+        drivenWheelCount = std::max(1.0f, drivenWheelCount);
+        float longitudinalForce = throttle * vehicle.EngineForce * engineScale;
+        const float brakeForce = brake * vehicle.BrakeForce;
+        longitudinalForce -= std::copysign(brakeForce, speedForward);
+        longitudinalForce -= speedForward * vehicle.RollingResistance * vehicle.Config.Mass;
+        const float longitudinalGrip = vehicle.LongitudinalGrip * surfaceGripScale;
+        longitudinalForce = std::clamp(longitudinalForce, -longitudinalGrip * vehicle.Config.Mass, longitudinalGrip * vehicle.Config.Mass);
+
+        Math::Vec3 adjustedLocalVelocity = localVelocity;
+        adjustedLocalVelocity.z += (longitudinalForce * rb.InverseMass) * dt;
+
+        const float lateralDamping = std::clamp(vehicle.LateralGrip * surfaceGripScale * dt, 0.0f, 1.0f);
+        adjustedLocalVelocity.x -= adjustedLocalVelocity.x * lateralDamping;
+        adjustedLocalVelocity.x += steerInput * forwardSpeedAbs * vehicle.DifferentialBias * dt;
+        rb.Velocity = rotateVector(rb.Rotation, adjustedLocalVelocity);
+
+        for (size_t wi = 0; wi < vehicle.Wheels.size(); ++wi) {
+            VehicleWheel& w = vehicle.Wheels[wi];
+            WheelState& ws = vehicle.WheelStates[wi];
+            const float worldWheelY = rb.Position.y + w.LocalOffset.y;
+            float compression = (w.Radius + w.SuspensionRestLength) - (worldWheelY - kGroundHeight);
+            compression = std::max(0.0f, compression);
+            const float previousSuspensionLength = ws.SuspensionLength;
+            ws.SuspensionLength = std::max(0.0f, w.SuspensionRestLength - compression);
+            const float suspensionVelocity = (previousSuspensionLength - ws.SuspensionLength) / dt;
+            const float springForce = compression * w.SuspensionStiffness;
+            const float dampForce = suspensionVelocity * w.SuspensionDamping;
+            rb.Velocity.y += (springForce - dampForce) * rb.InverseMass * dt;
+            float wheelLongitudinal = adjustedLocalVelocity.z;
+            if (w.Steerable) {
+                const float wheelSteer = (wi == 0) ? frontLeftSteer : ((wi == 1) ? frontRightSteer : steerAngle);
+                const float c = std::cos(wheelSteer);
+                const float s = std::sin(wheelSteer);
+                wheelLongitudinal = (adjustedLocalVelocity.z * c) + (adjustedLocalVelocity.x * s);
+            }
+            if (!w.Driven) {
+                wheelLongitudinal -= (longitudinalForce / drivenWheelCount) * rb.InverseMass * dt;
+            }
+            if (!w.Braking) {
+                wheelLongitudinal += (brakeForce * 0.25f) * rb.InverseMass * dt;
+            }
+            ws.AngularSpeed = wheelLongitudinal / std::max(kMinRadius, w.Radius);
+            const float wheelSurfaceSpeed = ws.AngularSpeed * std::max(kMinRadius, w.Radius);
+            const float denom = std::max(1.0f, std::fabs(adjustedLocalVelocity.z));
+            const float slipRatio = (wheelSurfaceSpeed - adjustedLocalVelocity.z) / denom;
+            const float absSlip = std::fabs(slipRatio);
+            slipAbsSum += absSlip;
+            slipAbsMax = std::max(slipAbsMax, absSlip);
+            slipSamples += 1.0f;
+        }
     });
+    if (slipSamples > 0.0f) {
+        Core::Profiler::Instance().SetCounter("Physics.VehicleSlipMeanAbs", slipAbsSum / slipSamples);
+        Core::Profiler::Instance().SetCounter("Physics.VehicleSlipMaxAbs", slipAbsMax);
+    }
+}
 
-    // 3. Update ReactPhysics3D physics world (handles collision detection and dynamics)
-    {
-        PROFILE_SCOPE("Physics.BridgeUpdate");
-        m_Bridge.Update(stepDt);
+void PhysicsSystem::UpdateSoftBodies(float dt) {
+    if (!m_Registry || dt <= 0.0f) {
+        return;
     }
 
-    // 4. Sync ReactPhysics3D bodies -> RigidBody components
-    {
-        PROFILE_SCOPE("Physics.SyncFrom");
-        m_Bridge.SyncFromReactPhysics3D();
-    }
+    constexpr float kEpsilon = 1e-5f;
+    constexpr float kGroundHeight = 0.0f;
+    constexpr float kGroundBounce = 0.05f;
 
-    // 5. Update sleep state (for backward compatibility with existing code)
-    {
-        PROFILE_SCOPE("Physics.SleepState");
-        UpdateSleepState();
-    }
+    m_Registry->ForEach<SoftBody>([&](ECS::EntityId entityId, SoftBody& softBody) {
+        if (!softBody.Enabled || softBody.Nodes.empty()) {
+            return;
+        }
 
-    // Note: Custom collision resolution (ResolveCollisions) is now handled by ReactPhysics3D
-    // The old code is kept for reference but is no longer called in the main update loop
+        const float dampingScale = std::clamp(1.0f - softBody.Config.Damping, 0.0f, 1.0f);
+        const float baseSpacing = (softBody.Config.NodeSpacing > 0.0f) ? softBody.Config.NodeSpacing : 0.1f;
+        const float structuralLimit = baseSpacing * 1.1f;
+        const float shearLimit = baseSpacing * 1.6f;
 
-    Solstice::Plugin::SubsystemHooks::Instance().Invoke(Solstice::Plugin::SubsystemHookKind::PhysicsPostStep, stepDt);
+        for (SoftBodyNode& node : softBody.Nodes) {
+            if (node.InverseMass <= 0.0f) {
+                node.PredictedPosition = node.Position;
+                node.Velocity = Math::Vec3(0.0f, 0.0f, 0.0f);
+                continue;
+            }
+
+            node.Velocity += softBody.Gravity * dt;
+            node.Velocity += softBody.WindForce * (node.InverseMass * dt);
+            node.PredictedPosition = node.Position + (node.Velocity * dt);
+
+            if (node.PredictedPosition.y < kGroundHeight) {
+                node.PredictedPosition.y = kGroundHeight;
+                node.Velocity.y = -node.Velocity.y * kGroundBounce;
+            }
+        }
+
+        const int solverIterations = std::max(1, softBody.Config.SolverIterations);
+        for (int iter = 0; iter < solverIterations; ++iter) {
+            for (const SoftBodyConstraint& c : softBody.Constraints) {
+                if (c.NodeA >= softBody.Nodes.size() || c.NodeB >= softBody.Nodes.size()) {
+                    continue;
+                }
+
+                SoftBodyNode& a = softBody.Nodes[c.NodeA];
+                SoftBodyNode& b = softBody.Nodes[c.NodeB];
+
+                const float wA = a.InverseMass;
+                const float wB = b.InverseMass;
+                const float sumW = wA + wB;
+                if (sumW <= kEpsilon) {
+                    continue;
+                }
+
+                Math::Vec3 delta = b.PredictedPosition - a.PredictedPosition;
+                float length = delta.Magnitude();
+                if (length <= kEpsilon) {
+                    continue;
+                }
+
+                float stiffness = softBody.Config.BendStiffness;
+                if (c.RestLength <= structuralLimit) {
+                    stiffness = softBody.Config.StructuralStiffness;
+                } else if (c.RestLength <= shearLimit) {
+                    stiffness = softBody.Config.ShearStiffness;
+                }
+                stiffness = std::clamp(stiffness, 0.0f, 1.0f);
+
+                const float constraintError = (length - c.RestLength) / length;
+                const Math::Vec3 correction = delta * (stiffness * constraintError);
+                a.PredictedPosition += correction * (wA / sumW);
+                b.PredictedPosition -= correction * (wB / sumW);
+            }
+        }
+
+        Math::Vec3 avgPosition(0.0f, 0.0f, 0.0f);
+        Math::Vec3 avgVelocity(0.0f, 0.0f, 0.0f);
+        uint32_t dynamicNodeCount = 0u;
+
+        for (SoftBodyNode& node : softBody.Nodes) {
+            if (node.InverseMass > 0.0f) {
+                node.Velocity = ((node.PredictedPosition - node.Position) * (1.0f / dt)) * dampingScale;
+                dynamicNodeCount++;
+            } else {
+                node.Velocity = Math::Vec3(0.0f, 0.0f, 0.0f);
+            }
+            node.Position = node.PredictedPosition;
+            avgPosition += node.Position;
+            avgVelocity += node.Velocity;
+        }
+
+        if (RigidBody* rb = m_Registry->TryGet<RigidBody>(entityId)) {
+            const float invCount = 1.0f / static_cast<float>(softBody.Nodes.size());
+            rb->Position = avgPosition * invCount;
+            if (dynamicNodeCount > 0u) {
+                rb->Velocity = avgVelocity * (1.0f / static_cast<float>(dynamicNodeCount));
+            } else {
+                rb->Velocity = Math::Vec3(0.0f, 0.0f, 0.0f);
+            }
+        }
+    });
 }
 
 void PhysicsSystem::UpdateBroadphase() {
@@ -667,6 +966,34 @@ bool PhysicsSystem::CheckSweptCollision(RigidBody* Body, const Math::Vec3& PrevP
     }
 
     return false;
+}
+
+RaycastHit PhysicsSystem::RaycastClosest(const RaycastRequest& request) {
+    const PhysicsDispatchDecision d = m_TaskScheduler.Decide(PhysicsTaskClass::QueryBatch, false, false);
+    Core::Profiler::Instance().SetCounter("Physics.Dispatch.QueryBackend", static_cast<float>(d.Backend));
+    return m_Bridge.RaycastClosest(request);
+}
+
+bool PhysicsSystem::RaycastAny(const RaycastRequest& request) {
+    return m_Bridge.RaycastAny(request);
+}
+
+std::vector<RaycastAllHit> PhysicsSystem::RaycastAll(const RaycastRequest& request) {
+    return m_Bridge.RaycastAll(request);
+}
+
+std::vector<ECS::EntityId> PhysicsSystem::OverlapSphere(const Math::Vec3& center, float radius) {
+    return m_Bridge.OverlapSphere(center, radius);
+}
+
+std::vector<ECS::EntityId> PhysicsSystem::OverlapAabb(const Math::Vec3& min, const Math::Vec3& max) {
+    return m_Bridge.OverlapAabb(min, max);
+}
+
+PhysicsDebugDrawData PhysicsSystem::GetDebugDrawData() {
+    const PhysicsDispatchDecision d = m_TaskScheduler.Decide(PhysicsTaskClass::DebugExtraction, false, false);
+    Core::Profiler::Instance().SetCounter("Physics.Dispatch.DebugBackend", static_cast<float>(d.Backend));
+    return m_Bridge.BuildDebugDrawData();
 }
 
 } // namespace Solstice::Physics

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <Entity/EntityId.hxx>
 #include <Math/Vector.hxx>
 #include <Math/Quaternion.hxx>
 #include <Core/ML/SIMD.hxx>
@@ -119,6 +120,11 @@ struct RigidBody {
     Math::Vec3 RenderInterpFromPos{};
     Math::Quaternion RenderInterpFromRot{};
     bool HasRenderInterpolationSnapshot{false};
+
+    /// Suppress reciprocal portal crossings for a few ticks after traversal (numerical hysteresis).
+    std::uint8_t PortalTraversalCooldownFrames{};
+    ECS::EntityId PortalCooldownPortal{};
+    ECS::EntityId PortalCooldownPartner{};
 
     void SetMass(float mass) {
         if (mass <= 0.0f) {

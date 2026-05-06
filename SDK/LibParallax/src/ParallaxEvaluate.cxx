@@ -8,10 +8,47 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 
 namespace Solstice::Parallax {
 
 namespace {
+
+/// Composite key (element index << 32) | hash(attribute name) used by `ScanFromScene` to build a
+/// per-call index without holding non-owning string_view references across calls. The collision
+/// risk is bounded by the simple wide-hash and explicit fallback to the linear scan when the
+/// builder isn't constructed (small/old call sites).
+struct ChannelIndexMap {
+    std::unordered_map<std::uint64_t, ChannelIndex> ByElementAttr;
+
+    static std::uint64_t MakeKey(ElementIndex e, std::string_view attr) noexcept {
+        std::uint64_t h = 1469598103934665603ull; // FNV-1a 64
+        for (char c : attr) {
+            h ^= static_cast<std::uint8_t>(c);
+            h *= 1099511628211ull;
+        }
+        h ^= static_cast<std::uint64_t>(e) * 0x9E3779B97F4A7C15ull;
+        return h;
+    }
+
+    void ScanFromScene(const ParallaxScene& scene) {
+        const auto& channels = scene.GetChannels();
+        ByElementAttr.clear();
+        ByElementAttr.reserve(channels.size() * 2);
+        for (ChannelIndex ci = 0; ci < channels.size(); ++ci) {
+            ByElementAttr.emplace(MakeKey(channels[ci].Element, channels[ci].AttributeName), ci);
+        }
+    }
+
+    ChannelIndex Find(ElementIndex element, std::string_view attributeName) const noexcept {
+        const auto it = ByElementAttr.find(MakeKey(element, attributeName));
+        if (it == ByElementAttr.end()) {
+            return PARALLAX_INVALID_INDEX;
+        }
+        return it->second;
+    }
+};
 
 ChannelIndex FindElementChannel(const ParallaxScene& scene, ElementIndex element, std::string_view attributeName) {
     const auto& channels = scene.GetChannels();
@@ -21,6 +58,14 @@ ChannelIndex FindElementChannel(const ParallaxScene& scene, ElementIndex element
         }
     }
     return PARALLAX_INVALID_INDEX;
+}
+
+ChannelIndex FindElementChannelIndexed(const ChannelIndexMap& idx, const ParallaxScene& scene, ElementIndex element,
+    std::string_view attributeName) {
+    if (idx.ByElementAttr.empty()) {
+        return FindElementChannel(scene, element, attributeName);
+    }
+    return idx.Find(element, attributeName);
 }
 
 float SampleEased(float t01, uint8_t easingByte) {
@@ -164,6 +209,61 @@ static float AttrFloatInEntry(const MGDisplayList::Entry& e, const char* k, floa
     return d;
 }
 
+static float MgAttrFloat(const MGElementRecord& mg, std::string_view key, float fallback) {
+    const auto it = mg.Attributes.find(std::string(key));
+    if (it == mg.Attributes.end()) {
+        return fallback;
+    }
+    if (const auto* f = std::get_if<float>(&it->second)) {
+        return *f;
+    }
+    return fallback;
+}
+
+static int32_t MgAttrInt(const MGElementRecord& mg, std::string_view key, int32_t fallback) {
+    const auto it = mg.Attributes.find(std::string(key));
+    if (it == mg.Attributes.end()) {
+        return fallback;
+    }
+    if (const auto* v = std::get_if<int32_t>(&it->second)) {
+        return *v;
+    }
+    return fallback;
+}
+
+static bool MgAttrBool(const MGElementRecord& mg, std::string_view key, bool fallback) {
+    const auto it = mg.Attributes.find(std::string(key));
+    if (it == mg.Attributes.end()) {
+        return fallback;
+    }
+    if (const auto* v = std::get_if<bool>(&it->second)) {
+        return *v;
+    }
+    return fallback;
+}
+
+static Math::Vec3 MgAttrVec3(const MGElementRecord& mg, std::string_view key, const Math::Vec3& fallback) {
+    const auto it = mg.Attributes.find(std::string(key));
+    if (it == mg.Attributes.end()) {
+        return fallback;
+    }
+    if (const auto* v = std::get_if<Math::Vec3>(&it->second)) {
+        return *v;
+    }
+    return fallback;
+}
+
+static Math::Vec4 MgAttrVec4(const MGElementRecord& mg, std::string_view key, const Math::Vec4& fallback) {
+    const auto it = mg.Attributes.find(std::string(key));
+    if (it == mg.Attributes.end()) {
+        return fallback;
+    }
+    if (const auto* v = std::get_if<Math::Vec4>(&it->second)) {
+        return *v;
+    }
+    return fallback;
+}
+
 static MGDisplayList EvaluateMGImpl(const ParallaxScene& scene, uint64_t timeTicks) {
     const auto& schemas = scene.GetSchemas();
     const auto& mgs = scene.GetMGElements();
@@ -217,7 +317,6 @@ static MGDisplayList EvaluateMGImpl(const ParallaxScene& scene, uint64_t timeTic
 } // namespace
 
 AttributeValue EvaluateChannel(const ParallaxScene& scene, ChannelIndex channel, uint64_t timeTicks) {
-    (void)scene;
     if (channel == PARALLAX_INVALID_INDEX || channel >= scene.GetChannels().size()) {
         return std::monostate{};
     }
@@ -235,14 +334,19 @@ AttributeValue EvaluateChannel(const ParallaxScene& scene, ChannelIndex channel,
     if (timeTicks >= kfs.back().TimeTicks) {
         return kfs.back().Value;
     }
-    size_t i = 1;
-    for (; i < kfs.size(); ++i) {
-        if (kfs[i].TimeTicks >= timeTicks) {
-            break;
-        }
+    // Binary search: keyframes are stored in ascending TimeTicks order.
+    auto it = std::lower_bound(kfs.begin(), kfs.end(), timeTicks,
+        [](const KeyframeRecord& a, uint64_t t) { return a.TimeTicks < t; });
+    if (it == kfs.begin()) {
+        return kfs.front().Value;
     }
-    const auto& k0 = kfs[i - 1];
-    const auto& k1 = kfs[i];
+    if (it == kfs.end()) {
+        const auto& k0 = kfs[kfs.size() - 2];
+        const auto& k1 = kfs[kfs.size() - 1];
+        return InterpolatePair(ch.ValueType, k0, k1, timeTicks);
+    }
+    const auto& k1 = *it;
+    const auto& k0 = *(it - 1);
     return InterpolatePair(ch.ValueType, k0, k1, timeTicks);
 }
 
@@ -251,11 +355,18 @@ void EvaluateScene(const ParallaxScene& scene, uint64_t timeTicks, SceneEvaluati
     outResult.LightStates.clear();
     outResult.AudioStates.clear();
     outResult.FluidVolumes.clear();
+    outResult.MGWorldSprites.clear();
+    outResult.Vehicles.clear();
     outResult.ScriptOutputs.clear();
     outResult.EnvironmentSkybox.reset();
     outResult.ActorArzachelAuthorings.clear();
     outResult.ActorFacialPoses.clear();
     outResult.MotionGraphics = EvaluateMG(scene, timeTicks);
+
+    // Build a single (Element, AttributeName) -> ChannelIndex map for the duration of this call.
+    // Eliminates repeated O(N_channels) scans inside facial sampling on dense scenes.
+    ChannelIndexMap chanIdx;
+    chanIdx.ScanFromScene(scene);
 
     if (!scene.GetElements().empty()) {
         const std::string_view st0 = GetElementSchema(scene, 0);
@@ -293,15 +404,77 @@ void EvaluateScene(const ParallaxScene& scene, uint64_t timeTicks, SceneEvaluati
 
     for (ElementIndex ei = 0; ei < scene.GetElements().size(); ++ei) {
         std::string_view st = GetElementSchema(scene, ei);
-        if (st == "CameraElement" || st == "ActorElement") {
+        if (st == "CameraElement" || st == "ActorElement" || st == "AudioSourceElement") {
             Math::Vec3 pos{0, 0, 0};
-            AttributeValue posAttr = GetAttribute(scene, ei, "Position");
-            if (auto* p = std::get_if<Math::Vec3>(&posAttr)) {
-                pos = *p;
+            {
+                AttributeValue posAttr = GetAttribute(scene, ei, "Position");
+                if (auto* p = std::get_if<Math::Vec3>(&posAttr)) {
+                    pos = *p;
+                }
             }
+            // Channel-driven Position override (Phase 2 evaluator parity for camera/actor animation).
+            if (ChannelIndex chPos = FindElementChannelIndexed(chanIdx, scene, ei, "Position");
+                chPos != PARALLAX_INVALID_INDEX) {
+                AttributeValue v = EvaluateChannel(scene, chPos, timeTicks);
+                if (const auto* p = std::get_if<Math::Vec3>(&v)) {
+                    pos = *p;
+                }
+            }
+
+            // Rotation: prefer authored channel, then attribute, then degrees triplet.
+            Math::Quaternion rot{1, 0, 0, 0};
+            {
+                AttributeValue rotAttr = GetAttribute(scene, ei, "Rotation");
+                if (const auto* q = std::get_if<Math::Quaternion>(&rotAttr)) {
+                    rot = *q;
+                }
+            }
+            if (ChannelIndex chRot = FindElementChannelIndexed(chanIdx, scene, ei, "Rotation");
+                chRot != PARALLAX_INVALID_INDEX) {
+                AttributeValue v = EvaluateChannel(scene, chRot, timeTicks);
+                if (const auto* q = std::get_if<Math::Quaternion>(&v)) {
+                    rot = *q;
+                }
+            }
+            // Euler triplet fallback (PitchDeg/YawDeg/RollDeg or *Degrees synonyms).
+            auto readF = [&](const char* k, float dflt) -> float {
+                AttributeValue a = GetAttribute(scene, ei, k);
+                if (const auto* f = std::get_if<float>(&a)) {
+                    return *f;
+                }
+                return dflt;
+            };
+            const float pitchDeg = readF("PitchDeg", readF("PitchDegrees", 0.f));
+            const float yawDeg = readF("YawDeg", readF("YawDegrees", 0.f));
+            const float rollDeg = readF("RollDeg", readF("RollDegrees", 0.f));
+            const bool hasEulerAttr = std::abs(pitchDeg) > 1e-5f || std::abs(yawDeg) > 1e-5f || std::abs(rollDeg) > 1e-5f;
+            if (hasEulerAttr && rot.w >= 0.99999f && std::abs(rot.x) < 1e-6f && std::abs(rot.y) < 1e-6f
+                && std::abs(rot.z) < 1e-6f) {
+                constexpr float kDeg = 3.14159265f / 180.f;
+                rot = Math::Quaternion::FromEuler(pitchDeg * kDeg, yawDeg * kDeg, rollDeg * kDeg);
+            }
+
+            // Scale: attribute first, then channel.
+            Math::Vec3 scl{1.f, 1.f, 1.f};
+            {
+                AttributeValue sAttr = GetAttribute(scene, ei, "Scale");
+                if (const auto* p = std::get_if<Math::Vec3>(&sAttr)) {
+                    scl = *p;
+                }
+            }
+            if (ChannelIndex chScl = FindElementChannelIndexed(chanIdx, scene, ei, "Scale");
+                chScl != PARALLAX_INVALID_INDEX) {
+                AttributeValue v = EvaluateChannel(scene, chScl, timeTicks);
+                if (const auto* p = std::get_if<Math::Vec3>(&v)) {
+                    scl = *p;
+                }
+            }
+
             ElementTransform et;
             et.Element = ei;
             et.Position = pos;
+            et.Rotation = rot;
+            et.Scale = scl;
             outResult.ElementTransforms.push_back(et);
         }
         if (st == "ActorElement") {
@@ -365,13 +538,15 @@ void EvaluateScene(const ParallaxScene& scene, uint64_t timeTicks, SceneEvaluati
 
             std::string moodName = "neutral";
             float moodWeight = 0.f;
-            if (ChannelIndex chN = FindElementChannel(scene, ei, kChannelFacialMoodName); chN != PARALLAX_INVALID_INDEX) {
+            if (ChannelIndex chN = FindElementChannelIndexed(chanIdx, scene, ei, kChannelFacialMoodName);
+                chN != PARALLAX_INVALID_INDEX) {
                 AttributeValue v = EvaluateChannel(scene, chN, timeTicks);
                 if (const auto* s = std::get_if<std::string>(&v)) {
                     moodName = *s;
                 }
             }
-            if (ChannelIndex chW = FindElementChannel(scene, ei, kChannelFacialMoodWeight); chW != PARALLAX_INVALID_INDEX) {
+            if (ChannelIndex chW = FindElementChannelIndexed(chanIdx, scene, ei, kChannelFacialMoodWeight);
+                chW != PARALLAX_INVALID_INDEX) {
                 AttributeValue v = EvaluateChannel(scene, chW, timeTicks);
                 if (const auto* f = std::get_if<float>(&v)) {
                     moodWeight = *f;
@@ -380,13 +555,14 @@ void EvaluateScene(const ParallaxScene& scene, uint64_t timeTicks, SceneEvaluati
 
             std::string visemeId;
             float visemeStrength = 0.f;
-            if (ChannelIndex chV = FindElementChannel(scene, ei, kChannelFacialVisemeId); chV != PARALLAX_INVALID_INDEX) {
+            if (ChannelIndex chV = FindElementChannelIndexed(chanIdx, scene, ei, kChannelFacialVisemeId);
+                chV != PARALLAX_INVALID_INDEX) {
                 AttributeValue v = EvaluateChannel(scene, chV, timeTicks);
                 if (const auto* s = std::get_if<std::string>(&v)) {
                     visemeId = *s;
                 }
             }
-            if (ChannelIndex chVs = FindElementChannel(scene, ei, kChannelFacialVisemeWeight);
+            if (ChannelIndex chVs = FindElementChannelIndexed(chanIdx, scene, ei, kChannelFacialVisemeWeight);
                 chVs != PARALLAX_INVALID_INDEX) {
                 AttributeValue v = EvaluateChannel(scene, chVs, timeTicks);
                 if (const auto* f = std::get_if<float>(&v)) {
@@ -547,6 +723,183 @@ void EvaluateScene(const ParallaxScene& scene, uint64_t timeTicks, SceneEvaluati
             }
             outResult.FluidVolumes.push_back(std::move(fv));
         }
+        if (st == "SmmSoftBodyElement") {
+            SoftBodyState sb;
+            sb.Element = ei;
+            if (ei < scene.GetElements().size()) {
+                sb.Name = scene.GetElements()[ei].Name;
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "Enabled");
+                if (const auto* b = std::get_if<bool>(&a)) {
+                    sb.Enabled = *b;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "AnchorTopRow");
+                if (const auto* b = std::get_if<bool>(&a)) {
+                    sb.AnchorTopRow = *b;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "Origin");
+                if (const auto* v = std::get_if<Math::Vec3>(&a)) {
+                    sb.Origin = *v;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "GridWidth");
+                if (const auto* v = std::get_if<int32_t>(&a)) {
+                    sb.GridWidth = *v;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "GridHeight");
+                if (const auto* v = std::get_if<int32_t>(&a)) {
+                    sb.GridHeight = *v;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "NodeSpacing");
+                if (const auto* v = std::get_if<float>(&a)) {
+                    sb.NodeSpacing = *v;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "NodeMass");
+                if (const auto* v = std::get_if<float>(&a)) {
+                    sb.NodeMass = *v;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "Damping");
+                if (const auto* v = std::get_if<float>(&a)) {
+                    sb.Damping = *v;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "StructuralStiffness");
+                if (const auto* v = std::get_if<float>(&a)) {
+                    sb.StructuralStiffness = *v;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "ShearStiffness");
+                if (const auto* v = std::get_if<float>(&a)) {
+                    sb.ShearStiffness = *v;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "BendStiffness");
+                if (const auto* v = std::get_if<float>(&a)) {
+                    sb.BendStiffness = *v;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "SolverIterations");
+                if (const auto* v = std::get_if<int32_t>(&a)) {
+                    sb.SolverIterations = *v;
+                }
+            }
+            outResult.SoftBodies.push_back(std::move(sb));
+        }
+        if (st == "SmmVehicleElement") {
+            VehicleState v;
+            v.Element = ei;
+            if (ei < scene.GetElements().size()) {
+                v.Name = scene.GetElements()[ei].Name;
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "Enabled");
+                if (const auto* b = std::get_if<bool>(&a)) {
+                    v.Enabled = *b;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "Origin");
+                if (const auto* p = std::get_if<Math::Vec3>(&a)) {
+                    v.Origin = *p;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "WheelBase");
+                if (const auto* p = std::get_if<float>(&a)) {
+                    v.WheelBase = *p;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "TrackWidth");
+                if (const auto* p = std::get_if<float>(&a)) {
+                    v.TrackWidth = *p;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "Mass");
+                if (const auto* p = std::get_if<float>(&a)) {
+                    v.Mass = *p;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "EngineForce");
+                if (const auto* p = std::get_if<float>(&a)) {
+                    v.EngineForce = *p;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "BrakeForce");
+                if (const auto* p = std::get_if<float>(&a)) {
+                    v.BrakeForce = *p;
+                }
+            }
+            {
+                AttributeValue a = GetAttribute(scene, ei, "MaxSteerAngleRadians");
+                if (const auto* p = std::get_if<float>(&a)) {
+                    v.MaxSteerAngleRadians = *p;
+                }
+            }
+            outResult.Vehicles.push_back(std::move(v));
+        }
+    }
+
+    const auto& mgs = scene.GetMGElements();
+    for (MGIndex mi = 0; mi < mgs.size(); ++mi) {
+        const MGElementRecord& mg = mgs[mi];
+        if (mg.SchemaIndex >= scene.GetSchemas().size()) {
+            continue;
+        }
+        if (scene.GetSchemas()[mg.SchemaIndex].TypeName != "MGSpriteElement") {
+            continue;
+        }
+        if (MgAttrInt(mg, "MGProjectionMode", 0) != 1) {
+            continue;
+        }
+
+        MGWorldSpriteState ws{};
+        ws.MGElement = mi;
+        ws.Position = MgAttrVec3(mg, "WorldPosition", Math::Vec3{0.f, 1.25f, 0.f});
+        ws.Scale = MgAttrVec3(mg, "WorldScale", Math::Vec3{1.f, 1.f, 1.f});
+        ws.PitchDeg = MgAttrFloat(mg, "WorldPitchDeg", 0.f);
+        ws.YawDeg = MgAttrFloat(mg, "WorldYawDeg", 0.f);
+        ws.RollDeg = MgAttrFloat(mg, "WorldRollDeg", MgAttrFloat(mg, "RotationZ", 0.f) * (180.0f / 3.14159265f));
+        ws.Color = MgAttrVec4(mg, "Color", Math::Vec4{1.f, 1.f, 1.f, 1.f});
+        ws.CastShadows = MgAttrBool(mg, "CastShadows", true);
+        ws.AttachToElement = MgAttrBool(mg, "AttachToElement", false);
+        if (ws.AttachToElement) {
+            const int32_t attachIdx = MgAttrInt(mg, "AttachElementIndex", -1);
+            if (attachIdx >= 0) {
+                ws.AttachElement = static_cast<ElementIndex>(attachIdx);
+                for (const ElementTransform& et : outResult.ElementTransforms) {
+                    if (et.Element != ws.AttachElement) {
+                        continue;
+                    }
+                    ws.Position.x += et.Position.x;
+                    ws.Position.y += et.Position.y;
+                    ws.Position.z += et.Position.z;
+                    break;
+                }
+            }
+        }
+        outResult.MGWorldSprites.push_back(ws);
     }
 
 }

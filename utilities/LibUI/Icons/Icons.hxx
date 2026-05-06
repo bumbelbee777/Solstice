@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../Core/Core.hxx"
+#include "LibUI/Core/Core.hxx"
 #include <imgui.h>
 
 namespace LibUI::Icons {

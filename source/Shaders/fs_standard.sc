@@ -17,6 +17,7 @@ uniform vec4 u_PointLightPos[32];   // xyz: position, w: range
 uniform vec4 u_PointLightColor[32]; // rgb: color, w: intensity
 uniform vec4 u_PointLightParams[32]; // x: attenuation, y: padding, z: padding, w: padding
 uniform vec4 u_NumPointLights;      // x: count (int cast)
+uniform vec4 u_SceneLighting;       // x: ambient intensity, y: env irradiance blend, z: key diffuse wrap, w: shadow ambient fill
 
 SAMPLER2D(s_TexShadow, 1);
 SAMPLER2D(s_TexAlbedo, 2); // Albedo texture (base layer)
@@ -185,15 +186,31 @@ void main()
     vec3 SunLightDir = normalize(u_LightDir.xyz);
     vec3 SunLightColor = u_LightColor.rgb * u_LightColor.w;
 
-    // Ambient lighting - improved for PBR materials
-    vec3 SkyColor = vec3(0.4, 0.6, 0.9); // Sky Blue
-    vec3 GroundColor = vec3(0.1, 0.1, 0.12); // Slightly brighter ground ambient
-    float HemiMix = N_Final.y * 0.5 + 0.5;
-    float AmbientFactor = mix(0.15, 0.25, HemiMix);
-    vec3 Ambient = mix(GroundColor, SkyColor, HemiMix) * AmbientFactor;
+    float AmbientIntensity = clamp(u_SceneLighting.x, 0.001, 4.0);
+    float EnvIrrBlend = saturate(u_SceneLighting.y);
+    float KeyWrap = clamp(u_SceneLighting.z, 0.0, 1.25);
+    float ShadowFillAmt = saturate(u_SceneLighting.w);
 
-    // Diffuse lighting - standard PBR approach (optional cel / toon banding on key light)
-    float Diff = max(dot(N_Final, SunLightDir), 0.0);
+    // Hemisphere ambient tint + cheap environment-derived diffuse irradiance when cubemap bound
+    vec3 SkyColor = vec3(0.40, 0.58, 0.92);
+    vec3 GroundColor = vec3(0.085, 0.085, 0.098);
+    float HemiMix = N_Final.y * 0.5 + 0.5;
+    float AmbientContrast = mix(0.145, 0.255, HemiMix);
+    vec3 HemiIrradiance = mix(GroundColor, SkyColor, HemiMix) * AmbientContrast;
+    vec3 Ambient;
+    // Skip the extra N-facing cubemap lookup when env blend is disabled (reflection path may still sample).
+    if (EnvIrrBlend > 0.0005) {
+        vec3 EnvDiffuseSample = textureCube(s_TexEnvironment, N_Final).rgb;
+        Ambient = mix(HemiIrradiance, EnvDiffuseSample * 0.215, EnvIrrBlend) * AmbientIntensity;
+    } else {
+        Ambient = HemiIrradiance * AmbientIntensity;
+    }
+
+    // Directional diffuse: wrapped Lambert reads softer on silhouettes without extra lights
+    float NdLsun = dot(N_Final, SunLightDir);
+    // Preserves NdL == 1 at normal incidence while softening terminators like half-Lambert
+    float NdLwrapped = saturate((NdLsun + KeyWrap) / (1.0 + KeyWrap));
+    float Diff = NdLwrapped;
     if (u_stylize.x > 1.0) {
         float bands = clamp(u_stylize.x, 2.0, 8.0);
         Diff = floor(Diff * bands + 0.5) / bands;
@@ -384,18 +401,17 @@ void main()
     Shadow = mix(InBoundsShadow, FallbackShadow, OutOfBoundsGround);
     Shadow = mix(Shadow, 1.0, 1.0 - InBounds - OutOfBoundsGround); // Default for out-of-bounds non-ground
 
-    // Albedo and PBR setup already computed earlier (lines 218-249)
-    // Energy-conserving diffuse term (F already computed above for directional light)
+    // Directional diffuse + spec kept separate so ambient survives shadow darken and fill reads balanced
     vec3 KD = (vec3_splat(1.0) - F) * (vec3_splat(1.0) - Metallic);
     vec3 DiffuseTerm = KD * Albedo * Diffuse;
+    vec3 SpecularTermShadowed = Specular * Shadow;
 
-    // Proper Cook-Torrance specular term (already computed above)
-    vec3 SpecularTerm = Specular * Shadow;
+    vec3 diffuseDirect = DiffuseTerm * Shadow;
+    vec3 ambientDiffuse = Ambient * Albedo * (0.45 + EnvIrrBlend * 0.12);
+    vec3 shadowAmbientLift = ShadowFillAmt * Ambient * Albedo * (1.0 - Shadow);
+    vec3 DirectionalLighting = ambientDiffuse + shadowAmbientLift + diffuseDirect + SpecularTermShadowed;
 
-    // Dynamic Lighting (Directional + Point Lights) - proper PBR
-    vec3 DirectionalLighting = (Ambient * Albedo * 0.5 + (DiffuseTerm + SpecularTerm)) * Shadow;
-
-    // Ensure minimum (but not for glass - glass should be dark/transparent)
+    // Minimum floor (preserve glass readability)
     vec3 MinLighting = mix(Albedo * 0.15, vec3_splat(0.0), IsGlass);
     DirectionalLighting = max(DirectionalLighting, MinLighting);
 
@@ -430,7 +446,7 @@ void main()
     // For glass, blend refraction and reflection based on Fresnel
     // More reflection at grazing angles (Fresnel), more refraction at normal angles
     vec3 GlassColor = mix(RefractionColor, ReflectionColor, Fresnel) * 1.2;
-    GlassColor += SpecularTerm * (1.0 - Fresnel) * 0.3;
+    GlassColor += SpecularTermShadowed * (1.0 - Fresnel) * 0.3;
     LinearColor = mix(GlassColor, LinearColor, IsGlassFactor);
 
     // Pack roughness into alpha for opaque materials (used by post reflections).

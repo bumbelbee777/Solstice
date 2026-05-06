@@ -6,6 +6,7 @@
 #include <Parallax/ParallaxTypes.hxx>
 
 #include "LibUI/Timeline/TimelineModel.hxx"
+#include "LibUI/Widgets/Widgets.hxx"
 
 #include <imgui.h>
 
@@ -171,8 +172,8 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
         return;
     }
     const char* title = (windowTitle && windowTitle[0]) ? windowTitle : "Curve Editor";
-    if (!ImGui::Begin(title, visible)) {
-        ImGui::End();
+    if (!LibUI::Widgets::BeginWindow(title, visible)) {
+        LibUI::Widgets::EndWindow();
         return;
     }
 
@@ -189,24 +190,24 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
     ImGui::SliderFloat("Value zoom", &curves.zoomY, 0.1f, 32.0f, "%.2fx");
     if (ctx.keyframeEdit) {
         KeyframeEditUiState& ke = *ctx.keyframeEdit;
-        ImGui::Checkbox("Snap key time to frame grid", &ke.snapEnabled);
-        ImGui::SetNextItemWidth(220.f);
-        ImGui::SliderInt("Frame rate (0 = any tick)", &ke.snapFps, 0, 60);
+        LibUI::Widgets::Checkbox("Snap key time to frame grid", &ke.snapEnabled);
+        LibUI::Widgets::SetNextItemWidth(220.f);
+        LibUI::Widgets::SliderInt("Frame rate (0 = any tick)", &ke.snapFps, 0, 60);
         if (ke.clipValid) {
-            ImGui::TextDisabled("(clipboard: tick %llu  value %.4f — paste at playhead: Ctrl+V)",
+            ImGui::TextDisabled("(clipboard: tick %llu  value %.4f -- paste at playhead: Ctrl+V)",
                 static_cast<unsigned long long>(ke.clipTick), static_cast<double>(ke.clipValue));
         } else {
             ImGui::TextDisabled("(select a key, Ctrl+C to copy)");
         }
     }
-    ImGui::Separator();
+    LibUI::Widgets::Separator();
 
-    ImGui::TextUnformatted("Channels");
+    LibUI::Widgets::Text("Channels");
     for (size_t i = 0; i < curves.channels.size(); ++i) {
         LibUI::CurveEditor::CurveChannel& channel = curves.channels[i];
-        ImGui::Checkbox(("##cv_" + channel.name).c_str(), &channel.visible);
-        ImGui::SameLine();
-        if (ImGui::Selectable(channel.name.c_str(), curves.selectedChannel == static_cast<int>(i))) {
+        LibUI::Widgets::Checkbox(("##cv_" + channel.name).c_str(), &channel.visible);
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Selectable(channel.name.c_str(), curves.selectedChannel == static_cast<int>(i))) {
             curves.selectedChannel = static_cast<int>(i);
             timeline.selectedTrack = static_cast<int>(i);
             curves.selectedKeyIndex = -1;
@@ -216,8 +217,8 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
 
     if (curves.channels.empty() || curves.selectedChannel < 0 ||
         curves.selectedChannel >= static_cast<int>(curves.channels.size())) {
-        ImGui::TextDisabled("No editable float/vec3 tracks. Add channels from Properties.");
-        ImGui::End();
+        LibUI::Widgets::TextDisabled("No editable float/vec3 tracks. Add channels from Properties.");
+        LibUI::Widgets::EndWindow();
         return;
     }
 
@@ -237,17 +238,17 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
                 && binding.component < 0);
 
     if (ctx.keyframePresets && !ctx.keyframePresets->empty()) {
-        ImGui::TextUnformatted("Keyframe presets (INI under presets/Keyframe/, subfolders OK; #include supported)");
+        LibUI::Widgets::Text("Keyframe presets (INI under presets/Keyframe/, subfolders OK; #include supported)");
         static char sPresetFilter[180] = "";
-        ImGui::SetNextItemWidth(360.f);
-        ImGui::InputTextWithHint("##smmkfpfilter", "Filter (name, id, tags, author…)", sPresetFilter, sizeof(sPresetFilter));
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Clear##smmkfp0")) {
+        LibUI::Widgets::SetNextItemWidth(360.f);
+        LibUI::Widgets::InputTextWithHint("##smmkfpfilter", "Filter (name, id, tags, author...)", sPresetFilter, sizeof(sPresetFilter));
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::SmallButton("Clear##smmkfp0")) {
             sPresetFilter[0] = '\0';
         }
         if (ctx.reloadIniPresets) {
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Reload INI##smmkfpR")) {
+            LibUI::Widgets::SameLine();
+            if (LibUI::Widgets::SmallButton("Reload INI##smmkfpR")) {
                 ctx.reloadIniPresets(ctx.reloadIniPresetsUser);
             }
         }
@@ -261,7 +262,7 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
             }
         }
         if (vis.empty()) {
-            ImGui::TextDisabled("No keyframe presets match the filter.");
+            LibUI::Widgets::TextDisabled("No keyframe presets match the filter.");
         } else {
             sPresetIdx = (std::clamp)(sPresetIdx, 0, static_cast<int>(vis.size()) - 1);
             std::string comboItems;
@@ -272,7 +273,7 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
                 comboItems.push_back('\0');
             }
             comboItems.push_back('\0');
-            ImGui::SetNextItemWidth(360.f);
+            LibUI::Widgets::SetNextItemWidth(360.f);
             int comboLocal = sPresetIdx;
             ImGui::Combo("##smmkfp", &comboLocal, comboItems.c_str());
             sPresetIdx = comboLocal;
@@ -283,7 +284,7 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
             if (!prShow.Description.empty()) {
                 ImGui::TextWrapped("%s", prShow.Description.c_str());
             } else {
-                ImGui::TextDisabled("No Description= in INI; add for team handoff (optional).");
+                LibUI::Widgets::TextDisabled("No Description= in INI; add for team handoff (optional).");
             }
             if (!prShow.Author.empty() || !prShow.Tags.empty()) {
                 std::string meta;
@@ -299,7 +300,7 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
                 ImGui::TextDisabled("%s", meta.c_str());
             }
         }
-        if (ImGui::Button("Apply INI keyframe preset to selected##smmkfp2") && ctx.scene && !vis.empty()) {
+        if (LibUI::Widgets::Button("Apply INI keyframe preset to selected##smmkfp2") && ctx.scene && !vis.empty()) {
             const int vix = vis[static_cast<size_t>(sPresetIdx)];
             const Smm::Keyframe::KeyframeCurvePreset& pr = (*ctx.keyframePresets)[static_cast<size_t>(vix)];
             std::vector<int> wk;
@@ -364,7 +365,7 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
                     }
                 }
                 if (mix) {
-                    ImGui::TextDisabled("Selected keys have different easings; pick a preset and apply.");
+                    LibUI::Widgets::TextDisabled("Selected keys have different easings; pick a preset and apply.");
                 } else {
                     sEaseEdit = static_cast<int>(e0);
                 }
@@ -373,11 +374,11 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
             }
         }
         sEaseEdit = (std::clamp)(sEaseEdit, 0, kEasingCount - 1);
-        ImGui::TextUnformatted("Keyframe easing: segment into this key (same as Parallax channel/MG evaluation)");
-        ImGui::SetNextItemWidth(300.f);
+        LibUI::Widgets::Text("Keyframe easing: segment into this key (same as Parallax channel/MG evaluation)");
+        LibUI::Widgets::SetNextItemWidth(300.f);
         ImGui::Combo("##smmkeyease", &sEaseEdit, kEasingItems, kEasingCount);
-        ImGui::SameLine();
-        if (ImGui::Button("Apply to selected##smmsetease") && ctx.scene) {
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Apply to selected##smmsetease") && ctx.scene) {
             std::vector<int> work;
             if (!curves.selectedKeyIndices.empty()) {
                 work = curves.selectedKeyIndices;
@@ -403,8 +404,8 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
             ImGui::TextColored(ImVec4(1.0f, 160.0f / 255.0f, 80.0f / 255.0f, 1.0f),
                 "Performance: a synced track has >20k keyframes. Expect UI cost.");
         }
-        ImGui::TextUnformatted("Value axis: zoom-to-fit (padding 10%%, overrides auto span for this view)");
-        if (ImGui::Button("Zoom value to fit##smmvfit") && !active.keys.empty()) {
+        LibUI::Widgets::Text("Value axis: zoom-to-fit (padding 10%%, overrides auto span for this view)");
+        if (LibUI::Widgets::Button("Zoom value to fit##smmvfit") && !active.keys.empty()) {
             float m = active.keys[0].value;
             float n = m;
             for (const auto& k : active.keys) {
@@ -416,22 +417,22 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
             curves.valueFitMin = m - pad;
             curves.valueFitMax = n + pad;
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Reset value fit (auto)##smmvfit0")) {
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Reset value fit (auto)##smmvfit0")) {
             curves.valueFitOverride = false;
         }
         static int sOutEase = 0; ///< 0=inherit 1..15=easing+1
         static int sInterp = 0;
         const char* inames = "Eased\0Hold/Step\0Linear\0Bezier (value cubic)\0\0";
-        ImGui::TextUnformatted("Segment ease-out (leaving key; 0xFF=inherit) + interpolation (end key = active segment)");
-        ImGui::SetNextItemWidth(200.f);
+        LibUI::Widgets::Text("Segment ease-out (leaving key; 0xFF=inherit) + interpolation (end key = active segment)");
+        LibUI::Widgets::SetNextItemWidth(200.f);
         ImGui::Combo("Interpolation##smmi", &sInterp, inames);
         sInterp = (std::min)(3, (std::max)(0, sInterp));
         static const char* kEaseOutMenu[] = {"Inherit (use next key ease-in on segment)", "Linear", "EaseIn", "EaseOut", "EaseInOut",
             "Bounce", "Elastic", "Back", "Circ", "Expo", "Quad", "Cubic", "Quart", "Quint", "Bezier"};
-        ImGui::SetNextItemWidth(380.f);
+        LibUI::Widgets::SetNextItemWidth(380.f);
         ImGui::Combo("Ease out##smmeo", &sOutEase, kEaseOutMenu, 15);
-        if (ImGui::Button("Load from selected##smmsy")) {
+        if (LibUI::Widgets::Button("Load from selected##smmsy")) {
             if (curves.selectedKeyIndex >= 0 && static_cast<size_t>(curves.selectedKeyIndex) < active.keys.size()) {
                 sInterp = (std::min)(3, (std::max)(0, static_cast<int>(active.keys[static_cast<size_t>(curves.selectedKeyIndex)].interp)));
                 sOutEase = (active.keys[static_cast<size_t>(curves.selectedKeyIndex)].easeOut == 0xFF)
@@ -439,8 +440,8 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
                     : 1 + static_cast<int>(active.keys[static_cast<size_t>(curves.selectedKeyIndex)].easeOut);
             }
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Apply out/ease+interp##smmi2") && ctx.scene) {
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Apply out/ease+interp##smmi2") && ctx.scene) {
             std::vector<int> wk;
             if (!curves.selectedKeyIndices.empty()) {
                 wk = curves.selectedKeyIndices;
@@ -478,10 +479,10 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
             static float sTin = 0.333f;
             static float sTout = 0.333f;
             ImGui::SliderFloat("Bezier tangent in##tgi", &sTin, 0.02f, 0.99f, "%.3f");
-            ImGui::SameLine();
+            LibUI::Widgets::SameLine();
             ImGui::SliderFloat("tangent out##tgo", &sTout, 0.02f, 0.99f, "%.3f");
-            ImGui::SameLine();
-            if (ImGui::Button("Set tangents (Bezier)##tgset") && ctx.scene) {
+            LibUI::Widgets::SameLine();
+            if (LibUI::Widgets::Button("Set tangents (Bezier)##tgset") && ctx.scene) {
                 if (sInterp == 3 && (curves.selectedKeyIndex >= 0 || !curves.selectedKeyIndices.empty())) {
                     std::vector<int> wk;
                     if (!curves.selectedKeyIndices.empty()) {
@@ -506,7 +507,7 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
                     *ctx.sceneDirty = true;
                 }
             }
-            if (ImGui::Button("Auto smooth (1/3 handles, Bezier+float)##autot") && ctx.scene) {
+            if (LibUI::Widgets::Button("Auto smooth (1/3 handles, Bezier+float)##autot") && ctx.scene) {
                 std::vector<int> wk;
                 if (!curves.selectedKeyIndices.empty()) {
                     wk = curves.selectedKeyIndices;
@@ -537,8 +538,8 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
             }
         }
     }
-    ImGui::Separator();
-    const ImVec2 canvasSize(ImGui::GetContentRegionAvail().x, 220.0f);
+    LibUI::Widgets::Separator();
+    const ImVec2 canvasSize(LibUI::Widgets::GetContentRegionAvail().x, 220.0f);
     const ImVec2 p0 = ImGui::GetCursorScreenPos();
     const ImVec2 p1 = ImVec2(p0.x + canvasSize.x, p0.y + canvasSize.y);
     ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -700,7 +701,7 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
         dragUndoPushed = false;
     }
 
-    if (dragKey >= 0 && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && static_cast<size_t>(dragKey) < active.keys.size()) {
+    if (dragKey >= 0 && LibUI::Widgets::IsMouseDragging(ImGuiMouseButton_Left) && static_cast<size_t>(dragKey) < active.keys.size()) {
         if (!dragUndoPushed) {
             Smm::PushSceneUndoSnapshot(*ctx.scene, ctx.compressPrlx);
             dragUndoPushed = true;
@@ -720,7 +721,7 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
         }
     }
 
-    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Delete) &&
+    if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && LibUI::Widgets::IsKeyPressed(ImGuiKey_Delete) &&
         (!curves.selectedKeyIndices.empty() || curves.selectedKeyIndex >= 0)) {
         std::string err;
         Smm::PushSceneUndoSnapshot(*ctx.scene, ctx.compressPrlx);
@@ -766,7 +767,7 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
 
     {
         const ImGuiIO& iok = ImGui::GetIO();
-        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && iok.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_C) &&
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && iok.KeyCtrl && LibUI::Widgets::IsKeyPressed(ImGuiKey_C) &&
             curves.selectedKeyIndex >= 0) {
             uint64_t rt = 0;
             float rv = 0.f;
@@ -787,7 +788,7 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
                 *ctx.statusLine = er;
             }
         }
-        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && iok.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_V) &&
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && iok.KeyCtrl && LibUI::Widgets::IsKeyPressed(ImGuiKey_V) &&
             ctx.keyframeEdit && ctx.keyframeEdit->clipValid && ctx.timeTicks) {
             KeyframeEditUiState& ke = *ctx.keyframeEdit;
             uint64_t at = *ctx.timeTicks;
@@ -814,11 +815,11 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
         static int batchNudgeTimeTicks = 0;
         static float batchNudgeValue = 0.f;
         static float batchTimeScale = 1.f;
-        ImGui::TextUnformatted("Batch (Shift+click multi-select on canvas)");
-        ImGui::SetNextItemWidth(160.f);
-        ImGui::InputInt("Nudge time (ticks)##batchnudge", &batchNudgeTimeTicks);
-        ImGui::SameLine();
-        if (ImGui::Button("Apply nudge time##batch") && !curves.selectedKeyIndices.empty() && ctx.scene) {
+        LibUI::Widgets::Text("Batch (Shift+click multi-select on canvas)");
+        LibUI::Widgets::SetNextItemWidth(160.f);
+        LibUI::Widgets::InputInt("Nudge time (ticks)##batchnudge", &batchNudgeTimeTicks);
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Apply nudge time##batch") && !curves.selectedKeyIndices.empty() && ctx.scene) {
             std::string errB;
             std::vector<std::tuple<uint64_t, float, uint8_t>> data;
             data.reserve(curves.selectedKeyIndices.size());
@@ -868,10 +869,10 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
                 *ctx.statusLine = errB;
             }
         }
-        ImGui::SetNextItemWidth(120.f);
+        LibUI::Widgets::SetNextItemWidth(120.f);
         ImGui::InputFloat("Nudge value##batchnudgev", &batchNudgeValue, 0.01f, 0.1f, "%.4f");
-        ImGui::SameLine();
-        if (ImGui::Button("Apply nudge value##batch") && !curves.selectedKeyIndices.empty() && ctx.scene) {
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Apply nudge value##batch") && !curves.selectedKeyIndices.empty() && ctx.scene) {
             Smm::PushSceneUndoSnapshot(*ctx.scene, ctx.compressPrlx);
             for (int idx : curves.selectedKeyIndices) {
                 if (idx < 0) {
@@ -891,10 +892,10 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
                 *ctx.statusLine = "Curve: nudged value on selected keyframes.";
             }
         }
-        ImGui::SetNextItemWidth(120.f);
+        LibUI::Widgets::SetNextItemWidth(120.f);
         ImGui::InputFloat("Scale time (pivot: playhead)##btsc", &batchTimeScale, 0.01f, 0.1f, "%.3f");
-        ImGui::SameLine();
-        if (ImGui::Button("Apply scale##batch") && !curves.selectedKeyIndices.empty() && ctx.scene && ctx.timeTicks) {
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Apply scale##batch") && !curves.selectedKeyIndices.empty() && ctx.scene && ctx.timeTicks) {
             const uint64_t pivot = *ctx.timeTicks;
             std::string errB2;
             std::vector<std::tuple<uint64_t, float, uint8_t>> data2;
@@ -947,9 +948,9 @@ void DrawCurveEditorSession(const char* windowTitle, bool* visible, AppSessionCo
             }
         }
     }
-    ImGui::TextDisabled("LMB drag | dbl-clk add | Del | Ctrl+C / Ctrl+V (paste at playhead) | time snap: options above");
+    LibUI::Widgets::TextDisabled("LMB drag | dbl-clk add | Del | Ctrl+C / Ctrl+V (paste at playhead) | time snap: options above");
 
-    ImGui::End();
+    LibUI::Widgets::EndWindow();
 }
 
 } // namespace Smm::Editing

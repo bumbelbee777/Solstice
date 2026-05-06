@@ -27,7 +27,7 @@ inline constexpr const char* kChannelFacialVisemeId = "FacialVisemeId";
 inline constexpr const char* kChannelFacialVisemeWeight = "FacialVisemeWeight";
 
 constexpr uint32_t PARALLAX_MAGIC = 0x50524C58u; // 'PRLX'
-constexpr uint16_t PARALLAX_FORMAT_VERSION_MAJOR = 1;
+constexpr uint16_t PARALLAX_FORMAT_VERSION_MAJOR = 2;
 constexpr uint16_t PARALLAX_FORMAT_VERSION_MINOR = 0;
 constexpr uint32_t PARALLAX_INVALID_INDEX = 0xFFFFFFFFu;
 
@@ -149,12 +149,14 @@ struct FileHeader {
     uint32_t RenderJobTableOffset{0};
     uint32_t RenderJobCount{0};
     uint32_t PathTableOffset{0};
+    uint32_t AssetPayloadOffset{0};
+    uint32_t AssetPayloadSize{0};
     uint16_t Flags{0};
     uint8_t ReservedPad[2]{0, 0};
 };
 
-// Packed size is 92 bytes (all section offsets + sizes). v1 on-disk layout; keep #pragma pack(1).
-static_assert(sizeof(FileHeader) == 92, "FileHeader packed layout");
+// Packed size is 100 bytes (all section offsets + sizes). v2 on-disk layout; keep #pragma pack(1).
+static_assert(sizeof(FileHeader) == 100, "FileHeader packed layout");
 
 struct AttributeDescriptorDisk {
     uint32_t NameOffset{0};
@@ -237,6 +239,15 @@ struct PathTableEntryDisk {
     uint64_t AssetHash{0};
 };
 
+struct AssetPayloadEntryDisk {
+    uint64_t AssetHash{0};
+    uint16_t HintType{0};
+    uint16_t Flags{0};
+    uint32_t LogicalPathOffset{0};
+    uint32_t DataOffset{0};
+    uint32_t DataSize{0};
+};
+
 #pragma pack(pop)
 
 enum class ChannelCompression : uint8_t {
@@ -284,6 +295,20 @@ struct AudioSourceState {
     ElementIndex Element{PARALLAX_INVALID_INDEX};
     float Volume{1.0f};
     float Pitch{1.0f};
+};
+
+/// World-space proxy state for MG sprites in unified 3D viewport mode.
+struct MGWorldSpriteState {
+    MGIndex MGElement{PARALLAX_INVALID_INDEX};
+    bool AttachToElement{false};
+    ElementIndex AttachElement{PARALLAX_INVALID_INDEX};
+    Math::Vec3 Position{0.f, 0.f, 0.f};
+    Math::Vec3 Scale{1.f, 1.f, 1.f};
+    float PitchDeg{0.f};
+    float YawDeg{0.f};
+    float RollDeg{0.f};
+    Math::Vec4 Color{1.f, 1.f, 1.f, 1.f};
+    bool CastShadows{true};
 };
 
 /// Per-frame 2D post from the first `MotionGraphicsRootElement` in the list. Screen shake is a draw origin offset
@@ -353,6 +378,37 @@ struct FluidVolumeState {
     float Prandtl{0.71f};
 };
 
+/// Authoring-time soft-body cloth descriptor mirrored from SMM/Jackhammer to runtime.
+struct SoftBodyState {
+    ElementIndex Element{PARALLAX_INVALID_INDEX};
+    std::string Name;
+    bool Enabled{true};
+    bool AnchorTopRow{true};
+    Math::Vec3 Origin{};
+    int GridWidth{12};
+    int GridHeight{12};
+    float NodeSpacing{0.25f};
+    float NodeMass{1.0f};
+    float Damping{0.05f};
+    float StructuralStiffness{0.95f};
+    float ShearStiffness{0.85f};
+    float BendStiffness{0.60f};
+    int SolverIterations{8};
+};
+
+struct VehicleState {
+    ElementIndex Element{PARALLAX_INVALID_INDEX};
+    std::string Name;
+    bool Enabled{true};
+    Math::Vec3 Origin{};
+    float WheelBase{2.5f};
+    float TrackWidth{1.6f};
+    float Mass{1200.0f};
+    float EngineForce{9000.0f};
+    float BrakeForce{6000.0f};
+    float MaxSteerAngleRadians{0.55f};
+};
+
 /// Same budget as Jackhammer’s SMF fluid authoring (see `Smf::kSmfFluidInteriorCellBudget` in the map SDK).
 inline constexpr int64_t kParallaxFluidInteriorCellBudget = 262144;
 
@@ -394,6 +450,12 @@ struct SceneEvaluationResult {
     std::vector<AudioSourceState> AudioStates;
     /// Populated for `SmmFluidVolumeElement` rows (MovieMaker + runtime visualization).
     std::vector<FluidVolumeState> FluidVolumes;
+    /// Populated for `SmmSoftBodyElement` rows (authoring/runtime handoff for PBD cloth).
+    std::vector<SoftBodyState> SoftBodies;
+    /// Populated for `SmmVehicleElement` rows (authoring/runtime handoff for vehicle simulation).
+    std::vector<VehicleState> Vehicles;
+    /// World-space MG proxies (only for `MGSpriteElement` rows with `MGProjectionMode=1`).
+    std::vector<MGWorldSpriteState> MGWorldSprites;
     /// Filled from `SceneRoot` on element 0 when the schema is `SceneRoot` (SMM + exporters).
     std::optional<SkyboxAuthoringState> EnvironmentSkybox;
     /// One row per `ActorElement` with Arzachel / LOD / preset fields (for tooling and runtime).

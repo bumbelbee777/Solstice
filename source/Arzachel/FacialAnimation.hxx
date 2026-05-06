@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -80,6 +81,35 @@ struct ExpressionStack {
     std::vector<Layer> Expressions;
     std::string VisemeId;
     float VisemeStrength{0.f};
+    std::string NextVisemeId;
+    float NextVisemeStrength{0.f};
+    float VisemeBlend{0.f}; // 0 = current only, 1 = next only
+};
+
+struct FacialSolveConfig {
+    float ExpressionGlobalWeight{1.0f};
+    float VisemeGlobalWeight{1.0f};
+    float MorphSoftClamp{1.25f};
+    bool EnableVisemeCoarticulation{true};
+    bool NormalizeMorphWeights{true};
+};
+
+struct ExpressionEnvelope {
+    float AttackSec{0.05f};
+    float HoldSec{0.0f};
+    float ReleaseSec{0.12f};
+    float Shape{1.0f}; // >1 smoother in/out, <1 snappier
+};
+
+struct ExpressionTimelineState {
+    const Expression* Current{nullptr};
+    const Expression* Target{nullptr};
+    float CurrentWeight{0.0f};
+    float TargetWeight{0.0f};
+    float CurrentAgeSec{0.0f};
+    float TargetAgeSec{0.0f};
+    ExpressionEnvelope CurrentEnv{};
+    ExpressionEnvelope TargetEnv{};
 };
 
 float PatternWeight(ExpressionPattern pattern, float patternPeriodSec, float timeSec, Seed variationSeed);
@@ -89,6 +119,9 @@ float BlinkClosedAmount(float timeSec, Seed blinkSeed);
 
 /// Eye look jitter in normalized screen-ish units (small).
 Math::Vec2 SaccadeOffset(float timeSec, Seed saccadeSeed);
+float EvaluateEnvelopeWeight(float timeSec, const ExpressionEnvelope& envelope);
+void AdvanceExpressionTimeline(ExpressionTimelineState& ioState, float dtSec);
+void BuildStackFromTimeline(ExpressionStack& outStack, const ExpressionTimelineState& state);
 
 void ApplyBoneOffsetsToPose(const Skeleton::Skeleton& sk, Skeleton::Pose& ioPose,
     const std::unordered_map<std::string, Skeleton::BoneTransform>& offsets, float weight);
@@ -100,6 +133,15 @@ void ApplyMorphOffsets(std::unordered_map<MorphTargetId, float>& ioMorphs,
 void EvaluateFacialAtTimeToMaps(std::unordered_map<std::string, Skeleton::BoneTransform>& outBoneDeltas,
     std::unordered_map<MorphTargetId, float>& outMorphs, const ExpressionStack& stack, const VisemeSet& visemes,
     float timeSec, Seed facialSeed, bool enableBlink, bool enableSaccade);
+
+void EvaluateFacialAtTimeToMapsEx(std::unordered_map<std::string, Skeleton::BoneTransform>& outBoneDeltas,
+    std::unordered_map<MorphTargetId, float>& outMorphs, const ExpressionStack& stack, const VisemeSet& visemes,
+    float timeSec, Seed facialSeed, bool enableBlink, bool enableSaccade, const FacialSolveConfig& config);
+
+void EvaluateFacialFromTimelineToMaps(std::unordered_map<std::string, Skeleton::BoneTransform>& outBoneDeltas,
+    std::unordered_map<MorphTargetId, float>& outMorphs, const ExpressionTimelineState& state, const ExpressionStack& baseStack,
+    const VisemeSet& visemes, float timeSec, Seed facialSeed, bool enableBlink, bool enableSaccade,
+    const FacialSolveConfig& config);
 
 void ApplyNamedBoneDeltasToPose(const Skeleton::Skeleton& sk, Skeleton::Pose& ioPose,
     const std::unordered_map<std::string, Skeleton::BoneTransform>& namedDeltas);

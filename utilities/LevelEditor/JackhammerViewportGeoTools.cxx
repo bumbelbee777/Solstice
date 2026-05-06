@@ -1,8 +1,7 @@
 #include "JackhammerViewportGeoTools.hxx"
 
 #include "JackhammerMeshOps.hxx"
-
-#include <imgui.h>
+#include "LibUI/Widgets/Widgets.hxx"
 
 #include <cmath>
 #include <cstdio>
@@ -61,10 +60,10 @@ void ProcessMeasureClicks(
     if (geoToolIndex != 2 || !engineViewportHovered) {
         return;
     }
-    if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.KeyCtrl) {
+    if (LibUI::Widgets::IsMouseClicked(ImGuiMouseButton_Left) && !io.KeyCtrl) {
         float hitX = 0.f, hitZ = 0.f;
         if (LibUI::Viewport::ScreenToXZPlane(
-                viewM, projM, panelMin, panelMax, ImGui::GetMousePos(), groundPlaneY, hitX, hitZ)) {
+                viewM, projM, panelMin, panelMax, LibUI::Widgets::GetMousePos(), groundPlaneY, hitX, hitZ)) {
             SnapXz(hitX, hitZ, placeGridSnap);
             if (!m.hasA) {
                 m.ax = hitX;
@@ -99,12 +98,12 @@ void ProcessTerrainSculpt(
     if (geoToolIndex != 3 || !engineViewportHovered || brushRadiusWorld <= 0.f || std::abs(raisePerFrame) < 1.0e-8f) {
         return;
     }
-    if (mesh.positions.empty() || !ImGui::IsMouseDown(ImGuiMouseButton_Left) || io.KeyCtrl) {
+    if (mesh.positions.empty() || !LibUI::Widgets::IsMouseDown(ImGuiMouseButton_Left) || io.KeyCtrl) {
         return;
     }
     float hitX = 0.f, hitZ = 0.f;
     if (!LibUI::Viewport::ScreenToXZPlane(
-            viewM, projM, panelMin, panelMax, ImGui::GetMousePos(), groundPlaneY, hitX, hitZ)) {
+            viewM, projM, panelMin, panelMax, LibUI::Widgets::GetMousePos(), groundPlaneY, hitX, hitZ)) {
         return;
     }
     SnapXz(hitX, hitZ, placeGridSnap);

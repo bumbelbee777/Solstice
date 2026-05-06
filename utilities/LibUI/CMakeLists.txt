@@ -24,6 +24,8 @@ add_library(LibUI STATIC
     Tools/IniFile.cxx
     Tools/ViewportSpatialPick.cxx
     Tools/ToolScaffolds/ComingSoonPanel.cxx
+    Tools/PropertyGrid.cxx
+    Tools/PathInputBrowse.cxx
     Widgets/Widgets.cxx
     Graphics/Graphics.cxx
     Graphics/PreviewTexture.cxx
@@ -37,6 +39,7 @@ add_library(LibUI STATIC
     Viewport/Viewport.cxx
     Viewport/ViewportMath.cxx
     Viewport/ViewportGizmo.cxx
+    Viewport/ViewportInteraction.cxx
     Animation/Animation.cxx
     Timeline/TimelineWidget.cxx
     CurveEditor/CurveEditor.cxx
@@ -104,6 +107,8 @@ source_group("Tools" FILES Tools/DiagLog.hxx Tools/DiagLog.cxx Tools/Win32Except
     Tools/UnsavedChangesModal.hxx Tools/UnsavedChangesModal.cxx Tools/FileChangedOnDiskModal.hxx Tools/FileChangedOnDiskModal.cxx
     Tools/AppAbout.hxx Tools/AppAbout.cxx
     Tools/RgbaImageFile.hxx Tools/RgbaImageFile.cxx Tools/ViewportSpatialPick.hxx Tools/ViewportSpatialPick.cxx
+    Tools/PropertyGrid.hxx Tools/PropertyGrid.cxx
+    Tools/PathInputBrowse.hxx Tools/PathInputBrowse.cxx
     Tools/ToolScaffolds/ComingSoonPanel.hxx Tools/ToolScaffolds/ComingSoonPanel.cxx)
 source_group("Shell" FILES Shell/Frame.hxx Shell/Frame.cxx Shell/DropFile.hxx Shell/DropFile.cxx Shell/GlWindow.hxx Shell/GlWindow.cxx Shell/MainHost.hxx Shell/MainHost.cxx)
 source_group("Docking" FILES Docking/Docking.hxx Docking/Docking.cxx)
@@ -111,7 +116,7 @@ source_group("Workspace" FILES Workspace/PanelRegistry.hxx Workspace/PanelRegist
 source_group("Layout" FILES Layout/SplitPane.hxx Layout/SplitPane.cxx)
 source_group("Widgets" FILES Widgets/Widgets.hxx Widgets/Widgets.cxx)
 source_group("Graphics" FILES Graphics/Graphics.hxx Graphics/Graphics.cxx Graphics/PreviewTexture.hxx Graphics/PreviewTexture.cxx)
-source_group("Viewport" FILES Viewport/Viewport.hxx Viewport/Viewport.cxx Viewport/ViewportMath.hxx Viewport/ViewportMath.cxx Viewport/ViewportGizmo.hxx Viewport/ViewportGizmo.cxx)
+source_group("Viewport" FILES Viewport/Viewport.hxx Viewport/Viewport.cxx Viewport/ViewportMath.hxx Viewport/ViewportMath.cxx Viewport/ViewportGizmo.hxx Viewport/ViewportGizmo.cxx Viewport/ViewportInteraction.hxx Viewport/ViewportInteraction.cxx)
 source_group("Timeline" FILES Timeline/TimelineModel.hxx Timeline/TimelineWidget.hxx Timeline/TimelineWidget.cxx)
 source_group("CurveEditor" FILES CurveEditor/CurveModel.hxx CurveEditor/CurveEditor.hxx CurveEditor/CurveEditor.cxx)
 source_group("Input" FILES Input/CommandRegistry.hxx Input/CommandRegistry.cxx)

@@ -156,6 +156,73 @@ int main() {
     }
 
     {
+        // Unified MG world proxy evaluation: world-space sprite survives save/load and attachment offsets apply.
+        auto sc = CreateScene(6000);
+        const ElementIndex actor = AddElement(*sc, "ActorElement", "AttachTarget", 0);
+        assert(actor != PARALLAX_INVALID_INDEX);
+        SetAttribute(*sc, actor, "Position", AttributeValue{Math::Vec3{5.f, 2.f, -3.f}});
+
+        const MGIndex mg = AddMGElement(*sc, "MGSpriteElement", "WorldSprite", PARALLAX_INVALID_INDEX);
+        assert(mg != PARALLAX_INVALID_INDEX);
+        auto& mgRec = sc->GetMGElements()[mg];
+        mgRec.Attributes["MGProjectionMode"] = AttributeValue{int32_t{1}};
+        mgRec.Attributes["WorldPosition"] = AttributeValue{Math::Vec3{1.f, 0.5f, 2.f}};
+        mgRec.Attributes["WorldScale"] = AttributeValue{Math::Vec3{2.f, 3.f, 1.f}};
+        mgRec.Attributes["WorldYawDeg"] = AttributeValue{25.f};
+        mgRec.Attributes["AttachToElement"] = AttributeValue{true};
+        mgRec.Attributes["AttachElementIndex"] = AttributeValue{int32_t{static_cast<int32_t>(actor)}};
+        mgRec.Attributes["CastShadows"] = AttributeValue{false};
+
+        std::vector<std::byte> sb;
+        assert(SaveSceneToBytes(*sc, sb, false, &err));
+        ParallaxScene loaded{};
+        assert(LoadSceneFromBytes(loaded, sb, &err));
+        SceneEvaluationResult ev{};
+        EvaluateScene(loaded, 0, ev);
+        assert(ev.MGWorldSprites.size() == 1u);
+        const auto& ws = ev.MGWorldSprites[0];
+        assert(ws.MGElement == mg);
+        assert(ws.AttachToElement);
+        assert(ws.AttachElement == actor);
+        assert(std::abs(ws.Position.x - 6.f) < 1e-4f);
+        assert(std::abs(ws.Position.y - 2.5f) < 1e-4f);
+        assert(std::abs(ws.Position.z - (-1.f)) < 1e-4f);
+        assert(std::abs(ws.Scale.x - 2.f) < 1e-4f);
+        assert(std::abs(ws.YawDeg - 25.f) < 1e-4f);
+        assert(!ws.CastShadows);
+    }
+
+    {
+        // Embedded asset payload + MG track/attribute round-trip.
+        auto scEmb = CreateScene(6000);
+        const ElementIndex actor = AddElement(*scEmb, "ActorElement", "EmbedActor", 0);
+        assert(actor != PARALLAX_INVALID_INDEX);
+        SetAttribute(*scEmb, actor, "MeshAsset", AttributeValue{uint64_t{0xABCDEF01u}});
+        scEmb->GetEmbeddedAssets()[0xABCDEF01u] = AssetData{{std::byte{0x11}, std::byte{0x22}, std::byte{0x33}}, 7};
+
+        const MGIndex mg = AddMGElement(*scEmb, "MGSpriteElement", "EmbedSprite", PARALLAX_INVALID_INDEX);
+        assert(mg != PARALLAX_INVALID_INDEX);
+        scEmb->GetMGElements()[mg].Attributes["Depth"] = AttributeValue{3.0f};
+        const uint32_t tr = AddMGTrack(*scEmb, mg, "Depth", AttributeType::Float, EasingType::Linear);
+        AddMGKeyframe(*scEmb, tr, 0, AttributeValue{1.0f}, EasingType::Linear);
+        AddMGKeyframe(*scEmb, tr, 30, AttributeValue{4.0f}, EasingType::Linear);
+
+        std::vector<std::byte> eb;
+        assert(SaveSceneToBytes(*scEmb, eb, false, &err));
+        ParallaxScene scEmbLoaded{};
+        assert(LoadSceneFromBytes(scEmbLoaded, eb, &err));
+        assert(scEmbLoaded.GetEmbeddedAssets().count(0xABCDEF01u) == 1u);
+        assert(scEmbLoaded.GetEmbeddedAssets().at(0xABCDEF01u).Bytes.size() == 3u);
+        assert(scEmbLoaded.GetMGElements().size() == 1u);
+        assert(scEmbLoaded.GetMGTracks().size() == 1u);
+        assert(scEmbLoaded.GetMGTracks()[0].Keyframes.size() == 2u);
+        auto depthIt = scEmbLoaded.GetMGElements()[0].Attributes.find("Depth");
+        assert(depthIt != scEmbLoaded.GetMGElements()[0].Attributes.end());
+        const float* depth = std::get_if<float>(&depthIt->second);
+        assert(depth && std::abs(*depth - 3.0f) < 1e-4f);
+    }
+
+    {
         // Parallax format v2: float Bezier tangents + Hold on end key survive save/load.
         auto scB = CreateScene(6000);
         const ElementIndex li = AddElement(*scB, "LightElement", "V2Bezier", 0);

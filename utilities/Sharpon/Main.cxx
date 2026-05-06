@@ -964,9 +964,9 @@ void RenderNarrativePanel(EditorState& state) {
     if (!state.ShowNarrativePanel) {
         return;
     }
-    ImGui::SetNextWindowSize(ImVec2(720, 560), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Narrative JSON", &state.ShowNarrativePanel)) {
-        if (ImGui::Button("Open...") && g_SharponSdlWindow) {
+    LibUI::Widgets::SetNextWindowSize(ImVec2(720, 560), ImGuiCond_FirstUseEver);
+    if (LibUI::Widgets::BeginWindow("Narrative JSON", &state.ShowNarrativePanel)) {
+        if (LibUI::Widgets::Button("Open...") && g_SharponSdlWindow) {
             LibUI::FileDialogs::ShowOpenFile(
                 g_SharponSdlWindow, "Open narrative JSON",
                 [](std::optional<std::string> path) {
@@ -978,8 +978,8 @@ void RenderNarrativePanel(EditorState& state) {
                 },
                 std::span<const LibUI::FileDialogs::FileFilter>(kJsonFileFilters));
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Save As...") && g_SharponSdlWindow) {
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Save As...") && g_SharponSdlWindow) {
             LibUI::FileDialogs::ShowSaveFile(
                 g_SharponSdlWindow, "Save narrative JSON",
                 [](std::optional<std::string> path) {
@@ -992,7 +992,7 @@ void RenderNarrativePanel(EditorState& state) {
                 std::span<const LibUI::FileDialogs::FileFilter>(kJsonFileFilters));
         }
         LibUI::Widgets::InputTextMultiline("##narr_json", state.NarrativeJSONBuffer, ImVec2(-1, 200), 0);
-        if (ImGui::Button("Validate")) {
+        if (LibUI::Widgets::Button("Validate")) {
             state.NarrativeValidationOutput.clear();
             if (!g_NarrativeValidate) {
                 state.NarrativeValidationOutput =
@@ -1008,8 +1008,8 @@ void RenderNarrativePanel(EditorState& state) {
                 }
             }
         }
-        ImGui::SameLine();
-        if (ImGui::Button("JSON to YAML")) {
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("JSON to YAML")) {
             state.NarrativeYAMLBuffer.clear();
             if (!g_NarrativeJsonToYaml) {
                 state.NarrativeYAMLBuffer = "# API not loaded";
@@ -1028,24 +1028,24 @@ void RenderNarrativePanel(EditorState& state) {
                 }
             }
         }
-        ImGui::Separator();
-        ImGui::TextUnformatted("Status / validation:");
+        LibUI::Widgets::Separator();
+        LibUI::Widgets::Text("Status / validation:");
         LibUI::Widgets::InputTextMultiline("##narr_val", state.NarrativeValidationOutput, ImVec2(-1, 64),
             ImGuiInputTextFlags_ReadOnly);
-        ImGui::TextUnformatted("YAML preview:");
+        LibUI::Widgets::Text("YAML preview:");
         LibUI::Widgets::InputTextMultiline("##narr_yaml", state.NarrativeYAMLBuffer, ImVec2(-1, 120),
             ImGuiInputTextFlags_ReadOnly);
     }
-    ImGui::End();
+    LibUI::Widgets::EndWindow();
 }
 
 void RenderCutscenePanel(EditorState& state) {
     if (!state.ShowCutscenePanel) {
         return;
     }
-    ImGui::SetNextWindowSize(ImVec2(640, 480), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Cutscene JSON", &state.ShowCutscenePanel)) {
-        if (ImGui::Button("Open...") && g_SharponSdlWindow) {
+    LibUI::Widgets::SetNextWindowSize(ImVec2(640, 480), ImGuiCond_FirstUseEver);
+    if (LibUI::Widgets::BeginWindow("Cutscene JSON", &state.ShowCutscenePanel)) {
+        if (LibUI::Widgets::Button("Open...") && g_SharponSdlWindow) {
             LibUI::FileDialogs::ShowOpenFile(
                 g_SharponSdlWindow, "Open cutscene JSON",
                 [](std::optional<std::string> path) {
@@ -1057,8 +1057,8 @@ void RenderCutscenePanel(EditorState& state) {
                 },
                 std::span<const LibUI::FileDialogs::FileFilter>(kJsonFileFilters));
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Save As...") && g_SharponSdlWindow) {
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Save As...") && g_SharponSdlWindow) {
             LibUI::FileDialogs::ShowSaveFile(
                 g_SharponSdlWindow, "Save cutscene JSON",
                 [](std::optional<std::string> path) {
@@ -1071,7 +1071,7 @@ void RenderCutscenePanel(EditorState& state) {
                 std::span<const LibUI::FileDialogs::FileFilter>(kJsonFileFilters));
         }
         LibUI::Widgets::InputTextMultiline("##cut_json", state.CutsceneJSONBuffer, ImVec2(-1, 220), 0);
-        if (ImGui::Button("Validate")) {
+        if (LibUI::Widgets::Button("Validate")) {
             state.CutsceneValidationOutput.clear();
             if (!g_CutsceneValidate) {
                 state.CutsceneValidationOutput =
@@ -1087,65 +1087,65 @@ void RenderCutscenePanel(EditorState& state) {
                 }
             }
         }
-        ImGui::Separator();
+        LibUI::Widgets::Separator();
         LibUI::Widgets::InputTextMultiline("##cut_val", state.CutsceneValidationOutput, ImVec2(-1, 100),
             ImGuiInputTextFlags_ReadOnly);
     }
-    ImGui::End();
+    LibUI::Widgets::EndWindow();
 }
 
 void RenderFileOperationDialogs(EditorState& state) {
     // New File Dialog
     if (state.ShowNewFileDialog) {
-        ImGui::OpenPopup("New File");
+        LibUI::Widgets::OpenPopup("New File");
         state.ShowNewFileDialog = false;
         memset(state.DialogInputBuffer, 0, sizeof(state.DialogInputBuffer));
     }
 
-    if (ImGui::BeginPopupModal("New File", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Enter file name:");
-        ImGui::InputText("##newfile", state.DialogInputBuffer, sizeof(state.DialogInputBuffer));
+    if (LibUI::Widgets::BeginPopupModal("New File", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        LibUI::Widgets::Text("Enter file name:");
+        LibUI::Widgets::InputText("##newfile", state.DialogInputBuffer, sizeof(state.DialogInputBuffer));
 
-        if (ImGui::Button("Create")) {
+        if (LibUI::Widgets::Button("Create")) {
             if (strlen(state.DialogInputBuffer) > 0) {
                 CreateNewFile(state, state.DialogParentPath, std::string(state.DialogInputBuffer));
-                ImGui::CloseCurrentPopup();
+                LibUI::Widgets::CloseCurrentPopup();
             }
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) {
-            ImGui::CloseCurrentPopup();
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Cancel")) {
+            LibUI::Widgets::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        LibUI::Widgets::EndPopup();
     }
 
     // New Folder Dialog
     if (state.ShowNewFolderDialog) {
-        ImGui::OpenPopup("New Folder");
+        LibUI::Widgets::OpenPopup("New Folder");
         state.ShowNewFolderDialog = false;
         memset(state.DialogInputBuffer, 0, sizeof(state.DialogInputBuffer));
     }
 
-    if (ImGui::BeginPopupModal("New Folder", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Enter folder name:");
-        ImGui::InputText("##newfolder", state.DialogInputBuffer, sizeof(state.DialogInputBuffer));
+    if (LibUI::Widgets::BeginPopupModal("New Folder", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        LibUI::Widgets::Text("Enter folder name:");
+        LibUI::Widgets::InputText("##newfolder", state.DialogInputBuffer, sizeof(state.DialogInputBuffer));
 
-        if (ImGui::Button("Create")) {
+        if (LibUI::Widgets::Button("Create")) {
             if (strlen(state.DialogInputBuffer) > 0) {
                 CreateNewFolder(state, state.DialogParentPath, std::string(state.DialogInputBuffer));
-                ImGui::CloseCurrentPopup();
+                LibUI::Widgets::CloseCurrentPopup();
             }
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) {
-            ImGui::CloseCurrentPopup();
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Cancel")) {
+            LibUI::Widgets::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        LibUI::Widgets::EndPopup();
     }
 
     // Rename Dialog (also used for Save As)
     if (state.ShowRenameDialog) {
-        ImGui::OpenPopup(state.DialogTargetPath.empty() ? "Save As" : "Rename");
+        LibUI::Widgets::OpenPopup(state.DialogTargetPath.empty() ? "Save As" : "Rename");
         state.ShowRenameDialog = false;
         std::string currentName;
         if (state.DialogTargetPath.empty()) {
@@ -1158,15 +1158,15 @@ void RenderFileOperationDialogs(EditorState& state) {
         strncpy(state.DialogInputBuffer, currentName.c_str(), sizeof(state.DialogInputBuffer) - 1);
     }
 
-    if (ImGui::BeginPopupModal(state.DialogTargetPath.empty() ? "Save As" : "Rename", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (LibUI::Widgets::BeginPopupModal(state.DialogTargetPath.empty() ? "Save As" : "Rename", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         if (state.DialogTargetPath.empty()) {
-            ImGui::Text("Enter file name:");
+            LibUI::Widgets::Text("Enter file name:");
         } else {
-            ImGui::Text("Enter new name:");
+            LibUI::Widgets::Text("Enter new name:");
         }
-        ImGui::InputText("##rename", state.DialogInputBuffer, sizeof(state.DialogInputBuffer));
+        LibUI::Widgets::InputText("##rename", state.DialogInputBuffer, sizeof(state.DialogInputBuffer));
 
-        if (ImGui::Button(state.DialogTargetPath.empty() ? "Save" : "Rename")) {
+        if (LibUI::Widgets::Button(state.DialogTargetPath.empty() ? "Save" : "Rename")) {
             if (strlen(state.DialogInputBuffer) > 0) {
                 if (state.DialogTargetPath.empty()) {
                     // Save As - create new file
@@ -1193,44 +1193,44 @@ void RenderFileOperationDialogs(EditorState& state) {
                     // Rename existing file/folder
                     RenameFileOrFolder(state, state.DialogTargetPath, std::string(state.DialogInputBuffer));
                 }
-                ImGui::CloseCurrentPopup();
+                LibUI::Widgets::CloseCurrentPopup();
             }
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) {
-            ImGui::CloseCurrentPopup();
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Cancel")) {
+            LibUI::Widgets::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        LibUI::Widgets::EndPopup();
     }
 
     // Delete Confirmation Dialog
     if (state.ShowDeleteConfirmDialog) {
-        ImGui::OpenPopup("Delete Confirmation");
+        LibUI::Widgets::OpenPopup("Delete Confirmation");
         state.ShowDeleteConfirmDialog = false;
     }
 
-    if (ImGui::BeginPopupModal("Delete Confirmation", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    if (LibUI::Widgets::BeginPopupModal("Delete Confirmation", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
         std::string itemName = std::filesystem::path(state.DialogTargetPath).filename().string();
         ImGui::Text("Are you sure you want to delete '%s'?", itemName.c_str());
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "This action cannot be undone!");
+        LibUI::Widgets::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "This action cannot be undone!");
 
-        if (ImGui::Button("Delete")) {
+        if (LibUI::Widgets::Button("Delete")) {
             DeleteFileOrFolder(state, state.DialogTargetPath);
-            ImGui::CloseCurrentPopup();
+            LibUI::Widgets::CloseCurrentPopup();
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cancel")) {
-            ImGui::CloseCurrentPopup();
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Cancel")) {
+            LibUI::Widgets::CloseCurrentPopup();
         }
-        ImGui::EndPopup();
+        LibUI::Widgets::EndPopup();
     }
 }
 
 void RenderEditor(EditorState& state) {
     LibUI::Shell::BeginMainHostWindow("Sharpon Editor", LibUI::Shell::MainHostFlags_SharponEditor());
         // Menu bar
-        if (ImGui::BeginMenuBar()) {
-            if (ImGui::BeginMenu("File")) {
+        if (LibUI::Widgets::BeginMenuBar()) {
+            if (LibUI::Widgets::BeginMenu("File")) {
                 if (LibUI::Icons::MenuItemWithIcon(LibUI::Icons::Id::New, "New", "Ctrl+N")) {
                     // Create new untitled tab
                     Tab newTab(state.NextTabId++, "");
@@ -1239,7 +1239,7 @@ void RenderEditor(EditorState& state) {
                     state.Tabs.back().ResetEditorHistory();
                     state.ActiveTabId = newTab.Id;
                 }
-                if (ImGui::MenuItem("Open", "Ctrl+O")) {
+                if (LibUI::Widgets::MenuItem("Open", "Ctrl+O")) {
                     // File browser is always visible in sidebar
                 }
                 if (LibUI::Icons::MenuItemWithIcon(LibUI::Icons::Id::Save, "Save", "Ctrl+S")) {
@@ -1271,108 +1271,108 @@ void RenderEditor(EditorState& state) {
                         state.ShowRenameDialog = true; // Reuse rename dialog for Save As
                     }
                 }
-                if (ImGui::MenuItem("Open Workspace Folder...") && g_SharponSdlWindow) {
+                if (LibUI::Widgets::MenuItem("Open Workspace Folder...") && g_SharponSdlWindow) {
                     const char* defLoc =
                         state.FileBrowserRootPath.empty() ? nullptr : state.FileBrowserRootPath.c_str();
                     SDL_ShowOpenFolderDialog(OnWorkspaceFolderPick, nullptr, g_SharponSdlWindow, defLoc, false);
                 }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Exit")) {
+                LibUI::Widgets::Separator();
+                if (LibUI::Widgets::MenuItem("Exit")) {
                     // Will be handled by main loop
                 }
-                ImGui::EndMenu();
+                LibUI::Widgets::EndMenu();
             }
-            if (ImGui::BeginMenu("Edit")) {
+            if (LibUI::Widgets::BeginMenu("Edit")) {
                 Tab* edTab = GetActiveTab(state);
-                if (ImGui::MenuItem("Undo", "Ctrl+Z", false, edTab && edTab->CodeUndo.CanUndo())) {
+                if (LibUI::Widgets::MenuItem("Undo", "Ctrl+Z", false, edTab && edTab->CodeUndo.CanUndo())) {
                     SharponApplyUndo(state);
                 }
-                if (ImGui::MenuItem("Redo", "Ctrl+Y", false, edTab && edTab->CodeUndo.CanRedo())) {
+                if (LibUI::Widgets::MenuItem("Redo", "Ctrl+Y", false, edTab && edTab->CodeUndo.CanRedo())) {
                     SharponApplyRedo(state);
                 }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Cut", "Ctrl+X", false, edTab != nullptr)) {
+                LibUI::Widgets::Separator();
+                if (LibUI::Widgets::MenuItem("Cut", "Ctrl+X", false, edTab != nullptr)) {
                     if (edTab) {
                         edTab->WantCut = true;
                     }
                 }
-                if (ImGui::MenuItem("Copy", "Ctrl+C", false, edTab != nullptr)) {
+                if (LibUI::Widgets::MenuItem("Copy", "Ctrl+C", false, edTab != nullptr)) {
                     if (edTab) {
                         edTab->WantCopy = true;
                     }
                 }
-                if (ImGui::MenuItem("Paste", "Ctrl+V", false, edTab != nullptr)) {
+                if (LibUI::Widgets::MenuItem("Paste", "Ctrl+V", false, edTab != nullptr)) {
                     if (edTab) {
                         edTab->WantPasteFromMenu = true;
                     }
                 }
-                if (ImGui::MenuItem("Select All", "Ctrl+A", false, edTab != nullptr)) {
+                if (LibUI::Widgets::MenuItem("Select All", "Ctrl+A", false, edTab != nullptr)) {
                     if (edTab) {
                         edTab->WantSelectAll = true;
                     }
                 }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Compile", "F5")) {
+                LibUI::Widgets::Separator();
+                if (LibUI::Widgets::MenuItem("Compile", "F5")) {
                     CompileScript(state);
                 }
-                if (ImGui::MenuItem("Run", "F6")) {
+                if (LibUI::Widgets::MenuItem("Run", "F6")) {
                     RunScript(state);
                 }
-                ImGui::EndMenu();
+                LibUI::Widgets::EndMenu();
             }
-            if (ImGui::BeginMenu("View")) {
-                ImGui::MenuItem("Profiler", nullptr, &state.ShowProfilerPanel);
-                ImGui::MenuItem("Plugins", nullptr, &state.ShowPluginsPanel);
-                ImGui::Separator();
-                if (ImGui::MenuItem("Open workspace folder…") && g_SharponSdlWindow) {
+            if (LibUI::Widgets::BeginMenu("View")) {
+                LibUI::Widgets::MenuItem("Profiler", nullptr, &state.ShowProfilerPanel);
+                LibUI::Widgets::MenuItem("Plugins", nullptr, &state.ShowPluginsPanel);
+                LibUI::Widgets::Separator();
+                if (LibUI::Widgets::MenuItem("Open workspace folder…") && g_SharponSdlWindow) {
                     const char* defLoc =
                         state.FileBrowserRootPath.empty() ? nullptr : state.FileBrowserRootPath.c_str();
                     SDL_ShowOpenFolderDialog(OnWorkspaceFolderPick, nullptr, g_SharponSdlWindow, defLoc, false);
                 }
-                ImGui::EndMenu();
+                LibUI::Widgets::EndMenu();
             }
-            if (ImGui::BeginMenu("Tools")) {
-                ImGui::MenuItem("Narrative JSON...", nullptr, &state.ShowNarrativePanel);
-                ImGui::MenuItem("Cutscene JSON...", nullptr, &state.ShowCutscenePanel);
-                ImGui::Separator();
-                ImGui::MenuItem("Watch active script file", nullptr, &state.WatchActiveScriptFile);
-                ImGui::EndMenu();
+            if (LibUI::Widgets::BeginMenu("Tools")) {
+                LibUI::Widgets::MenuItem("Narrative JSON...", nullptr, &state.ShowNarrativePanel);
+                LibUI::Widgets::MenuItem("Cutscene JSON...", nullptr, &state.ShowCutscenePanel);
+                LibUI::Widgets::Separator();
+                LibUI::Widgets::MenuItem("Watch active script file", nullptr, &state.WatchActiveScriptFile);
+                LibUI::Widgets::EndMenu();
             }
-            if (ImGui::BeginMenu("Help")) {
+            if (LibUI::Widgets::BeginMenu("Help")) {
                 if (LibUI::Icons::MenuItemWithIcon(LibUI::Icons::Id::About, "About Sharpon")) {
                     state.ShowAboutPanel = true;
                 }
-                if (ImGui::MenuItem("Open documentation folder")) {
+                if (LibUI::Widgets::MenuItem("Open documentation folder")) {
                     TryOpenRepositoryDocsFolder();
                 }
-                ImGui::EndMenu();
+                LibUI::Widgets::EndMenu();
             }
-            ImGui::EndMenuBar();
+            LibUI::Widgets::EndMenuBar();
         }
 
         RefreshSharponEngineBanner(state);
         if (!state.EngineStatusBanner.empty()) {
             ImGui::TextWrapped("%s", state.EngineStatusBanner.c_str());
-            ImGui::Separator();
+            LibUI::Widgets::Separator();
         }
 
         // Toolbar with action buttons
-        if (ImGui::Button("Compile (F5)")) {
+        if (LibUI::Widgets::Button("Compile (F5)")) {
             CompileScript(state);
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Run (F6)")) {
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Run (F6)")) {
             RunScript(state);
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Narrative")) {
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Narrative")) {
             state.ShowNarrativePanel = true;
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Cutscene")) {
+        LibUI::Widgets::SameLine();
+        if (LibUI::Widgets::Button("Cutscene")) {
             state.ShowCutscenePanel = true;
         }
-        ImGui::Separator();
+        LibUI::Widgets::Separator();
 
         // Tab bar
         if (ImGui::BeginTabBar("##file_tabs", ImGuiTabBarFlags_Reorderable | ImGuiTabBarFlags_AutoSelectNewTabs)) {
@@ -1592,36 +1592,36 @@ void RenderDirectoryTree(EditorState& state, const std::filesystem::path& dirPat
             flags |= ImGuiTreeNodeFlags_DefaultOpen;
         }
 
-        bool nodeOpen = ImGui::TreeNodeEx(dirName.c_str(), flags);
+        bool nodeOpen = LibUI::Widgets::TreeNodeEx(dirName.c_str(), flags);
 
         // Handle right-click context menu for directory
-        if (ImGui::BeginPopupContextItem()) {
-            if (ImGui::MenuItem("Load Directory")) {
+        if (LibUI::Widgets::BeginPopupContextItem()) {
+            if (LibUI::Widgets::MenuItem("Load Directory")) {
                 LoadDirectoryFiles(state, dirPath);
             }
-            ImGui::Separator();
-            if (ImGui::MenuItem("New File")) {
+            LibUI::Widgets::Separator();
+            if (LibUI::Widgets::MenuItem("New File")) {
                 state.DialogParentPath = dirPath.string();
                 state.ShowNewFileDialog = true;
             }
-            if (ImGui::MenuItem("New Folder")) {
+            if (LibUI::Widgets::MenuItem("New Folder")) {
                 state.DialogParentPath = dirPath.string();
                 state.ShowNewFolderDialog = true;
             }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Delete")) {
+            LibUI::Widgets::Separator();
+            if (LibUI::Widgets::MenuItem("Delete")) {
                 state.DialogTargetPath = dirPath.string();
                 state.ShowDeleteConfirmDialog = true;
             }
-            if (ImGui::MenuItem("Rename")) {
+            if (LibUI::Widgets::MenuItem("Rename")) {
                 state.DialogTargetPath = dirPath.string();
                 state.ShowRenameDialog = true;
             }
-            ImGui::EndPopup();
+            LibUI::Widgets::EndPopup();
         }
 
         // Toggle expanded state
-        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+        if (LibUI::Widgets::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
             if (isExpanded) {
                 state.ExpandedDirectories.erase(dirKey);
             } else {
@@ -1652,33 +1652,33 @@ void RenderDirectoryTree(EditorState& state, const std::filesystem::path& dirPat
                 } else {
                     // Render file
                     std::string fileName = entry.filename().string();
-                    ImGui::TreeNodeEx(fileName.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_Bullet);
+                    LibUI::Widgets::TreeNodeEx(fileName.c_str(), ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen | ImGuiTreeNodeFlags_Bullet);
 
                     // Handle file click
-                    if (ImGui::IsItemClicked() && ImGui::IsMouseDoubleClicked(0)) {
+                    if (LibUI::Widgets::IsItemClicked() && ImGui::IsMouseDoubleClicked(0)) {
                         OpenFileInTab(state, entry.string());
                     }
 
                     // Handle right-click context menu for file
-                    if (ImGui::BeginPopupContextItem()) {
-                        if (ImGui::MenuItem("Open")) {
+                    if (LibUI::Widgets::BeginPopupContextItem()) {
+                        if (LibUI::Widgets::MenuItem("Open")) {
                             OpenFileInTab(state, entry.string());
                         }
-                        ImGui::Separator();
-                        if (ImGui::MenuItem("Delete")) {
+                        LibUI::Widgets::Separator();
+                        if (LibUI::Widgets::MenuItem("Delete")) {
                             state.DialogTargetPath = entry.string();
                             state.ShowDeleteConfirmDialog = true;
                         }
-                        if (ImGui::MenuItem("Rename")) {
+                        if (LibUI::Widgets::MenuItem("Rename")) {
                             state.DialogTargetPath = entry.string();
                             state.ShowRenameDialog = true;
                         }
-                        ImGui::EndPopup();
+                        LibUI::Widgets::EndPopup();
                     }
                 }
             }
 
-            ImGui::TreePop();
+            LibUI::Widgets::TreePop();
         }
     } catch (const std::filesystem::filesystem_error& e) {
         // Skip directories we can't access
@@ -1705,23 +1705,23 @@ void LoadDirectoryFiles(EditorState& state, const std::filesystem::path& dirPath
 
 void RenderFileBrowser(EditorState& state) {
     float sidebarWidth = 250.0f;
-    ImGui::BeginChild("##file_browser", ImVec2(sidebarWidth, 0), true);
+    LibUI::Widgets::BeginChild("##file_browser", ImVec2(sidebarWidth, 0), true);
 
     // Header
-    ImGui::Text("File Browser");
-    ImGui::Separator();
+    LibUI::Widgets::Text("File Browser");
+    LibUI::Widgets::Separator();
 
     // Current path display
     ImGui::TextWrapped("Path: %s", state.FileBrowserRootPath.c_str());
-    ImGui::Separator();
+    LibUI::Widgets::Separator();
 
     // Load Directory button
-    if (ImGui::Button("Load Directory")) {
+    if (LibUI::Widgets::Button("Load Directory")) {
         if (std::filesystem::exists(state.FileBrowserRootPath)) {
             LoadDirectoryFiles(state, state.FileBrowserRootPath);
         }
     }
-    ImGui::Separator();
+    LibUI::Widgets::Separator();
 
     // Render directory tree
     if (std::filesystem::exists(state.FileBrowserRootPath)) {
@@ -1730,7 +1730,7 @@ void RenderFileBrowser(EditorState& state) {
         ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Directory not found: %s", state.FileBrowserRootPath.c_str());
     }
 
-    ImGui::EndChild();
+    LibUI::Widgets::EndChild();
 }
 
 int main(int argc, char* argv[]) {

@@ -53,7 +53,7 @@ inline bool EnvVarTruthy(const char* name) {
 }
 #endif
 
-/// Writes one line to **stdout** and, when `SOLSTICE_DIAG_LOG=1`, appends to `SolsticeTools_diag.txt` under the temp dir.
+/// Writes one line to **stdout** and, when runtime-configured diag logging is enabled, appends to a temp log file.
 /// Implemented in `DiagLog.cxx` (single TU in LibUI) to avoid duplicate static state across EXE/DLL.
 LIBUI_API void DiagLogLine(std::string_view line);
 LIBUI_API void DiagLogLine(const char* line);

@@ -28,8 +28,8 @@ void SDLCALL FileDialogCallback(void* userdata, const char* const* filelist, int
     delete ud;
 }
 
-static void FillDefaultParallaxFilters(DialogUserData& ud) {
-    ud.Filters = {FileFilter{"PARALLAX", "prlx"}, FileFilter{"All", "*"}};
+static void FillDefaultFilters(DialogUserData& ud) {
+    ud.Filters = {FileFilter{"All", "*"}};
 }
 
 static void BuildSdlFilters(DialogUserData& ud) {
@@ -48,7 +48,7 @@ void ShowOpenFile(SDL_Window* window, const char* title, std::function<void(std:
     auto* ud = new DialogUserData;
     ud->Callback = std::move(onResult);
     if (filters.empty()) {
-        FillDefaultParallaxFilters(*ud);
+        FillDefaultFilters(*ud);
     } else {
         ud->Filters.assign(filters.begin(), filters.end());
     }
@@ -63,7 +63,7 @@ void ShowSaveFile(SDL_Window* window, const char* title, std::function<void(std:
     auto* ud = new DialogUserData;
     ud->Callback = std::move(onResult);
     if (filters.empty()) {
-        FillDefaultParallaxFilters(*ud);
+        FillDefaultFilters(*ud);
     } else {
         ud->Filters.assign(filters.begin(), filters.end());
     }
